@@ -2,7 +2,7 @@
 
 An agent-editable canvas for [DeepSeek Harness](https://github.com/deepseek-ai) — a **superboard** that replaces the conversation box as the primary UI surface.
 
-The canvas is where the Agent thinks: markdown blocks, arrows for relationships, rendered diagrams (UML and friends), pinned PDF pages and images. The chat is still there, but as a collapsible right-hand sidebar you can swap with the canvas.
+The board is where the Agent thinks: markdown blocks, arrows for relationships, rendered diagrams, pinned PDF pages and images. It is a **third tab beside 对话 and 轨迹**, so the chat keeps its own home — and it doubles as a persistent display surface, because an answer pinned to the board does not scroll away into history. A collapsible chat strip sits beside the board so both are visible at once.
 
 > **状态：v1 里程碑全部完成。** 82 个测试通过，已装进 desktop profile。
 > 设计阶段四轮访谈见 [`docs/design/design-tree.md`](docs/design/design-tree.md)（15 条决定），
@@ -29,20 +29,47 @@ UML 渲染与错误反馈回路 · PDF 栅格化与页空间锚定 · 图片钉�
 
 **视觉与交互确认需要一个真人刷新页面。** 静态验证（语法、DSH 自己的 schema 校验器、端到端数据流、宿主导入）全过，但「标签页出不出现、看板画得对不对、框选手感如何」只有用户能确认。
 
-
 ## 安装（开发期）
 
-本仓库直接作为 DSH bundle 装进某个 profile。在 DSH 里用 `plugin_manager` 的 `install_bundle`，目标写本目录：
+本仓库作为 DSH bundle 装进某个 profile（当前装在 `desktop`）。
+
+**必须先做成链接，不能靠 `file:`。** 这条是踩过坑的：
+
+profile 的 `pnpm-workspace.yaml` 里写着 **`nodeLinker: hoisted`**。在 hoisted 模式下，`file:` 指向本地目录时 pnpm 是把文件**复制**进 `node_modules` 的——**每次 install 都是那一刻的快照**。所以「改完源码刷新页面即可生效」是**错的**：源码改了、profile 里还是旧副本，而且症状是「标签页在、但内容是旧的」，很容易误判成插件没加载。
+
+profile 的 `package.json` 里依赖要写成 **`link:`**（pnpm 对 `link:` 始终建符号链接，从不复制）：
 
 ```
-file:E:/Dev/dsh-superboard
+"dsh-superboard": "link:E:/Dev/dsh-superboard"
 ```
 
-它会向该 profile 的 `package.json` 写入 `file:` 依赖、把 `dsh-superboard` 追加到 `dsh.profile.bundles`，并把 `node_modules/dsh-superboard` 链接到本目录。**改完源码在浏览器里刷新页面即可生效**，不需要重装。
+然后在 profile 目录跑一次 `pnpm install --no-frozen-lockfile`。之后 `node_modules/dsh-superboard` 是一个指向本仓库的 **Junction**，改代码立即反映在 profile 里。
 
-卸载：从 profile 的 `dsh.profile.bundles` 与 `dependencies` 里移除 `dsh-superboard` 那一行，重跑一次 pnpm install。
+**但 host 半是启动期加载的**，desktop profile 不是 live reload——改完 **host 半**（`src/index.js`、`fold.js`、`tools.js`、`activity.js`、`model.js`、`schema*.js`）需要**重启 DSH**。client 半（`src/client.js`）刷新页面通常就够。
 
-**注意**：`file:` 依赖在启用时会追加到 bundle 列表末尾，而这会改变配置优先级——这是 DSH 已知的行为。
+**改完怎么自查**（不用开浏览器）：在 profile 目录跑
+
+```powershell
+node --input-type=module -e "
+const m = await import('dsh-superboard')
+const p = [], t = []
+m.apply({ inject: (names, cb) => cb(Object.fromEntries(names.map(n => [n, {
+  sessionProjections: { register: (d) => p.push(d.key) },
+  tools: { register: (d) => (t.push(d.name), () => {}) },
+  systemPrompt: { context: () => {} },
+}[n]]))) })
+console.log('投影:', p, '工具:', t)
+"
+```
+
+v1 应输出两个投影（`board`、`boardActivity`）与四个工具。
+
+卸载：从 profile 的 `dsh.profile.bundles` 与 `dependencies` 里移除 `dsh-superboard` 那一行，重跑一次 `pnpm install`。
+
+**注意**：bundle 被启用时会追加到 bundle 列表末尾，而这会改变配置优先级——DSH 的已知行为。
+
+**另一个坑**：`exports` 里要声明 `./package.json` 和 `./cordis.patch.yml`。DSH 读插件清单的主路径是按目录找 `package.json`（不看 `exports`），但存在一条 `require.resolve('<pkg>/package.json')` 的回退路径，缺了它那条路会静默失败。所有能工作的第三方插件都声明了它。
+
 
 ## 目录结构
 
