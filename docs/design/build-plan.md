@@ -24,29 +24,30 @@
 
 ---
 
-### M1 · 场景模型与 log 原生折叠
+### M1 · 场景模型与 log 原生折叠 ✅ 已完成
 
 **交付**：
-- `src/model/` —— `Board` / `Page` / `Block` / `Edge` / `Anchor` / `Region` 的纯 JSON 形状，以及 slug 生成与查重（`board-model.md` §1）。
-- `src/fold.js` —— 把 `board_apply` 的 op 序列折叠成看板状态的纯函数（`board-model.md` §2.2/§2.3）。
-- `ctx.sessionProjections.register({ key: 'board', … })` —— 折叠的挂载点，`apply(state, event)` 保持纯同步、对忽略的事件返回同一引用。
+- `src/model.js` —— 场景模型、id 推导、slug 生成与查重、量化、手写哈希编码。
+- `src/fold.js` —— 14 个 op 的事务性施加、引用解析（`id → slug → alias`）、两阶段事件配对、`foldBoard` 主入口。
+- `src/schema.js` —— zod 的 checkpoint 校验 schema 与客户端 wire schema。
+- `src/index.js` —— 注册 `ctx.sessionProjections`，并把常驻大纲接到 M0 占好的 `systemPrompt.context()` 位置。
+- `test/fold.test.js` —— 15 个测试，全部通过。
 
-**必须处理两条事件路径**（`dsh-plugin-contract.md` §10）：
+**验收标准**：`npm test` 全绿；host 半从 profile 可导入。✅
 
-| | 普通 agent 调用 | PTC `run_code` 子调用 |
-|---|---|---|
-| 事件 | `tool/call` + `tool/result` | `tool/ptc-dispatch-start` + `tool/ptc-dispatch` |
-| `arguments` | **字符串**，需 `JSON.parse` 且容忍失败 | **对象**，直接用 |
+**实现中发现的三件事（契约里没写、但会咬人）**：
 
-配对规则：`tool/result` **不带工具名**，所以必须两阶段——在 `tool/call` 上按 `name === 'board_apply'` 把 ops 存进 `state.pending[callId]`，在 `tool/result` 上且 `isError !== true` 时才真正折叠。这个配对顺带白送了「失败批不生效」。
+1. **失败批绝不能抛异常。** `apply` 运行在投影的事件推进里，抛出去会**中止所有已注册 key 的折叠**，不只是我们这一个。契约说「失败批整体丢弃」是对的，但实现上必须是**捕获**而非抛出。现在捕获后记进 `lastOpError`，大纲可以提前提一句。
+2. **sessionId 只能从 `init` 拿，但折叠要用它。** `apply` 的签名是 `(state, event)`，没有 session。所以 sessionId 存在 state 里（会被 checkpoint 一起持久化），且**不参与内容哈希**。
+3. **两条路径的 `arguments` 类型不同**：普通路径是**字符串**（需 `JSON.parse` 且容忍失败——DSH 故意把非法 JSON 原文保留），PTC 路径**已是对象**。测试直接对比两条路径折出的内容哈希。
 
-**验收标准**：手工在会话里让 Agent 调一次 `board_apply`（M2 的工具），刷新页面后看板仍显示同样的内容——即状态确实来自 log 而非内存。
-
-**风险**：投影的 `apply(state, event)` 签名里**没有 session**，所以不能回读日志。把 `pending` 放进投影状态是可行的但不优雅（`board-model.md` §8 R2），评审时值得再看一眼。
+**契约与实现对不上的两处**（以实现为准，已记）：
+- 契约「单分支 + `kind` enum，由 execute 校验条件必填」的取舍在这里体现为 `buildBlock` 按 kind 分派并逐个校验必填字段。
+- `uniqSlug` 的冲突后缀是**叠加在整个 base 上**（`风险-1` → `风险-1-2`），不是递增尾号（`风险-3`）。按契约伪代码实现，并在测试里写明理由。
 
 ---
 
-### M2 · 工具面与常驻大纲
+### M2 · 工具面与常驻大纲（进行中）
 
 **交付**：
 - `board_outline` / `board_read` / `board_apply` / `board_query`，参数用 DSH 的**裸属性表**（不是 zod、不是 JSON Schema：无顶层 `type: "object"`，`required: true` 写在每个属性上）。
