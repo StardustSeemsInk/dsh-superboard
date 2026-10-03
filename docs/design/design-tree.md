@@ -1,12 +1,12 @@
 # dsh-superboard — design tree
 
-**Status: in progress — rounds 1–3 settled; round 4 open. Two verifiers running.**
-This file is the working record of the design tree. It is not a specification until every
-branch is marked settled and the user confirms shared understanding.
+**Status: main tree settled (rounds 1–4). Remaining work is verification, not preference.**
+This file is the working record of the design tree. It becomes a specification once the
+§Remaining unknowns are closed and the user confirms shared understanding.
 
-| Settled | Open |
+| Settled | Remaining |
 |---|---|
-| **Q1** board home · **Q2** renderer · **Q3** element model · **Q4** write path · **Q-A** who writes · **Q-B** v1 scope · **Q-C** pages · **Q-D** context injection · **Q-E** layout templates · **Q-F** arrow semantics · **Q-G** addressing · **Q-H** feedback payload | **Q7** feedback channel · **Q-I** mermaid reachability · chat strip · revisions · outline budget · **Q-J** cross-conversation reuse |
+| **Q1** board home · **Q2** renderer · **Q3** element model · **Q4** write path · **Q-A** who writes · **Q-B** v1 scope · **Q-C** pages · **Q-D** context injection · **Q-E** layout templates · **Q-F** arrow semantics · **Q-G** addressing · **Q-H** feedback payload · **Q7** feedback channel · **Q-J** scope · **Q-K** chat strip | **Q-I** mermaid reachability · **Q7-impl** draft attachment · **Q-L** revision contract · **Q-M** outline budget · **Q-N** chat strip data |
 
 Read [`../research/dsh-plugin-contract.md`](../research/dsh-plugin-contract.md) first: it holds
 the verified Harness constraints these decisions must respect.
@@ -251,12 +251,58 @@ it partially reopens the "is the renderer also a renderer *for the model*" quest
 
 ---
 
-## Open
+## Resolved — round 4
 
-| # | Decision | ➡️ Recommendation | Status |
+### Q7 — feedback channel · **SETTLED: stage into the composer draft**
+
+A marquee plus a typed sentence becomes a **visible, dismissable context object in the composer
+draft**, which the user confirms before sending. An explicit "send now" chord covers the
+confident case.
+
+Rationale recorded: the highest-frequency board gesture is *pointing at something while
+thinking*, so auto-sending would spend a turn per stray marquee; and because Q-H settled the
+payload as structured text, the user needs to see what the Agent will actually receive in order
+to be able to debug a bad answer.
+
+**Implementation dependency (unverified):** how a plugin appends a context object to the
+composer draft from the client half. The conversation package owns the draft
+(`inputActions.setDraft`, `bindDraftMirror`, `useInput`, `useStore`) but those are *its* internal
+shares, not a published API — the composer slot family (`conversation.input.*`) is the likely
+route. **Must be verified before Q7 can be implemented.**
+
+### Q-J — scope · **SETTLED: strictly conversation-level**
+
+No cross-conversation reference in v1. A board belongs to its conversation and a new
+conversation starts a new board. This honours U7 exactly and adds no mechanism, which matters
+because the log-native fold (Q4) is the whole storage story: a reference spanning two logs would
+need a second source of truth and a reconciliation rule.
+
+Recorded as a known limitation, not discarded: the user's *"a little bit of Agent memory"* remark
+still points at a real want. If it comes back, the shape to reach for is **a read-only reference
+block anchored to a stable id, never a copy**, so the two boards cannot diverge. The board could
+then be exposed as an MCP resource (`board://<sessionId>`) — which the storage research shows is
+how the OpenViking plugin already contributes — rather than by widening the board's own scope.
+
+### Q-K — the condensed chat strip · **SETTLED: collapsed = latest + status, expanded = recent turns read-only**
+
+Collapsed, a single row: an Agent status dot, the first line of the newest message, and an unread
+count. Expanded, the last few turns, scrolling, read-only. It exists to answer *"what is the Agent
+doing right now"* without a tab switch.
+
+---
+
+## Remaining unknowns
+
+Everything the user can decide is now decided. What is left is **verification**, not preference —
+plus two implementation details that belong to the build phase.
+
+| # | Unknown | Why it is not a user question | Status |
 |---|---|---|---|
-| **Q7** | User→Agent feedback channel: send immediately / stage into composer / silent attachment / bulletin | **Stage into the composer draft** as a visible, dismissable context object, with an explicit "send now" affordance | ❓ open |
-| **Q-I** | Can mermaid (a large browser library) even load in a client plugin, and if not, what is the fallback? | **UNVERIFIED — a verification task is running.** `fetch` is removed from the client half, so pulling our own static asset is not obviously possible; and `practices.md` forbids importing other Harness client packages. Candidates: bundle it and `require`/dynamic-`import` our own copy, declare it via `dsh.client.external`, or render server-side and hand the client markup. | ⏳ verifying |
+| **Q-I** | Can mermaid (or any large browser library) load into a client plugin, and if not, what is the fallback? | Pure feasibility: `fetch` is removed from the client half, so pulling our own static asset is not obviously possible, and `practices.md` forbids importing other Harness client packages. Candidates: bundle it and `require` our own copy, declare it via `dsh.client.external`, or render host-side and hand the client markup. | ⏳ verifying |
+| **Q7-impl** | How a plugin appends a context object to the composer draft from the client half. | The conversation package owns the draft through internal shares; the `conversation.input.*` slot family is the likely public route. Gates Q7's implementation, not its decision. | ⏳ verify with Q-I |
+| **Q-L** | Revision and concurrency: what `board_apply`'s `expected_revision` compares, and the stale-write contract. | Follows mechanically from Q4 (log-native) once the fold entry point is known. | ⏳ verifier #2 drafting |
+| **Q-M** | The standing outline's exact text format and its size ceiling. | Follows from Q-D and Q-G; measurable rather than debatable. | ⏳ verifier #2 drafting |
+| **Q-N** | How the condensed chat strip reads live session data on the client. | Internal to Q-K's implementation; the client half has no plugin event bus, so this needs a concrete route. | ⏳ open |
 
 ### Q5 — diagram engine · **DEFERRED** (with PDF, per Q-B)
 
@@ -269,30 +315,26 @@ last one is what catches silent rendering mistakes rather than mere syntax error
 
 ---
 
-## Round-4 frontier
+## What is already settled (the full tree)
 
-Recomputed after round 3. Two verification tasks are running in parallel; only the questions
-downstream of *those* specific unknowns wait for them.
+Recomputed after round 4. Nothing here waits on anything.
 
-1. **Q-I — mermaid reachability in the client.** See above. Gates Q5 and, indirectly, the
-   `board_snapshot` idea from Q-H.
-2. **Q7 — the feedback channel** (carried, still open). Now much better specified: the payload is
-   settled (Q-H) and the destination is settled (a message), so the only real question left is
-   whether a marquee stages a draft or sends immediately.
-3. **The condensed chat strip.** What it shows, how it reads live session data on the client, and
-   what collapses it. Depends on **Q1** and **Q-A**, settled.
-4. **Revision and concurrency.** What `board_apply`'s expected-revision check compares, what
-   happens on a stale write, and what the Agent is told. Depends on **Q4**; verifier #2 is
-   drafting this.
-5. **Outline size and context budget.** How much board fits in a standing outline before it needs
-   summarising or truncating, and the exact text format. Depends on **Q-D**.
-6. **Q-J — cross-conversation reuse.** Should a board, or its outline, be referenceable from
-   another conversation? U7 says scope is the conversation, but the user's *"a little bit of
-   Agent memory"* remark hints at wanting more. A real tension, worth asking rather than assuming.
-7. **Deferred subsystems** — UML + error loop, PDF rasterization and page-space anchoring under
-   S7, image pinning, git mirror, freeform layer.
-8. **Packaging and install** — package name, how a user installs it, what `Config` exposes.
-   Low priority until the shape is fixed.
+1. **Q1** the board is a third `conversation.view` tab.
+2. **Q2** own DOM/SVG renderer, scene model strictly separated.
+3. **Q3** block-flow model with stable ids, optional position overrides, region grouping.
+4. **Q4** log-native: the board is the fold of its own `board_apply` calls.
+5. **Q-A** only the Agent writes; the user's gestures become message input.
+6. **Q-B** v1 = markdown blocks + arrows + multi-page + marquee feedback + the tool family + the
+   chat strip. UML and the error loop are next, deliberately.
+7. **Q-C** explicit Agent-managed pages, page names usable as addresses.
+8. **Q-D** standing outline per request + `board_read` on demand.
+9. **Q-E** layout templates; the Agent declares structure, never coordinates.
+10. **Q-F** directed semantic edges with optional labels.
+11. **Q-G** readable slugs as addresses over stable ids; edges anchor to ids.
+12. **Q-H** structured text in v1; visual grounding later as an Agent-initiated bitmap query.
+13. **Q7** marquee stages a draft; explicit send-now chord for the confident case.
+14. **Q-J** strictly conversation-scoped; cross-conversation reference recorded as a future shape.
+15. **Q-K** chat strip: collapsed = status + latest line + unread, expanded = recent turns read-only.
 
 ---
 
@@ -302,4 +344,5 @@ downstream of *those* specific unknowns wait for them.
 |---|---|---|
 | 1 | 2026-02 | Frontier mapped to 8 questions. API research landed mid-round: S12 initially suggested the `main`-panel route, then S13/S14 killed it. **Q1 settled** — the board is a third `conversation.view` tab (the user's own suggestion, verified in the source). **Q4 settled** — log-native. |
 | 2 | 2026-02 | **Q2** own DOM/SVG renderer · **Q3** block-flow model · **Q-B** v1 = foundation only · **Q-C** explicit pages · **Q-D** standing outline + pull. **Q-A settled: only the Agent writes**, which reframed the board as a *persistent display surface* and promoted layout/auto-alignment to the top of the frontier. |
-| 3 | 2026-02 | **Q-E** layout templates, Agent declares structure only · **Q-F** directed semantic edges with optional labels · **Q-G** readable slug addresses over stable ids · **Q-H** structured text in v1 with Agent-initiated bitmap queries later (the user's call, and better than mine). Two verifiers dispatched: **Q-I** mermaid reachability and the render/runtime surface, and the board data model + tool surface. |
+| 3 | 2026-02 | **Q-E** layout templates, Agent declares structure only · **Q-F** directed semantic edges with optional labels · **Q-G** readable slug addresses over stable ids · **Q-H** structured text in v1 with Agent-initiated bitmap queries later (the user's call, and better than mine). Two verifiers dispatched. |
+| 4 | 2026-02 | **Q7** marquee stages a composer draft · **Q-J** strictly conversation-level scope, with the reference-block shape recorded for later · **Q-K** the chat strip's two states. **The main tree is now fully settled**; what remains is verification (Q-I, Q7-impl) and two model details the verifiers are drafting (Q-L, Q-M). |
