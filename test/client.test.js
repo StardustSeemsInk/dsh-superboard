@@ -86,15 +86,25 @@ function loadClient() {
 
 const client = loadClient()
 
+/**
+ * Copy a value out of the sandbox realm.
+ *
+ * The client half runs in its own VM context, so arrays and objects it returns do not share this
+ * realm's prototype — and `deepStrictEqual` compares prototypes, so equal data would be rejected as
+ * "same structure but not reference-equal". Round-tripping through JSON puts it back in this realm.
+ */
+const plain = (value) => JSON.parse(JSON.stringify(value))
+
 test('the factory registers itself under the package name', () => {
   assert.equal(typeof client.apply, 'function')
   // Compare element-wise: the client half runs in its own VM realm, so arrays it produces do not
   // share this realm's prototype and deepStrictEqual would reject equal contents.
-  assert.equal(client.inject.length, 2)
+  assert.equal(client.inject.length, 3)
   assert.equal(client.inject[0], 'slots')
-  // 'sessions' is the service that makes history paging reachable: the real loader lives on
-  // ctx.sessions.binding(id).session, not on anything the chat package exposes.
+  // 'sessions' is the service that makes history paging reachable — the real loader lives on
+  // ctx.sessions.binding(id).session — and 'conversation' is what mints the feedback attachment.
   assert.equal(client.inject[1], 'sessions')
+  assert.equal(client.inject[2], 'conversation')
   assert.equal(client.PROJECTION_KEY, 'board')
 })
 
@@ -209,7 +219,92 @@ test('the columns template degrades to one column in a narrow pane', () => {
 
 test('a template that needs no widths produces no inline style', () => {
   assert.equal(client.layoutStyle({ template: 'flow' }, 1200), undefined)
-  assert.equal(client.layoutStyle({ template: 'grid' }, 1200), undefined)
+  assert.equal(client.layoutStyle({ template: 'row' }, 1200), undefined)
+  assert.equal(client.layoutStyle(undefined, 1200), undefined)
+  assert.equal(client.layoutStyle({ template: 'canvas' }, 1200), undefined)
+})
+
+test('the grid template is responsive by construction, not by breakpoint', () => {
+  // auto-fill with a minimum card width lets the browser fit as many cards as the width allows, so
+  // dragging the reading column changes the column count with no breakpoint involved.
+  assert.equal(
+    client.layoutStyle({ template: 'grid' }, 1200).gridTemplateColumns,
+    'repeat(auto-fill, minmax(260px, 1fr))',
+  )
+  assert.equal(
+    client.layoutStyle({ template: 'grid', params: { minCardWidth: 320 } }, 1200).gridTemplateColumns,
+    'repeat(auto-fill, minmax(320px, 1fr))',
+  )
+  // An absurd minimum is clamped rather than trusted.
+  assert.equal(
+    client.layoutStyle({ template: 'grid', params: { minCardWidth: 99999 } }, 1200).gridTemplateColumns,
+    'repeat(auto-fill, minmax(640px, 1fr))',
+  )
+})
+
+test('gap is honoured on any template, and clamped', () => {
+  assert.equal(client.layoutStyle({ template: 'flow', params: { gap: 20 } }, 900).gap, '20px')
+  assert.equal(client.layoutStyle({ template: 'flow', params: { gap: 9999 } }, 900).gap, '64px')
+})
+
+test('only unclaimed blocks sit at the top level', () => {
+  // The container relationship is derived rather than stored, so a group's children cannot also be
+  // rendered at page level. Drawing both is the classic tree bug: everything appears twice.
+  const blocks = [
+    { id: 'a', kind: 'heading' },
+    { id: 'b', kind: 'prose' },
+    { id: 'g', kind: 'group', children: ['a', 'b'] },
+    { id: 'c', kind: 'prose' },
+  ]
+  assert.deepEqual(
+    plain(client.rootBlocksOf(blocks)).map((block) => block.id),
+    ['g', 'c'],
+  )
+})
+
+test('nesting is honoured: an inner group is not a root either', () => {
+  const blocks = [
+    { id: 'a', kind: 'prose' },
+    { id: 'inner', kind: 'group', children: ['a'] },
+    { id: 'outer', kind: 'group', children: ['inner'] },
+  ]
+  assert.deepEqual(
+    plain(client.rootBlocksOf(blocks)).map((block) => block.id),
+    ['outer'],
+  )
+})
+
+test('a page of loose blocks is all roots', () => {
+  const blocks = [
+    { id: 'a', kind: 'heading' },
+    { id: 'b', kind: 'prose' },
+  ]
+  assert.equal(client.rootBlocksOf(blocks).length, 2)
+  assert.equal(client.rootBlocksOf([]).length, 0)
+})
+
+test('a pinned block becomes absolute, and its size is optional', () => {
+  const style = client.atStyle({ x: 40, y: 120, w: 320, h: 180 })
+  assert.equal(style.position, 'absolute')
+  assert.equal(style.left, '40px')
+  assert.equal(style.top, '120px')
+  assert.equal(style.width, '320px')
+  assert.equal(style.height, '180px')
+
+  // Height omitted means "as tall as the content", which is the common case for an annotation.
+  const loose = client.atStyle({ x: 10, y: 20 })
+  assert.equal(loose.width, undefined)
+  assert.equal(loose.height, undefined)
+})
+
+test('a malformed position is normalised rather than producing a NaN style', () => {
+  // A NaN in a style attribute silently does nothing, which would look like the board ignoring the
+  // Agent — the worst possible failure, because nothing reports it.
+  const style = client.atStyle({ x: 'abc', y: null })
+  assert.equal(style.left, '0px')
+  assert.equal(style.top, '0px')
+  assert.equal(client.atStyle(undefined), undefined)
+  assert.equal(client.atStyle(null), undefined)
 })
 
 test('an absurd column request is clamped rather than trusted', () => {

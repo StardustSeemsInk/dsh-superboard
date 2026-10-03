@@ -47,6 +47,24 @@ window.__ModuleLoader__.load({
       '.sb-canvas{position:relative;flex:1;min-height:0;overflow:auto;padding:2px;}',      '.sb-flow{display:flex;flex-direction:column;gap:12px;}',
       '.sb-grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));align-items:start;}',
       '.sb-columns{display:grid;gap:12px;align-items:start;}',
+      '.sb-row{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start;}',
+      '.sb-row>.sb-card{flex:1 1 220px;min-width:0;}',
+      // A container whose children are pinned needs to be a containing block itself.
+      '.sb-anchored{position:relative;}',
+      '.sb-absBox{position:relative;min-height:120px;}',
+      // A pinned block leaves the flow entirely, so it never widens its container.
+      '.sb-pinned{position:absolute;}',
+      '.sb-groupBox{display:flex;flex-direction:column;gap:8px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;padding:10px;min-width:0;}',
+      '.sb-groupHead{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}',
+      '.sb-groupTitle{font-size:12px;font-weight:600;line-height:18px;}',
+      '.sb-groupBody{min-width:0;}',
+      '.sb-cardHead{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}',
+      // Regions annotate. Colour and a label, never a position.
+      '.sb-regionTag{font-size:10px;line-height:14px;padding:0 6px;border-radius:999px;border:1px solid currentColor;opacity:.9;}',
+      '.sb-tone-warn{border-left:3px solid var(--dsw-alias-state-warning-primary,var(--dsw-alias-brand-primary));}',
+      '.sb-tone-danger{border-left:3px solid var(--dsw-alias-state-error-primary,var(--dsw-alias-brand-primary));}',
+      '.sb-tone-ok{border-left:3px solid var(--dsw-alias-state-success-primary,var(--dsw-alias-brand-primary));}',
+      '.sb-tone-neutral{border-left:3px solid var(--dsw-alias-border-l2);}',
       '.sb-card{background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);border-radius:8px;padding:10px 12px;min-width:0;position:relative;}',
       '.sb-cardSel{border-color:var(--dsw-alias-brand-primary);}',
       '.sb-kind{position:absolute;top:6px;right:8px;color:var(--dsw-alias-label-tertiary);font-size:10px;line-height:14px;letter-spacing:.04em;text-transform:uppercase;}',
@@ -74,17 +92,12 @@ window.__ModuleLoader__.load({
       '.sb-picking,.sb-picking *{user-select:none;cursor:crosshair;}',
       '.sb-marquee{position:absolute;border:1px solid var(--dsw-alias-brand-primary);background:var(--dsw-alias-brand-primary);opacity:.12;pointer-events:none;border-radius:2px;}',
       '.sb-cardSel{border-color:var(--dsw-alias-brand-primary);box-shadow:0 0 0 1px var(--dsw-alias-brand-primary);}',
-      '.sb-tray{display:flex;flex-direction:column;gap:6px;border-top:1px solid var(--dsw-alias-border-l2);padding-top:8px;}',
-      '.sb-trayHead{display:flex;align-items:center;gap:8px;}',
-      '.sb-trayTitle{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);text-transform:uppercase;letter-spacing:.04em;}',
-      '.sb-chip{display:flex;align-items:flex-start;gap:8px;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:6px 8px;}',
-      '.sb-chipBody{flex:1;min-width:0;}',
-      '.sb-chipRefs{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);}',
-      '.sb-chipNote{font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary);white-space:pre-wrap;}',
-      '.sb-button{font:inherit;font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary);cursor:pointer;background:none;border:1px solid var(--dsw-alias-border-l2);border-radius:5px;padding:3px 8px;}',
-      '.sb-button:hover{color:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);}',
-      '.sb-button:disabled{opacity:.5;cursor:default;}',
-      '.sb-input{font:inherit;font-size:12px;line-height:18px;flex:1;min-width:0;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:5px;padding:4px 8px;}',
+      // A single row, only while something is selected. No idle state at all.
+      '.sb-selbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-top:1px solid var(--dsw-alias-border-l2);padding-top:8px;}',
+      '.sb-selbarCount{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary);white-space:nowrap;}',
+      '.sb-selbarSlugs{color:var(--dsw-alias-label-tertiary);margin-left:6px;}',
+      '.sb-selbarError{font-size:11px;line-height:16px;color:var(--dsw-alias-state-error-primary,var(--dsw-alias-label-secondary));}',
+      '.sb-buttonPrimary{color:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);font-weight:600;}',
       '.sb-hint{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);}',
       // The board and the reading column share the tab. They have to: only the active
       // conversation.view renders, so while the board is open the transcript is nowhere else.
@@ -128,33 +141,110 @@ window.__ModuleLoader__.load({
     // -----------------------------------------------------------------------
 
     /**
-     * Map a layout template to the class that arranges blocks.
+     * Map a layout template to the class that arranges its children.
      *
-     * This is the whole of "the engine decides geometry" for v1: the Agent names a template, CSS
-     * lays the blocks out, and the arrows follow by measurement. `canvas` deliberately falls
-     * through to the flow default — freeform placement is the exception (Q-E), and honouring
-     * explicit coordinates properly needs the measured-position machinery that lands with it.
+     * This is the whole of "the engine decides geometry": the Agent names an arrangement, CSS does
+     * the flow, and the arrows follow by measurement rather than by parallel computation. Each name
+     * maps to a CSS concept the model has read a million times, which is the point — it cannot see
+     * the canvas, so its vocabulary has to be one it already reasons in.
+     *
+     * @param layout - the layout spec, or none.
+     * @returns the class name.
      */
     function layoutClass(layout) {
-      const template = layout?.template
-      if (template === 'grid') return 'sb-grid'
-      if (template === 'columns') return 'sb-columns'
-      return 'sb-flow'
+      switch (layout?.template) {
+        case 'row':
+          return 'sb-row'
+        case 'grid':
+          return 'sb-grid'
+        case 'columns':
+          return 'sb-columns'
+        case 'canvas':
+          return 'sb-absBox'
+        default:
+          return 'sb-flow'
+      }
     }
 
     /**
-     * Inline grid-template-columns for the `columns` template, which needs a count.
+     * The inline style a layout needs on top of its class.
      *
-     * Degrades to a single column in a narrow pane: the Agent asked for a shape, not for a
-     * specific pixel width, so the shape should survive a resize.
+     * Widths are read from the container's own measurement rather than from a fixed breakpoint,
+     * because the panel is resizable: dragging the reading column, or the window, changes how much
+     * room a row of cards has. A shape the Agent asked for should survive that.
+     *
+     * @param layout - the layout spec.
+     * @param width - the container's measured width in px.
+     * @returns a style object, or undefined when the class already says everything.
      */
     function layoutStyle(layout, width) {
-      if (layout?.template !== 'columns') return undefined
-      // `??`, not `||`: an explicit 0 is a request, not an absence — and it clamps to 1.
-      const requested = Number(layout.params?.cols ?? 2)
-      const safe = Number.isFinite(requested) ? requested : 2
-      const cols = Math.max(1, Math.min(Math.trunc(safe) || 1, width < 720 ? 1 : 4))
-      return { gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }
+      const style = {}
+
+      const gap = Number(layout?.params?.gap)
+      if (Number.isFinite(gap) && gap >= 0) style.gap = `${Math.min(Math.trunc(gap), 64)}px`
+
+      if (layout?.template === 'columns') {
+        // `??`, not `||`: an explicit 0 is a request, not an absence — and it clamps to 1.
+        const requested = Number(layout.params?.cols ?? 2)
+        const safe = Number.isFinite(requested) ? requested : 2
+        const cols = Math.max(1, Math.min(Math.trunc(safe) || 1, width < 720 ? 1 : 4))
+        style.gridTemplateColumns = `repeat(${cols}, minmax(0, 1fr))`
+      }
+
+      if (layout?.template === 'grid') {
+        // auto-fill with a minimum card width is responsive by construction: the browser fits as
+        // many as the current width allows, so no breakpoint is needed or wanted.
+        const requested = Number(layout.params?.minCardWidth ?? 260)
+        const safe = Number.isFinite(requested) ? requested : 260
+        const min = Math.max(120, Math.min(Math.trunc(safe) || 260, 640))
+        style.gridTemplateColumns = `repeat(auto-fill, minmax(${min}px, 1fr))`
+      }
+
+      return Object.keys(style).length === 0 ? undefined : style
+    }
+
+    /**
+     * The blocks that no group claims.
+     *
+     * A block belongs to at most one container, so "which blocks sit at the top level" is exactly
+     * "which blocks nobody lists as a child". Deriving it rather than storing it means the tree
+     * cannot disagree with the page's own order, which is what keeps the renderer from needing a
+     * second source of truth.
+     *
+     * @param blocks - the page's blocks.
+     * @returns the top-level blocks, in page order.
+     */
+    function rootBlocksOf(blocks) {
+      const claimed = new Set()
+      for (const block of blocks) {
+        if (block.kind !== 'group') continue
+        for (const child of block.children ?? []) claimed.add(child)
+      }
+      return blocks.filter((block) => !claimed.has(block.id))
+    }
+
+    /**
+     * Turn an explicit position into a style.
+     *
+     * The escape hatch, not the mechanism. A block with `at` leaves the flow and is placed against
+     * its container, which is the only way to say "put this annotation *here*" — and it is also the
+     * one thing the Agent cannot check afterwards, so it stays deliberately awkward to reach for.
+     *
+     * @param at - the position, or none.
+     * @returns a style object, or undefined when the block flows normally.
+     */
+    function atStyle(at) {
+      if (at === null || at === undefined || typeof at !== 'object') return undefined
+      const x = Number(at.x)
+      const y = Number(at.y)
+      const style = {
+        position: 'absolute',
+        left: `${Math.trunc(Number.isFinite(x) ? x : 0)}px`,
+        top: `${Math.trunc(Number.isFinite(y) ? y : 0)}px`,
+      }
+      if (Number.isFinite(Number(at.w))) style.width = `${Math.trunc(Number(at.w))}px`
+      if (Number.isFinite(Number(at.h))) style.height = `${Math.trunc(Number(at.h))}px`
+      return style
     }
 
     // -----------------------------------------------------------------------
@@ -1053,7 +1143,16 @@ window.__ModuleLoader__.load({
      * `GoalDock`). It is always defined and returns `undefined` while the key carries no value,
      * so this renders a waiting state rather than crashing before the host half loads.
      */
-    function BoardView({ sessionId, useProjection, useChat, loadOlder, hasOlder }) {
+    function BoardView({
+      sessionId,
+      useProjection,
+      useChat,
+      useInput,
+      inputActions,
+      attachFeedback,
+      loadOlder,
+      hasOlder,
+    }) {
       const board = useProjection('board')
       // Persisted so the column the user chose survives a tab switch and a reload.
       const [columnWidth, setColumnWidth] = React.useState(() => readNumber(COLUMN_WIDTH_KEY, 420))
@@ -1066,10 +1165,14 @@ window.__ModuleLoader__.load({
       const dragRef = React.useRef(null)
       /** Block ids currently selected, on the active page. */
       const [selected, setSelected] = React.useState(() => new Set())
-      /** The staged feedback entries — the tray. */
-      const [tray, setTray] = React.useState([])
+      /** The question the user is writing about the current selection. */
       const [note, setNote] = React.useState('')
-      const [copied, setCopied] = React.useState(false)
+      /** Set while a selection is being handed to the composer. */
+      const [sending, setSending] = React.useState(false)
+      const [sendError, setSendError] = React.useState(null)
+      // Read at the top because hooks cannot live inside the handler. Appending rather than
+      // replacing matters: the user may already have been typing when they marqueed.
+      const draft = typeof useInput === 'function' ? useInput((snapshot) => snapshot.draft) : undefined
 
       const model = board?.model
       const pages = model?.pages ?? []
@@ -1111,6 +1214,11 @@ window.__ModuleLoader__.load({
        * `bl_9c02e1` instead of that block's name would make the feedback harder to act on than the
        * board it came from.
        */
+      /** Block id to block, for resolving a container's children without rescanning. */
+      const byId = new Map(pageBlocks.map((block) => [block.id, block]))
+      /** Region id to region, for toning a block without a lookup per block. */
+      const regions = new Map((model?.regions ?? []).map((region) => [region.id, region]))
+
       const boardSlugOf = (id) => {
         for (const page of pages) {
           const block = page.blocks.find((candidate) => candidate.id === id)
@@ -1182,68 +1290,76 @@ window.__ModuleLoader__.load({
         setSelected(hits)
       }
 
-      const stageFeedback = () => {
-        if (selected.size === 0) return
-        const ids = [...selected]
-        setTray((current) => [
-          ...current,
-          {
-            id: `fb-${current.length + 1}-${Date.now()}`,
-            pageSlug: activePage?.slug ?? '',
-            rev: model?.rev ?? '',
-            blockIds: ids,
-            blocks: ids.map(slugOf),
-            edges: describeSelectedEdges(model?.edges ?? [], selected, boardSlugOf),
-            note,
-          },
-        ])
-        setNote('')
-        setSelected(new Set())
-        setCopied(false)
+      /** The text of one block, so the Agent need not re-read the board to act on a selection. */
+      const blockTextOf = (slug) => {
+        for (const page of pages) {
+          for (const block of page.blocks) {
+            if (block.slug !== slug) continue
+            if (block.kind === 'heading') return block.text
+            if (block.kind === 'prose') return block.markdown
+            if (block.kind === 'code') return block.code
+            if (block.kind === 'list') return block.items.map((item) => item.text).join('\n')
+            if (block.kind === 'uml') return block.source
+            return ''
+          }
+        }
+        return ''
       }
 
       /**
-       * Clamp and remember the reading column's width.
+       * Hand the selection to the composer as an attachment.
        *
-       * Bounded so the board cannot be squeezed out of existence, and captured by width rather than
-       * by fraction so a window resize does not silently change the user's choice.
+       * Two things travel, because each covers what the other cannot. The draft gets a compact
+       * readable summary, so the Agent knows what was selected the moment it reads the message
+       * rather than after opening a file. The attachment gets the structured payload — stable ids
+       * and each block's full text — since JSON is the only non-image attachment the platform can
+       * express (the online content type is text / image / file, with no text-attachment form).
+       *
+       * Nothing is submitted here. The user presses send, the same gesture as for every other
+       * message, which is what keeps a stray marquee from spending a turn.
        */
-      const resizeColumn = (next) => {
-        const container = containerRef.current?.parentElement?.parentElement
-        const total = container?.clientWidth ?? 0
-        const ceiling = total === 0 ? 900 : Math.max(COLUMN_MIN_WIDTH, Math.floor(total * COLUMN_MAX_FRACTION))
-        const clamped = Math.max(COLUMN_MIN_WIDTH, Math.min(Math.round(next), ceiling))
-        setColumnWidth(clamped)
-        writeNumber(COLUMN_WIDTH_KEY, clamped)
-      }
+      const stageFeedback = async () => {
+        if (selected.size === 0 || sending) return
+        const blocks = [...selected].map((id) => {
+          const slug = boardSlugOf(id)
+          return { id, slug, text: blockTextOf(slug) }
+        })
+        const edges = describeSelectedEdges(model?.edges ?? [], selected, boardSlugOf)
+        const payload = {
+          kind: 'board-selection',
+          page: activePage?.slug ?? '',
+          rev: model?.rev ?? '',
+          blocks,
+          edges,
+        }
+        // The same shape the clipboard copy used, so what the Agent reads inline and what it would
+        // have received as text cannot drift apart.
+        const summary = formatFeedback({
+          pageSlug: activePage?.slug ?? '',
+          rev: model?.rev ?? '',
+          blocks: blocks.map((block) => block.slug),
+          edges,
+          note,
+        })
 
-      const copyTray = () => {
-        const text = tray.map(formatFeedback).join('\n\n')
-        // The client half is a classic script in the real page global, so the async clipboard is
-        // available; a failure simply leaves the button as it was.
-        const done = () => setCopied(true)
-        const fallback = () => {
-          try {
-            const area = document.createElement('textarea')
-            area.value = text
-            area.setAttribute('readonly', '')
-            area.style.position = 'fixed'
-            area.style.opacity = '0'
-            document.body.appendChild(area)
-            area.select()
-            document.execCommand('copy')
-            document.body.removeChild(area)
-            done()
-          } catch {
-            /* leave the button enabled; the user can select the text manually */
+        setSending(true)
+        setSendError(null)
+        try {
+          const ids = await attachFeedback({ payload })
+          inputActions?.addAttachments?.(ids)
+          if (inputActions?.setDraft !== undefined) {
+            const existing = typeof draft === 'string' ? draft : ''
+            inputActions.setDraft(
+              existing.trim() === '' ? summary : `${existing.replace(/\s+$/u, '')}\n\n${summary}`,
+            )
           }
+          setNote('')
+          setSelected(new Set())
+        } catch (error) {
+          setSendError(error instanceof Error ? error.message : String(error))
+        } finally {
+          setSending(false)
         }
-        const clipboard = globalThis.navigator?.clipboard
-        if (clipboard?.writeText === undefined) {
-          fallback()
-          return
-        }
-        clipboard.writeText(text).then(done, fallback)
       }
 
       if (model === undefined) {
@@ -1321,11 +1437,14 @@ window.__ModuleLoader__.load({
               },
               pageBlocks.length === 0
                 ? h('div', { className: 'sb-empty' }, hasBlocks ? 'This page is empty.' : 'The board is empty.')
-                : h(
-                    'div',
-                    { className: layoutClass(activePage?.layout), style: layoutStyle(activePage?.layout, width) },
-                    pageBlocks.map((block) => h(Block, { key: block.id, block, selected: selected.has(block.id) })),
-                  ),
+                : h(BlockTree, {
+                    blocks: pageBlocks,
+                    layout: activePage?.layout,
+                    width,
+                    selected,
+                    byId,
+                    regions,
+                  }),
               pageEdges.length > 0 && h(EdgeLayer, { containerRef, blocks: pageBlocks, edges: pageEdges }),
               marquee !== null &&
                 h('div', {
@@ -1333,22 +1452,18 @@ window.__ModuleLoader__.load({
                   style: { left: marquee.left, top: marquee.top, width: marquee.width, height: marquee.height },
                 }),
             ),
-            h(FeedbackTray, {
-              tray,
+            h(SelectionBar, {
+              count: selected.size,
+              slugs: [...selected].map(slugOf),
               note,
               setNote,
-              selectedCount: selected.size,
-              selectedSlugs: [...selected].map(slugOf),
-              copied,
-              onStage: stageFeedback,
-              onCopy: copyTray,
-              onClear: () => {
-                setTray([])
-                setCopied(false)
-              },
-              onRemove: (id) => {
-                setTray((current) => current.filter((entry) => entry.id !== id))
-                setCopied(false)
+              sending,
+              error: sendError,
+              onSend: () => void stageFeedback(),
+              onCancel: () => {
+                setSelected(new Set())
+                setNote('')
+                setSendError(null)
               },
             }),
           ),
@@ -1365,101 +1480,132 @@ window.__ModuleLoader__.load({
     }
 
     /** One block, with its selection state. */
-    function Block({ block, selected }) {
+    function Block({ block, selected, region }) {
+      // A region is annotation, so it tints the block and adds its label — it never moves anything.
+      const tone = region?.tone === undefined || region.tone === 'neutral' ? '' : ` sb-tone-${region.tone}`
       return h(
         'article',
         {
-          className: `sb-card${block.kind === 'group' ? ' sb-group' : ''}${selected ? ' sb-cardSel' : ''}`,
+          className: `sb-card${selected ? ' sb-cardSel' : ''}${tone}`,
           'data-block-id': block.id,
           'data-block-slug': block.slug,
         },
-        h('div', { className: 'sb-slug' }, block.slug),
-        h('div', { className: 'sb-kind' }, block.kind),
+        h(
+          'div',
+          { className: 'sb-cardHead' },
+          h('span', { className: 'sb-slug' }, block.slug),
+          h('span', { className: 'sb-kind' }, block.kind),
+          region?.label !== undefined && h('span', { className: `sb-regionTag${tone}` }, region.label),
+        ),
         renderBlockBody(block),
       )
     }
 
     /**
-     * The feedback tray.
+     * Render one level of the layout tree.
      *
-     * This is where Q7 landed after the composer draft turned out to be both unreachable and
-     * invisible while the board is open: a marquee stages an entry, each entry is individually
-     * dismissable, and nothing is sent until the user copies it into the composer themselves.
+     * A container is a `group`, and groups nest — so this recurses. A group that carries a layout
+     * arranges its own children; a page arranges whatever no group claimed. Nothing else decides
+     * geometry, which is what makes "the Agent declares structure, the engine decides where things
+     * go" true rather than aspirational.
+     *
+     * @param props - `{ blocks, layout, width, selected, byId, regions }`.
+     * @returns the rendered level.
      */
-    function FeedbackTray({
-      tray,
-      note,
-      setNote,
-      selectedCount,
-      selectedSlugs,
-      copied,
-      onStage,
-      onCopy,
-      onClear,
-      onRemove,
-    }) {
-      if (tray.length === 0 && selectedCount === 0) {
-        return h(
+    function BlockTree({ blocks, layout, width, selected, byId, regions }) {
+      const roots = rootBlocksOf(blocks)
+      // Any absolutely positioned child needs a positioned ancestor, or `at` would be measured
+      // against the page instead of against the container it was written for.
+      const needsAnchor = roots.some((block) => block.at !== undefined)
+      return h(
+        'div',
+        {
+          className: `${layoutClass(layout)}${needsAnchor ? ' sb-anchored' : ''}`,
+          style: layoutStyle(layout, width),
+        },
+        roots.map((block) => h(BlockNode, { key: block.id, block, width, selected, byId, regions })),
+      )
+    }
+
+    /** One node of the tree: a container, or a leaf block. */
+    function BlockNode({ block, width, selected, byId, regions }) {
+      const at = atStyle(block.at)
+      const region = block.regionId === undefined ? undefined : regions.get(block.regionId)
+
+      if (block.kind !== 'group') return h(Block, { block, selected: selected.has(block.id), region })
+
+      const children = (block.children ?? []).map((id) => byId.get(id)).filter((child) => child !== undefined)
+      const innerNeedsAnchor = children.some((child) => child.at !== undefined)
+      return h(
+        'section',
+        {
+          className: `sb-groupBox ${layoutClass(block.layout)}${innerNeedsAnchor ? ' sb-anchored' : ''}${at === undefined ? '' : ' sb-pinned'}`,
+          style: { ...layoutStyle(block.layout, width), ...(at ?? {}) },
+          'data-block-id': block.id,
+          'data-block-slug': block.slug,
+          'data-superboard-group': '',
+        },
+        h(
           'div',
-          { className: 'sb-tray' },
-          h(
-            'div',
-            { className: 'sb-hint' },
-            '拖拽框选看板上的块，然后写下你的问题 —— 反馈会先留在这里，不会自动发出去。',
-          ),
-        )
-      }
+          { className: 'sb-groupHead' },
+          h('span', { className: 'sb-slug' }, block.slug),
+          block.title !== undefined && h('span', { className: 'sb-groupTitle' }, block.title),
+          h('span', { className: 'sb-kind' }, `${children.length} 项`),
+          region?.label !== undefined && h('span', { className: `sb-regionTag sb-tone-${region.tone ?? 'neutral'}` }, region.label),
+        ),
+        // A group with no layout of its own still needs to arrange its children somehow.
+        h(
+          'div',
+          {
+            className: `sb-groupBody ${layoutClass(block.layout)}${innerNeedsAnchor ? ' sb-anchored' : ''}`,
+            style: layoutStyle(block.layout, width),
+          },
+          children.map((child) => h(BlockNode, { key: child.id, block: child, width, selected, byId, regions })),
+        ),
+      )
+    }
+
+    /**
+     * The bar that appears once something is selected.
+     *
+     * It shows nothing at all when nothing is selected — the previous always-on instruction was
+     * noise on every visit, and the gesture it described is discovered in one try. Marquee, type,
+     * attach: the selection becomes an attachment in the composer, where the user can see it, edit
+     * the note beside it, and remove it with a control they already recognise.
+     */
+    function SelectionBar({ count, slugs, note, setNote, sending, error, onSend, onCancel }) {
+      if (count === 0) return null
 
       return h(
         'div',
-        { className: 'sb-tray' },
+        { className: 'sb-selbar', 'data-superboard-selection': '' },
         h(
-          'div',
-          { className: 'sb-trayHead' },
-          h('span', { className: 'sb-trayTitle' }, `反馈草稿 ${tray.length}`),
-          h('span', { className: 'sb-spacer' }),
-          tray.length > 0 && h('button', { className: 'sb-button', type: 'button', onClick: onClear }, '全部清除'),
-          tray.length > 0 &&
-            h('button', { className: 'sb-button', type: 'button', onClick: onCopy }, copied ? '已复制 ✓' : '复制到输入框'),
+          'span',
+          { className: 'sb-selbarCount' },
+          `已选 ${count} 个块`,
+          h('span', { className: 'sb-selbarSlugs' }, slugs.join('、')),
         ),
-        tray.map((entry) =>
-          h(
-            'div',
-            { className: 'sb-chip', key: entry.id },
-            h(
-              'div',
-              { className: 'sb-chipBody' },
-              h('div', { className: 'sb-chipRefs' }, `${entry.pageSlug} · ${entry.blocks.join('、')}`),
-              entry.edges.length > 0 && h('div', { className: 'sb-chipRefs' }, entry.edges.join('；')),
-              entry.note.trim() !== '' && h('div', { className: 'sb-chipNote' }, entry.note),
-            ),
-            h(
-              'button',
-              {
-                className: 'sb-button',
-                type: 'button',
-                onClick: () => onRemove(entry.id),
-                'aria-label': '删除这条反馈',
-              },
-              '删除',
-            ),
-          ),
+        h('input', {
+          className: 'sb-input',
+          value: note,
+          placeholder: '对这个选区提问或说明（可留空）',
+          disabled: sending,
+          onChange: (event) => setNote(event.target.value),
+          onKeyDown: (event) => {
+            if (event.key === 'Enter' && !event.shiftKey) {
+              event.preventDefault()
+              onSend()
+            }
+            if (event.key === 'Escape') onCancel()
+          },
+        }),
+        h(
+          'button',
+          { className: 'sb-button sb-buttonPrimary', type: 'button', onClick: onSend, disabled: sending },
+          sending ? '附加中…' : '附加到输入框',
         ),
-        selectedCount > 0 &&
-          h(
-            'div',
-            { className: 'sb-trayHead' },
-            h('input', {
-              className: 'sb-input',
-              value: note,
-              placeholder: `对选中的 ${selectedCount} 个块（${selectedSlugs.join('、')}）提问或说明`,
-              onChange: (event) => setNote(event.target.value),
-              onKeyDown: (event) => {
-                if (event.key === 'Enter') onStage()
-              },
-            }),
-            h('button', { className: 'sb-button', type: 'button', onClick: onStage }, '加入反馈'),
-          ),
+        h('button', { className: 'sb-button', type: 'button', onClick: onCancel, disabled: sending }, '取消'),
+        error !== null && error !== undefined && h('span', { className: 'sb-selbarError' }, `附加失败：${error}`),
       )
     }
 
@@ -1472,7 +1618,8 @@ window.__ModuleLoader__.load({
     return {
       // 'sessions' is what makes history paging possible: the real loader is
       // ctx.sessions.binding(id).session.loadOlder(), not anything the chat package owns.
-      inject: ['slots', 'sessions'],
+      // 'conversation' mints the attachment; 'sessions' drives history paging.
+      inject: ['slots', 'sessions', 'conversation'],
       apply(ctx) {
         ctx.effect(
           () =>
@@ -1495,6 +1642,20 @@ window.__ModuleLoader__.load({
                       // Not a store: the session keeps paging state as plain fields, so this is
                       // re-read after each load rather than subscribed to.
                       hasOlder: () => session?.hasMore === true,
+                      // The research's recommendation: an attachment is pure public API, touches
+                      // no official slot, and yields the official card with its delete button.
+                      attachFeedback: async ({ payload }) => {
+                        const conversation = ctx.get('conversation')
+                        if (conversation === undefined) throw new Error('conversation service unavailable')
+                        const file = new File([JSON.stringify(payload, null, 2)], `board-selection-${Date.now()}.json`, {
+                          type: 'application/json',
+                        })
+                        const ids = await conversation.createDrafts(sessionId, [file])
+                        // addAttachments does no validation and a bad id is pruned silently, so an
+                        // empty result is the one thing worth reporting.
+                        if (!Array.isArray(ids) || ids.length === 0) throw new Error('attachment rejected')
+                        return ids
+                      },
                     }
                   },
                 },
@@ -1511,6 +1672,11 @@ window.__ModuleLoader__.load({
       routeBetween,
       layoutClass,
       layoutStyle,
+      // The tree, the escape hatch and the tree flattening. DOM-free, so the rules that decide
+      // *what sits at the top level* and *where a pinned block lands* are both checked.
+      rootBlocksOf,
+      atStyle,
+      BlockTree,
       // Selection geometry and the feedback payload. Also DOM-free, so the parts that decide
       // *which* blocks a marquee means and *what text* the Agent receives are both checked.
       normaliseRect,
