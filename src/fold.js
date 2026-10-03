@@ -947,36 +947,100 @@ function opDeleteEdge(model, op) {
   return { ...model, edges: model.edges.filter((candidate) => candidate.id !== edge.id) }
 }
 
-/** `set_layout` — replace a page's or region's layout wholesale; `null` restores the default. */
+/**
+ * `set_layout` — replace a page's or region's layout wholesale; `null` restores the default.
+ *
+ * The scope arrives as a plain reference string (the tool schema says `scope` is a page or region
+ * reference, and that is what a model sends), but the op form also accepts the explicit
+ * `{ page }` / `{ region }` object. Both are honoured: the schema is the model's interface, so it
+ * is the one that has to work.
+ */
 function opSetLayout(model, op) {
-  const layout = op.layout === null || op.layout === undefined ? undefined : normaliseLayout(op.layout)
-  const scope = op.scope
-  if (typeof scope !== 'object' || scope === null) {
-    throw new BoardOpError('set_layout requires "scope" as { page } or { region }')
+  if (op.layout === null) {
+    const target = resolveLayoutScope(model, op.scope)
+    return withLayout(model, target, undefined)
   }
-  if (scope.page !== undefined) {
-    const page = resolveElement(model, scope.page, 'page').element
-    return replacePage(model, page.id, (current) => {
+
+  // Either a full `layout` object, or the flattened `template` + params the schema declares.
+  const spec =
+    op.layout !== undefined
+      ? op.layout
+      : op.template === undefined
+        ? undefined
+        : {
+            template: op.template,
+            ...(collectLayoutParams(op) === undefined ? {} : { params: collectLayoutParams(op) }),
+          }
+  if (spec === undefined) {
+    throw new BoardOpError(
+      'set_layout needs a "template" (flow, columns, grid, tree, canvas), or layout: null to restore the default',
+    )
+  }
+
+  const target = resolveLayoutScope(model, op.scope)
+  return withLayout(model, target, normaliseLayout(spec))
+}
+
+/** Collect the flattened layout parameters the tool schema declares. */
+function collectLayoutParams(op) {
+  const params = {}
+  if (op.cols !== undefined) params.cols = Number(op.cols)
+  if (op.gap !== undefined) params.gap = Number(op.gap)
+  if (op.root !== undefined) params.root = String(op.root)
+  if (op.direction !== undefined) params.direction = op.direction
+  if (op.minCardWidth !== undefined) params.minCardWidth = Number(op.minCardWidth)
+  return Object.keys(params).length === 0 ? undefined : params
+}
+
+/**
+ * Resolve a layout scope, which the schema writes as a bare reference.
+ *
+ * Pages are tried first because that is the common case, and the error names both families so a
+ * miss is actionable rather than a dead end.
+ */
+function resolveLayoutScope(model, scope) {
+  if (typeof scope === 'string') {
+    const asPage = tryResolve(model, scope, 'page')
+    if (asPage !== undefined) return { kind: 'page', element: asPage.element }
+    const asRegion = tryResolve(model, scope, 'region')
+    if (asRegion !== undefined) return { kind: 'region', element: asRegion.element }
+    throw new BoardOpError(
+      `set_layout scope ${JSON.stringify(scope)} matches no page or region. Pages: ${
+        model.pages.map((page) => page.slug).join(', ') || '(none)'
+      }; regions: ${model.regions.map((region) => region.slug).join(', ') || '(none)'}`,
+    )
+  }
+  if (typeof scope === 'object' && scope !== null) {
+    if (scope.page !== undefined) {
+      return { kind: 'page', element: resolveElement(model, scope.page, 'page').element }
+    }
+    if (scope.region !== undefined) {
+      return { kind: 'region', element: resolveElement(model, scope.region, 'region').element }
+    }
+  }
+  throw new BoardOpError('set_layout requires "scope" as a page or region reference')
+}
+
+/** Apply a layout (or its absence) to a resolved scope. */
+function withLayout(model, target, layout) {
+  if (target.kind === 'page') {
+    return replacePage(model, target.element.id, (current) => {
       const next = { ...current }
       if (layout === undefined) delete next.layout
       else next.layout = layout
       return next
     })
   }
-  if (scope.region !== undefined) {
-    const region = resolveElement(model, scope.region, 'region').element
-    return {
-      ...model,
-      regions: model.regions.map((current) => {
-        if (current.id !== region.id) return current
-        const next = { ...current }
-        if (layout === undefined) delete next.layout
-        else next.layout = layout
-        return next
-      }),
-    }
+  return {
+    ...model,
+    regions: model.regions.map((current) => {
+      if (current.id !== target.element.id) return current
+      const next = { ...current }
+      if (layout === undefined) delete next.layout
+      else next.layout = layout
+      return next
+    }),
   }
-  throw new BoardOpError('set_layout scope must name a page or a region')
 }
 
 /** `set_region` — upsert a semantic cluster; membership is replaced wholesale. */

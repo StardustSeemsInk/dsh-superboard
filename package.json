@@ -26,8 +26,8 @@
     "cordis.patch.yml"
   ],
   "scripts": {
-    "test": "node --test test/fold.test.js test/tools.test.js test/client.test.js",
-    "verify": "node --test test/fold.test.js test/tools.test.js test/client.test.js && node -e \"import('dsh-superboard').then(m => { if (typeof m.apply !== 'function') throw new Error('host half does not export apply()'); console.log('host half ok, exports:', Object.keys(m).join(', ')) })\""
+    "test": "node --test test/fold.test.js test/tools.test.js test/projection.test.js test/client.test.js",
+    "verify": "node --test test/fold.test.js test/tools.test.js test/projection.test.js test/client.test.js && node -e \"import('dsh-superboard').then(m => { if (typeof m.apply !== 'function') throw new Error('host half does not export apply()'); console.log('host half ok, exports:', Object.keys(m).join(', ')) })\""
   },
   "dependencies": {
     "zod": "^4.6.5"

@@ -57,14 +57,33 @@ export const ID_PREFIX = Object.freeze({
  */
 const ID_PATTERN = /^(pg|bl|ed|rg|li)_[0-9a-f]{6}$/
 
-/** A slug, after normalisation: letters, digits, underscore, hyphen. Chinese passes via `\p{L}`. */
-const SLUG_PATTERN = /^[\p{L}\p{N}_-]+$/u
+/**
+ * A slug, after normalisation.
+ *
+ * Letters, digits, underscore, hyphen — plus the punctuation a real sentence ends with. That last
+ * part matters for this project's actual usage: `\p{N}`/`\p{L}` cover Chinese characters, but the
+ * full-width period in `登录服务处理会话。` is punctuation, so without it a perfectly ordinary
+ * Chinese sentence would fail validation and fall back to a generic `prose-2` address. An address
+ * nobody can read is the thing slugs exist to prevent (Q-G).
+ *
+ * Characters genuinely unsafe in an address are stripped before this test, so anything surviving
+ * to here is safe to carry. Narrower than `\p{P}` or `\p{S}` on purpose: these are the marks prose
+ * actually ends with, and the set stays small enough to reason about when it becomes a filename.
+ */
+const SLUG_PATTERN = /^[\p{L}\p{N}_\-.。、，,·]+$/u
 
 /** Maximum slug length in Unicode code points. */
 const SLUG_MAX = 24
 
 /** How many retired slugs an element remembers. Older ones are dropped, not re-exposed. */
 const ALIAS_MAX = 8
+
+/** Path-hostile and invisible characters, removed before validation. */
+// eslint-disable-next-line no-control-regex -- control characters are exactly what we strip
+const UNSAFE_IN_SLUG = /[\\/:*?"<>|\u0000-\u001f\u007f]/gu
+
+/** Trail and lead punctuation is trimmed so an address never starts or ends with a separator. */
+const SLUG_EDGE_TRIM = /^[-.。、，,·]+|[-.。、，,·]+$/gu
 
 /** Separation bytes for the hand-written hash encoding — never present in normal text. */
 const FIELD_SEP = '\u001f'
@@ -165,10 +184,9 @@ export function toSlug(source, fallbackBase = 'item', fallbackIndex = 1) {
     .normalize('NFC')
     .trim()
     .replace(/\s+/gu, '-')
-    // eslint-disable-next-line no-control-regex -- control characters are exactly what we strip
-    .replace(/[\\/:*?"<>|\u0000-\u001f\u007f]/gu, '')
+    .replace(UNSAFE_IN_SLUG, '')
     .slice(0, SLUG_MAX)
-  const trimmed = normalised.replace(/^-+|-+$/gu, '')
+  const trimmed = normalised.replace(SLUG_EDGE_TRIM, '')
   if (trimmed !== '' && SLUG_PATTERN.test(trimmed)) return trimmed
   return `${fallbackBase}-${fallbackIndex}`
 }
