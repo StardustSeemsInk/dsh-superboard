@@ -55,6 +55,13 @@ window.__ModuleLoader__.load({
       '.sb-h2{margin:0;font-size:15px;font-weight:600;line-height:22px;}',
       '.sb-h3{margin:0;font-size:13px;font-weight:600;line-height:20px;}',
       '.sb-p{margin:0;font-size:13px;line-height:20px;color:var(--dsw-alias-label-secondary);white-space:pre-wrap;}',
+      // Inline markdown. Only token names and tokens: no literal colours, so a renamed token
+      // degrades appearance rather than breaking the render.
+      '.sb-p strong,.sb-list strong{color:var(--dsw-alias-label-primary);font-weight:600;}',
+      '.sb-p em,.sb-list em{font-style:italic;}',
+      '.sb-inlineCode{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;background:var(--dsw-alias-bg-layer-1);border-radius:4px;padding:1px 4px;}',
+      '.sb-link{color:var(--dsw-alias-brand-primary);text-decoration:none;}',
+      '.sb-link:hover{text-decoration:underline;}',
       '.sb-list{margin:0;padding-left:18px;font-size:13px;line-height:20px;color:var(--dsw-alias-label-secondary);}',
       '.sb-code{margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:18px;white-space:pre-wrap;background:var(--dsw-alias-bg-layer-1);border-radius:6px;padding:8px;}',
       '.sb-media{display:block;max-width:100%;border-radius:6px;}',
@@ -142,6 +149,173 @@ window.__ModuleLoader__.load({
     }
 
     // -----------------------------------------------------------------------
+    // Inline markdown
+    // -----------------------------------------------------------------------
+
+    /**
+     * Whether a link target is one a board is willing to open.
+     *
+     * The Agent writes the board, and the Agent's own input includes whatever it has been reading —
+     * so board content is untrusted by the time it renders. A `javascript:` href in a card would be
+     * a scripting primitive handed to content, so anything that is not plainly a web address or a
+     * same-page fragment is refused and rendered as literal text instead.
+     *
+     * @param href - the raw target from the source.
+     * @returns the target when it is safe to link, otherwise `undefined`.
+     */
+    function safeHref(href) {
+      const raw = String(href ?? '').trim()
+      if (raw === '') return undefined
+      // Scheme-relative and root-relative URLs carry no scheme to abuse.
+      if (raw.startsWith('/') || raw.startsWith('#')) return raw
+      const scheme = /^([a-z][a-z0-9+.-]*):/iu.exec(raw)
+      if (scheme === null) return raw // a relative path
+      const allowed = ['http', 'https', 'mailto']
+      return allowed.includes(scheme[1].toLowerCase()) ? raw : undefined
+    }
+
+    /** Emphasis nesting deeper than this is treated as literal text. */
+    const INLINE_MAX_DEPTH = 6
+
+    /**
+     * Split one line of text into inline markdown nodes.
+     *
+     * A deliberately small subset — strong, emphasis, code spans and links — because that is what a
+     * board block actually needs, and because the renderer builds **React elements rather than an
+     * HTML string**. There is no `dangerouslySetInnerHTML` anywhere in this file, so anything the
+     * tokenizer fails to recognise stays inert text instead of becoming markup.
+     *
+     * Block-level markdown is not handled here at all: headings, lists and code are separate block
+     * kinds, so a prose block has no block-level structure to parse.
+     *
+     * @param text - the source text.
+     * @param depth - recursion guard for nested emphasis.
+     * @returns a flat node list: `text`, `code`, `strong`, `em` (with `children`) and `link`.
+     */
+    function parseInline(text, depth = 0) {
+      const source = String(text ?? '')
+      const nodes = []
+      let buffer = ''
+
+      const flush = () => {
+        if (buffer !== '') {
+          nodes.push({ type: 'text', text: buffer })
+          buffer = ''
+        }
+      }
+      const nested = (inner) =>
+        depth >= INLINE_MAX_DEPTH ? [{ type: 'text', text: inner }] : parseInline(inner, depth + 1)
+
+      let index = 0
+      while (index < source.length) {
+        const char = source[index]
+
+        // `code` — taken first, so emphasis markers inside a span stay literal.
+        if (char === '`') {
+          const end = source.indexOf('`', index + 1)
+          if (end > index + 1) {
+            flush()
+            nodes.push({ type: 'code', text: source.slice(index + 1, end) })
+            index = end + 1
+            continue
+          }
+        }
+
+        // **strong** — before single-marker emphasis, which would otherwise claim the first star.
+        if (source.startsWith('**', index)) {
+          const end = source.indexOf('**', index + 2)
+          if (end > index + 2) {
+            flush()
+            nodes.push({ type: 'strong', children: nested(source.slice(index + 2, end)) })
+            index = end + 2
+            continue
+          }
+        }
+
+        // *em* or _em_
+        if (char === '*' || char === '_') {
+          const end = source.indexOf(char, index + 1)
+          if (end > index + 1) {
+            flush()
+            nodes.push({ type: 'em', children: nested(source.slice(index + 1, end)) })
+            index = end + 1
+            continue
+          }
+        }
+
+        // [text](href)
+        if (char === '[') {
+          const close = source.indexOf(']', index + 1)
+          if (close !== -1 && source[close + 1] === '(') {
+            const paren = source.indexOf(')', close + 2)
+            if (paren !== -1) {
+              const href = safeHref(source.slice(close + 2, paren))
+              const label = source.slice(index + 1, close)
+              if (href !== undefined && label !== '') {
+                flush()
+                nodes.push({ type: 'link', href, text: label })
+                index = paren + 1
+                continue
+              }
+            }
+          }
+        }
+
+        buffer += char
+        index += 1
+      }
+
+      flush()
+      return nodes
+    }
+
+    /**
+     * Render parsed inline nodes.
+     *
+     * @param nodes - the node list from {@link parseInline}.
+     * @param keyPrefix - a stable prefix so React can reconcile the list.
+     * @returns React children.
+     */
+    function renderInline(nodes, keyPrefix = 'md') {
+      return nodes.map((node, position) => {
+        const key = `${keyPrefix}-${position}`
+        switch (node.type) {
+          case 'strong':
+            return h('strong', { key }, renderInline(node.children, key))
+          case 'em':
+            return h('em', { key }, renderInline(node.children, key))
+          case 'code':
+            return h('code', { key, className: 'sb-inlineCode' }, node.text)
+          case 'link':
+            return h(
+              'a',
+              {
+                key,
+                className: 'sb-link',
+                href: node.href,
+                // Board links leave the application; opening in a new tab keeps the session.
+                target: '_blank',
+                rel: 'noreferrer noopener',
+              },
+              node.text,
+            )
+          default:
+            return h('span', { key }, node.text)
+        }
+      })
+    }
+
+    /**
+     * Render text that may contain inline markdown.
+     *
+     * @param text - the source text.
+     * @returns a fragment of React children.
+     */
+    function RichText({ text }) {
+      return h(React.Fragment, null, renderInline(parseInline(text)))
+    }
+
+    // -----------------------------------------------------------------------
     // Block rendering
     // -----------------------------------------------------------------------
 
@@ -153,19 +327,30 @@ window.__ModuleLoader__.load({
      * error-feedback loop that will replace this arrives with the mermaid chunk.
      */
 
-    /** The kind-specific body of a block. */
+    /**
+     * The kind-specific body of a block.
+     *
+     * Text-bearing kinds render inline markdown. Author-written prose is the whole point of a
+     * board that doubles as a persistent display surface, and showing `**根因**` with its asterisks
+     * intact reads as broken text rather than as emphasis. Structured kinds (code, diagram source)
+     * stay literal on purpose — their content is verbatim by definition.
+     */
     function renderBlockBody(block) {
       switch (block.kind) {
         case 'heading':
-          return h(`h${block.level}`, { className: `sb-h${block.level}` }, block.text)
+          return h(`h${block.level}`, { className: `sb-h${block.level}` }, h(RichText, { text: block.text }))
         case 'prose':
-          return h('p', { className: 'sb-p' }, block.markdown)
+          return h('p', { className: 'sb-p' }, h(RichText, { text: block.markdown }))
         case 'list':
           return h(
             block.ordered ? 'ol' : 'ul',
             { className: 'sb-list' },
             block.items.map((item) =>
-              h('li', { key: item.id, style: item.depth > 0 ? { marginLeft: item.depth * 12 } : undefined }, item.text),
+              h(
+                'li',
+                { key: item.id, style: item.depth > 0 ? { marginLeft: item.depth * 12 } : undefined },
+                h(RichText, { text: item.text }),
+              ),
             ),
           )
         case 'code':
@@ -180,7 +365,7 @@ window.__ModuleLoader__.load({
             'div',
             null,
             h('img', { className: 'sb-media', src: block.src, alt: block.alt }),
-            block.caption === undefined ? null : h('p', { className: 'sb-p' }, block.caption),
+            block.caption === undefined ? null : h('p', { className: 'sb-p' }, h(RichText, { text: block.caption })),
           )
         case 'pdf-page':
           // Rendering a PDF page needs rasterisation in the host document (an iframe would lose
@@ -189,7 +374,7 @@ window.__ModuleLoader__.load({
             'div',
             null,
             h('p', { className: 'sb-missing' }, `PDF page ${block.page} of ${block.src} — not rendered yet`),
-            block.caption === undefined ? null : h('p', { className: 'sb-p' }, block.caption),
+            block.caption === undefined ? null : h('p', { className: 'sb-p' }, h(RichText, { text: block.caption })),
           )
         case 'uml':
           return h(
@@ -203,7 +388,7 @@ window.__ModuleLoader__.load({
           return h(
             'div',
             null,
-            block.title === undefined ? null : h('h3', { className: 'sb-h3' }, block.title),
+            block.title === undefined ? null : h('h3', { className: 'sb-h3' }, h(RichText, { text: block.title })),
             h('p', { className: 'sb-missing' }, `contains ${block.children.length} block(s)`),
           )
         default:
@@ -1017,6 +1202,11 @@ window.__ModuleLoader__.load({
       rectsIntersect,
       describeSelectedEdges,
       formatFeedback,
+      // Inline markdown. The tokenizer and the link guard are the security-relevant halves, so they
+      // are checked without a DOM: board content is written by the Agent, which makes it untrusted
+      // by the time it renders.
+      parseInline,
+      safeHref,
     }
   },
 })

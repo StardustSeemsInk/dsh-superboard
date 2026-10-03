@@ -337,6 +337,114 @@ test('a payload with no note still names what was selected', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Inline markdown
+// ---------------------------------------------------------------------------
+
+/**
+ * The node types of a parse, as a comma-joined string.
+ *
+ * A string rather than an array on purpose: the client half runs in its own VM realm, so arrays it
+ * produces do not share this realm's `Array.prototype` and `deepStrictEqual` rejects equal data.
+ * Comparing strings sidesteps the trap for good instead of working around it per assertion.
+ */
+const typesOf = (nodes) => nodes.map((node) => node.type).join(',')
+
+test('bold, italic and code spans parse into their own node types', () => {
+  assert.equal(typesOf(client.parseInline('**根因**: 说明')), 'strong,text')
+  assert.equal(typesOf(client.parseInline('*重要* 提示')), 'em,text')
+  assert.equal(typesOf(client.parseInline('use `board_apply` here')), 'text,code,text')
+
+  const bold = client.parseInline('**根因**: 说明')
+  assert.equal(bold[0].children[0].text, '根因')
+  assert.equal(bold[1].text, ': 说明')
+})
+
+test('the markers are gone from the parsed text, which is the whole point', () => {
+  // The live board showed `**根因**` with its markers intact, which reads as broken text rather
+  // than as emphasis — and prose is where most of a board's words live.
+  const flat = JSON.stringify(client.parseInline('**根因**: 说明'))
+  assert.ok(!flat.includes('**'), 'no literal markers survive a successful parse')
+})
+
+test('emphasis nests, and the inner run is parsed too', () => {
+  const nodes = client.parseInline('**bold with *inner* here**')
+  assert.equal(nodes[0].type, 'strong')
+  assert.ok(nodes[0].children.some((child) => child.type === 'em'))
+})
+
+test('a code span keeps its insides literal', () => {
+  // Otherwise a code sample would be mangled by the very syntax it demonstrates.
+  const nodes = client.parseInline('`a**b`')
+  assert.equal(typesOf(nodes), 'code')
+  assert.equal(nodes[0].text, 'a**b')
+})
+
+test('an unclosed marker stays literal instead of eating the rest of the text', () => {
+  const nodes = client.parseInline('**never closed')
+  assert.equal(typesOf(nodes), 'text')
+  assert.equal(nodes[0].text, '**never closed')
+  assert.equal(typesOf(client.parseInline('**')), 'text')
+})
+
+test('plain text passes through unchanged, Chinese included', () => {
+  const nodes = client.parseInline('普通文本，没有标记。')
+  assert.equal(typesOf(nodes), 'text')
+  assert.equal(nodes[0].text, '普通文本，没有标记。')
+  assert.equal(client.parseInline('').length, 0)
+})
+
+test('a link parses, but only when its target is one a board will open', () => {
+  const ok = client.parseInline('see [docs](https://example.com)')
+  assert.equal(typesOf(ok), 'text,link')
+  assert.equal(ok[1].href, 'https://example.com')
+  assert.equal(ok[1].text, 'docs')
+
+  // Board content is written by the Agent, and the Agent's input includes whatever it has been
+  // reading — so a scripting URL in a card is a real hazard, not a hypothetical one. It renders as
+  // literal text rather than as a link, and since the renderer builds React elements there is no
+  // HTML string for it to escape into either.
+  const refused = client.parseInline('[click](javascript:alert(1))')
+  assert.equal(typesOf(refused), 'text')
+  assert.equal(refused[0].text, '[click](javascript:alert(1))')
+})
+
+test('the link guard allows web addresses and local destinations, and nothing else', () => {
+  assert.equal(client.safeHref('https://example.com'), 'https://example.com')
+  assert.equal(client.safeHref('http://example.com'), 'http://example.com')
+  assert.equal(client.safeHref('mailto:a@b.c'), 'mailto:a@b.c')
+  assert.equal(client.safeHref('MAILTO:a@b.c'), 'MAILTO:a@b.c', 'the scheme check is case-insensitive')
+  assert.equal(client.safeHref('/docs/x.md'), '/docs/x.md')
+  assert.equal(client.safeHref('#heading'), '#heading')
+  assert.equal(client.safeHref('relative/path'), 'relative/path')
+
+  for (const hostile of [
+    'javascript:alert(1)',
+    'JaVaScRiPt:alert(1)',
+    'data:text/html,<script>alert(1)</script>',
+    'vbscript:msgbox',
+    '',
+    '   ',
+  ]) {
+    assert.equal(client.safeHref(hostile), undefined, `${hostile} must not become a link`)
+  }
+})
+
+test('a link with no label is refused rather than rendering an empty anchor', () => {
+  assert.equal(typesOf(client.parseInline('[](https://x)')), 'text')
+})
+
+test('a malformed link falls back to literal text', () => {
+  assert.equal(typesOf(client.parseInline('[no target]')), 'text')
+  assert.equal(typesOf(client.parseInline('[unclosed(https://x)')), 'text')
+})
+
+test('deeply nested emphasis terminates instead of recursing without bound', () => {
+  // A pathological run of markers is possible in Agent-written text; the depth cap keeps it text.
+  assert.doesNotThrow(() => client.parseInline(`${'*'.repeat(40)}x${'*'.repeat(40)}`))
+  assert.doesNotThrow(() => client.parseInline(`**${'a'.repeat(1)}${'*'.repeat(2000)}`))
+})
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
