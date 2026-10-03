@@ -1650,10 +1650,13 @@ window.__ModuleLoader__.load({
                         const file = new File([JSON.stringify(payload, null, 2)], `board-selection-${Date.now()}.json`, {
                           type: 'application/json',
                         })
-                        const ids = await conversation.createDrafts(sessionId, [file])
-                        // addAttachments does no validation and a bad id is pruned silently, so an
-                        // empty result is the one thing worth reporting.
-                        if (!Array.isArray(ids) || ids.length === 0) throw new Error('attachment rejected')
+                        // createDrafts returns draft *descriptors*, not ids — the official call site
+                        // maps .id before handing them on (conversation:18389-18390). Passing the
+                        // descriptors through would add nothing and report no error: addAttachments
+                        // does no validation, and a bad id is pruned silently.
+                        const drafts = conversation.createDrafts(sessionId, [file])
+                        const ids = drafts.map((draft) => draft.id)
+                        if (ids.length === 0) throw new Error("attachment rejected")
                         return ids
                       },
                     }
