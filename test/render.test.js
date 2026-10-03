@@ -207,6 +207,18 @@ function textOf(tree, found = []) {
   return found
 }
 
+/** Every host element in a rendered tree, so a test can inspect classes and props together. */
+function elements(tree, found = []) {
+  if (tree === null || tree === undefined || typeof tree === 'string') return found
+  if (Array.isArray(tree)) {
+    for (const child of tree) elements(child, found)
+    return found
+  }
+  found.push(tree)
+  elements(tree.children, found)
+  return found
+}
+
 /** Props for `BoardView`, with every injected hook present. */
 function props(overrides = {}) {
   return {
@@ -216,8 +228,10 @@ function props(overrides = {}) {
     useInput: (selector) => selector({ draft: '已经有草稿了' }),
     inputActions: { setDraft: () => {}, addAttachments: () => {}, submit: () => {} },
     attachFeedback: async () => ['draft-1'],
-    loadOlder: async () => {},
-    hasOlder: () => false,
+    loadOlder: async () => true,
+    // Whether older history remains is a session *standard prop*, not an injected field: it is the
+    // only form that re-renders when a page lands.
+    useSession: (selector) => selector({ hasMore: false }),
     ...overrides,
   }
 }
@@ -394,4 +408,60 @@ test('the selection bar is absent until something is selected', () => {
   assert.match(text, /2/)
   assert.match(text, /arch/)
   assert.match(text, /intro/)
+})
+
+test('exactly one element per group carries that group\'s layout', () => {
+  const LAYOUTS = ['sb-flow', 'sb-row', 'sb-columns', 'sb-grid', 'sb-absBox']
+  const boxes = elements(render(client.BoardView(props()))).filter((node) =>
+    String(node.props.className ?? '')
+      .split(/\s+/)
+      .includes('sb-groupBox'),
+  )
+  assert.ok(boxes.length >= 2, 'the fixture has an outer group and a nested one')
+
+  for (const box of boxes) {
+    const names = String(box.props.className).split(/\s+/)
+    // A layout class on the *box* was a real bug, and an invisible one. `.sb-grid` sets
+    // `align-items: start`; the box is a flex column, and a start-aligned body stops stretching —
+    // so the body resolved its own `repeat(auto-fill, minmax(...))` against a shrink-to-fit width
+    // and drew two columns where five would have fitted.
+    for (const layout of LAYOUTS) {
+      assert.ok(!names.includes(layout), `a group box must not carry ${layout}: ${names.join(' ')}`)
+    }
+
+    const body = (box.children ?? []).find((child) =>
+      String(child?.props?.className ?? '')
+        .split(/\s+/)
+        .includes('sb-groupBody'),
+    )
+    assert.ok(body !== undefined, 'every group renders a body')
+    // The body is the element that arranges the children, so it is the one that says how.
+    assert.ok(
+      LAYOUTS.some((layout) =>
+        String(body.props.className)
+          .split(/\s+/)
+          .includes(layout),
+      ),
+      `the body must carry a layout, saw ${body.props.className}`,
+    )
+  }
+})
+
+test('the load-earlier button follows the session snapshot, not a one-time read', () => {
+  const label = '加载更早'
+
+  const withMore = render(client.BoardView(props({ useSession: (selector) => selector({ hasMore: true }) })))
+  assert.ok(
+    textOf(withMore).some((part) => part.includes(label)),
+    'history the session says exists must offer the button',
+  )
+
+  const withoutMore = render(client.BoardView(props({ useSession: (selector) => selector({ hasMore: false }) })))
+  assert.ok(
+    !textOf(withoutMore).some((part) => part.includes(label)),
+    'a session with no older history must not offer it',
+  )
+
+  // The hook is the whole point, so the view must also survive not having one.
+  assert.doesNotThrow(() => render(client.BoardView(props({ useSession: undefined }))))
 })

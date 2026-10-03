@@ -1,0 +1,32 @@
+Fix the reported board defects: tables, full-bleed, group layout, history paging
+
+Five things the user reported, four of which turned out to be real.
+
+Markdown tables fell through the paragraph branch, so pipes rendered literally.
+A table is a two-line shape, not a line shape, so it is parsed as a lookahead
+with the separator line as the tell; a bare `---` is still a paragraph.
+
+The whole page scrolled and the width handles were draggable over the board.
+Both are the framework's own signals, not things to fight: a conversation.view
+that marks its root `data-conversation-composer-overlay` gets a height-
+constrained view area, a floating composer, and `.widthHandle{display:none}`.
+So the view now elects that, becomes a flex column with its own scroller, and
+reserves the composer's band via `--dsh-composer-height` so the selection bar
+is not buried under it.
+
+A group drew its own layout *and* gave it to its body. `.sb-grid` sets
+`align-items:start`, the box is a flex column, and a start-aligned body stops
+stretching - so the body resolved its own auto-fill grid against half the
+width and drew two columns where five would fit. The layout now belongs to the
+element that arranges the children, which for a group is its body and for a
+page is the tree root. A slug and a title that say the same thing are printed
+once, since printing both reads as a fault rather than as information.
+
+"Load earlier" did nothing until the user left the tab and came back, because
+`hasOlder` was injected as a plain field read that never notified React.
+Whether older history remains is session *state*: it arrives as the standard
+`useSession` prop, which is how the official trajectory view gets it.
+
+Two render tests were added, and both were mutation-checked - reintroducing
+either bug fails exactly one test. The group-box one exists because the
+renderer had never been exercised against a group with a layout of its own.

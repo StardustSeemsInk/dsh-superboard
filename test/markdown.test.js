@@ -83,6 +83,9 @@ const { parseMarkdownBlocks, textFromBlocks, dialogueFromChat } = client
 /** Compact view of a parse result, so assertions read as the shape rather than the object. */
 const shape = (source) => parseMarkdownBlocks(source).map((block) => block.type)
 
+/** A parse result copied out of the sandbox realm, for assertions that compare whole structures. */
+const blocksOf = (source) => plain(parseMarkdownBlocks(source))
+
 // ---------------------------------------------------------------------------
 // Block parsing
 // ---------------------------------------------------------------------------
@@ -167,7 +170,7 @@ test('CRLF is normalised, so a Windows-authored body does not smuggle a bare car
 
 test('the parser always advances, so hostile input cannot hang it', () => {
   // Every branch either consumes a line or is guarded by a check that the first line qualifies.
-  for (const source of ['###', '>', '-', '```', '~~~', '> > >', '- ', '1.', '#'.repeat(200)]) {
+  for (const source of ['###', '>', '-', '```', '~~~', '> > >', '- ', '1.', '#'.repeat(200), '|', '| |', '|-|', '|\n|', '|||', '|'.repeat(100)]) {
     const blocks = parseMarkdownBlocks(source)
     assert.ok(Array.isArray(blocks))
     assert.ok(blocks.length <= 4, `${JSON.stringify(source)} produced ${blocks.length} blocks`)
@@ -175,11 +178,86 @@ test('the parser always advances, so hostile input cannot hang it', () => {
 })
 
 test('an unrecognised construct stays literal text instead of being reinterpreted', () => {
-  // Failing inert is the point: a table or an HTML tag is shown as typed.
-  const blocks = parseMarkdownBlocks('| a | b |\n| - | - |\n<div>raw</div>')
+  // Failing inert is the point: a definition list, a footnote and an HTML tag are all shown as
+  // typed. A pipe line is deliberately absent from this list — a table is now a construct this
+  // renderer knows, and the table tests below pin down exactly which pipe lines qualify.
+  const blocks = parseMarkdownBlocks('term\n: definition\n\n[^1]: note\n\n<div>raw</div>')
+  assert.deepEqual(
+    plain(blocks.map((block) => block.type)),
+    ['paragraph', 'paragraph', 'paragraph'],
+  )
+  assert.match(blocks[0].text, /: definition/)
+  assert.match(blocks[1].text, /\[\^1\]: note/)
+  assert.match(blocks[2].text, /<div>raw<\/div>/)
+})
+
+// ---------------------------------------------------------------------------
+// Tables
+// ---------------------------------------------------------------------------
+
+test('a header plus its separator is a table, and the pipes are gone', () => {
+  const blocks = blocksOf('| 候选 | 为什么不行 |\n|---|---|\n| draft | 对不上容器 |')
+  assert.equal(blocks.length, 1)
+  assert.equal(blocks[0].type, 'table')
+  assert.deepEqual([...blocks[0].header], ['候选', '为什么不行'])
+  assert.deepEqual(
+    blocks[0].rows.map((row) => [...row]),
+    [['draft', '对不上容器']],
+  )
+})
+
+test('a pipe line with no separator stays literal, because that is what failing inert means', () => {
+  const blocks = blocksOf('| a | b |\n| c | d |')
   assert.equal(blocks.length, 1)
   assert.equal(blocks[0].type, 'paragraph')
-  assert.match(blocks[0].text, /<div>raw<\/div>/)
+  assert.equal(blocks[0].text, '| a | b |\n| c | d |')
+})
+
+test('a bare thematic break is not mistaken for a one-column table', () => {
+  const blocks = blocksOf('---')
+  assert.notEqual(blocks[0]?.type, 'table')
+  assert.equal(blocks[0].type, 'paragraph')
+})
+
+test('the separator carries alignment per column', () => {
+  const blocks = blocksOf('| l | c | r |\n|:--|:-:|--:|\n| 1 | 2 | 3 |')
+  assert.deepEqual([...blocks[0].align], ['left', 'center', 'right'])
+})
+
+test('a table body stops at a blank line and the next block still parses', () => {
+  const blocks = blocksOf('| a |\n|---|\n| 1 |\n| 2 |\n\n## 之后')
+  assert.equal(blocks.length, 2)
+  assert.equal(blocks[0].rows.length, 2)
+  assert.equal(blocks[1].type, 'heading')
+  assert.equal(blocks[1].text, '之后')
+})
+
+test('outer pipes are optional and an escaped pipe belongs to its cell', () => {
+  const blocks = blocksOf('a | b\n--- | ---\nx \\| y | z')
+  assert.equal(blocks[0].type, 'table')
+  assert.deepEqual([...blocks[0].header], ['a', 'b'])
+  assert.deepEqual([...blocks[0].rows[0]], ['x | y', 'z'])
+})
+
+test('a ragged table is padded to its widest row rather than clipped', () => {
+  const blocks = blocksOf('| a | b | c |\n|---|---|---|\n| 1 |\n| 1 | 2 | 3 | 4 |')
+  assert.equal(blocks[0].rows.length, 2)
+  assert.deepEqual([...blocks[0].rows[0]], ['1'])
+  assert.deepEqual([...blocks[0].rows[1]], ['1', '2', '3', '4'])
+})
+
+test('a table interrupts a paragraph instead of being swallowed by it', () => {
+  const blocks = blocksOf('先说一句\n| a |\n|---|\n| 1 |')
+  assert.deepEqual(
+    blocks.map((block) => block.type),
+    ['paragraph', 'table'],
+  )
+})
+
+test('an escaped pipe alone does not make a row', () => {
+  // The separator test is what decides, and `a \| b` has no separator below it.
+  const blocks = blocksOf('a \\| b')
+  assert.equal(blocks[0].type, 'paragraph')
 })
 
 // ---------------------------------------------------------------------------

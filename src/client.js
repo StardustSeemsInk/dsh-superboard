@@ -35,7 +35,13 @@ window.__ModuleLoader__.load({
     // -----------------------------------------------------------------------
 
     const BOARD_CSS = [
-      '.sb-root{display:flex;flex-direction:column;gap:10px;min-width:0;height:100%;color:var(--dsw-alias-label-primary);}',
+      // The root carries `data-conversation-composer-overlay`, and that one attribute is what
+      // makes this a full-bleed view: the host gives the view area `flex:1 1 0; overflow:hidden`
+      // and floats the composer over the bottom instead of sticking it in the flow, and hides the
+      // transcript width handles (ConversationRoot.module.css:464-501 and :329). Fixed height +
+      // `overflow:hidden` is the other half of the contract — without it the scroll body grows to
+      // fit this view and the whole page scrolls, which is exactly the bug this fixes.
+      '.sb-root{display:flex;flex:1;flex-direction:column;gap:10px;min-width:0;height:100%;min-height:0;overflow:hidden;box-sizing:border-box;color:var(--dsw-alias-label-primary);}',
       '.sb-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;}',
       '.sb-title{font-size:13px;font-weight:600;line-height:18px;}',
       '.sb-rev{color:var(--dsw-alias-label-tertiary);font-size:11px;line-height:16px;font-variant-numeric:tabular-nums;}',
@@ -101,7 +107,11 @@ window.__ModuleLoader__.load({
       '.sb-hint{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);}',
       // The board and the reading column share the tab. They have to: only the active
       // conversation.view renders, so while the board is open the transcript is nowhere else.
-      '.sb-main{display:flex;align-items:stretch;flex:1;min-height:0;min-width:0;}',
+      // The composer floats over this view's bottom edge, so the band it occupies is reserved
+      // here rather than letting the selection bar sit underneath it where it cannot be clicked.
+      // `--dsh-composer-height` is published by the host's own ResizeObserver
+      // (ConversationContent.tsx:53-67); 152px is its resting height.
+      '.sb-main{display:flex;align-items:stretch;flex:1;min-height:0;min-width:0;padding-bottom:calc(var(--dsh-composer-height,152px) + 10px);}',
       '.sb-column{display:flex;flex-direction:column;gap:10px;flex:1;min-width:0;min-height:0;}',
       '.sb-reader{display:flex;flex-direction:column;gap:8px;flex:0 0 auto;position:relative;min-width:0;padding-left:10px;}',
       '.sb-readerHead{display:flex;align-items:center;gap:8px;}',
@@ -123,6 +133,14 @@ window.__ModuleLoader__.load({
       '.sb-mdH3,.sb-mdH4,.sb-mdH5,.sb-mdH6{font-size:13px;line-height:20px;}',
       '.sb-mdList{margin:0;padding-left:20px;}',
       '.sb-mdList li{margin:1px 0;}',
+      // A table wider than the column scrolls sideways rather than squeezing its cells into
+      // unreadable columns.
+      '.sb-mdTableWrap{max-width:100%;overflow-x:auto;}',
+      '.sb-mdTable{border-collapse:collapse;font-size:12px;line-height:18px;}',
+      '.sb-mdTable th,.sb-mdTable td{border:1px solid var(--dsw-alias-border-l2);padding:3px 8px;text-align:left;vertical-align:top;overflow-wrap:anywhere;}',
+      '.sb-mdTable th{background:var(--dsw-alias-bg-layer-2);font-weight:600;white-space:nowrap;}',
+      '.sb-mdAlignRight{text-align:right;}',
+      '.sb-mdAlignCenter{text-align:center;}',
       '.sb-mdQuote{margin:0;padding-left:10px;border-left:2px solid var(--dsw-alias-border-l2);color:var(--dsw-alias-label-secondary);}',
       '.sb-mdInner{font-size:12px;line-height:19px;}',
       '.sb-mdCode,.sb-code{margin:0;overflow-x:auto;}',
@@ -778,6 +796,13 @@ window.__ModuleLoader__.load({
         /^\s*>/u.test(line) ||
         LIST_ITEM.test(line)
 
+      // A table needs two lines to exist, so it cannot be recognised from one — it is a
+      // lookahead, not a line shape. Only the header-plus-separator pair starts one.
+      const isTableStart = (at) =>
+        at + 1 < lines.length &&
+        splitTableRow(lines[at]) !== null &&
+        isTableSeparator(lines[at + 1])
+
       while (index < lines.length) {
         const line = lines[index]
         if (line.trim() === '') {
@@ -817,6 +842,21 @@ window.__ModuleLoader__.load({
           continue
         }
 
+        if (isTableStart(index)) {
+          const header = splitTableRow(lines[index])
+          const align = tableAlignments(lines[index + 1])
+          index += 2
+          const rows = []
+          while (index < lines.length && lines[index].trim() !== '') {
+            const cells = splitTableRow(lines[index])
+            if (cells === null) break
+            rows.push(cells)
+            index += 1
+          }
+          blocks.push({ type: 'table', header, align, rows })
+          continue
+        }
+
         const item = LIST_ITEM.exec(line)
         if (item !== null) {
           const ordered = /\d/u.test(item[2])
@@ -835,7 +875,12 @@ window.__ModuleLoader__.load({
         // A paragraph consumes until a blank line or the start of another block. The first line
         // always qualifies, so this cannot fail to advance.
         const paragraph = []
-        while (index < lines.length && lines[index].trim() !== '' && !startsBlock(lines[index])) {
+        while (
+          index < lines.length &&
+          lines[index].trim() !== '' &&
+          !startsBlock(lines[index]) &&
+          !isTableStart(index)
+        ) {
           paragraph.push(lines[index])
           index += 1
         }
@@ -843,6 +888,52 @@ window.__ModuleLoader__.load({
       }
 
       return blocks
+    }
+
+    /**
+     * Split one table row into cells, or null when the line is not a row at all.
+     *
+     * A row must contain a pipe; requiring one is what keeps a bare `---` a thematic break
+     * instead of an empty table. An escaped `\|` belongs to its cell and does not split.
+     *
+     * @param line - the raw line.
+     * @returns the trimmed cells, or null.
+     */
+    function splitTableRow(line) {
+      if (!String(line).includes('|')) return null
+      const trimmed = String(line).trim().replace(/^\|/u, '').replace(/\|$/u, '')
+      if (trimmed === '') return null
+      return trimmed.split(/(?<!\\)\|/u).map((cell) => cell.replace(/\\\|/gu, '|').trim())
+    }
+
+    /**
+     * Whether a line is the `|---|:--:|` row that makes the line above it a header.
+     *
+     * This is the whole table rule: without a separator there is no table, and the pipe lines
+     * stay literal text. Fail inert.
+     *
+     * @param line - the candidate separator line.
+     * @returns whether every cell is a dash run with optional colons.
+     */
+    function isTableSeparator(line) {
+      const cells = splitTableRow(line)
+      if (cells === null || cells.length === 0) return false
+      return cells.every((cell) => /^:?-+:?$/u.test(cell))
+    }
+
+    /**
+     * Per-column alignment, read from the separator row's colons.
+     *
+     * @param line - the separator line.
+     * @returns one of `'left'`, `'right'`, `'center'` per column.
+     */
+    function tableAlignments(line) {
+      return (splitTableRow(line) ?? []).map((cell) => {
+        const left = cell.startsWith(':')
+        const right = cell.endsWith(':')
+        if (left && right) return 'center'
+        return right ? 'right' : 'left'
+      })
     }
 
     /** One list item: indent, marker, text. */
@@ -900,6 +991,53 @@ window.__ModuleLoader__.load({
               ),
             ),
           )
+        case 'table': {
+          // Ragged tables are normal in the wild, so the grid is as wide as its widest row and
+          // a short row is padded rather than silently clipped.
+          const width = block.rows.reduce(
+            (widest, row) => Math.max(widest, row.length),
+            block.header.length,
+          )
+          const alignClass = (position) =>
+            block.align[position] === 'right'
+              ? 'sb-mdAlignRight'
+              : block.align[position] === 'center'
+                ? 'sb-mdAlignCenter'
+                : undefined
+          const cell = (content, position, tag) =>
+            h(
+              tag,
+              { key: `${key}-${tag}${position}`, className: alignClass(position) },
+              renderInline(parseInline(content), `${key}-${tag}${position}`),
+            )
+          const columns = Array.from({ length: width }, (unused, position) => position)
+          return h(
+            'div',
+            { className: 'sb-mdTableWrap', key },
+            h('table', { className: 'sb-mdTable' }, [
+              h(
+                'thead',
+                { key: `${key}-head` },
+                h(
+                  'tr',
+                  null,
+                  columns.map((position) => cell(block.header[position] ?? '', position, 'th')),
+                ),
+              ),
+              h(
+                'tbody',
+                { key: `${key}-body` },
+                block.rows.map((row, rowIndex) =>
+                  h(
+                    'tr',
+                    { key: `${key}-row${rowIndex}` },
+                    columns.map((position) => cell(row[position] ?? '', position, 'td')),
+                  ),
+                ),
+              ),
+            ]),
+          )
+        }
         default:
           return h('p', { className: 'sb-mdP', key }, renderInline(parseInline(block.text), key))
       }
@@ -1015,17 +1153,15 @@ window.__ModuleLoader__.load({
     function ReadingColumn({ sessionId, useChat, loadOlder, hasOlder, width, onResize }) {
       const chat = typeof useChat === 'function' ? useChat((snapshot) => snapshot?.nodes) : undefined
       const [loading, setLoading] = React.useState(false)
-      // Bumped after a page loads so `hasOlder()` is re-read; the session keeps it as a plain
-      // field, so there is nothing to subscribe to.
-      const [generation, setGeneration] = React.useState(0)
       const scrollRef = React.useRef(null)
       const pinnedRef = React.useRef(true)
 
       const turns = React.useMemo(() => dialogueFromChat(chat === undefined ? undefined : { nodes: chat }), [chat])
-      void generation
       void sessionId
 
-      const canLoadOlder = typeof hasOlder === 'function' ? hasOlder() : false
+      // A boolean, not a getter: the caller reads it from the session snapshot, so a page landing
+      // re-renders this on its own.
+      const canLoadOlder = hasOlder === true
 
       // Keep the view pinned to the newest turn unless the user has scrolled up to read.
       React.useEffect(() => {
@@ -1039,7 +1175,6 @@ window.__ModuleLoader__.load({
         setLoading(true)
         try {
           await loadOlder()
-          setGeneration((value) => value + 1)
         } finally {
           setLoading(false)
         }
@@ -1151,7 +1286,7 @@ window.__ModuleLoader__.load({
       inputActions,
       attachFeedback,
       loadOlder,
-      hasOlder,
+      useSession,
     }) {
       const board = useProjection('board')
       // Persisted so the column the user chose survives a tab switch and a reload.
@@ -1175,6 +1310,10 @@ window.__ModuleLoader__.load({
       // is guarded because `useInput` resolves to the composer's shell state, which is `undefined`
       // until the composer mounts — and a throw here would blank the whole pane.
       const draft = typeof useInput === 'function' ? useInput((snapshot) => snapshot?.draft) : undefined
+      // Whether older history remains. Read through the hook rather than off the session object:
+      // the object's field only changes on a re-render something else caused, which is why the
+      // button used to do nothing until the user left the tab and came back.
+      const hasOlder = typeof useSession === 'function' ? useSession((snapshot) => snapshot?.hasMore === true) : false
 
       const model = board?.model
       const pages = model?.pages ?? []
@@ -1385,7 +1524,7 @@ window.__ModuleLoader__.load({
       if (model === undefined) {
         return h(
           'div',
-          { className: 'sb-root', 'data-superboard': '' },
+          { className: 'sb-root', 'data-superboard': '', 'data-conversation-composer-overlay': '' },
           h(BoardStyles),
           h(
             'div',
@@ -1401,7 +1540,7 @@ window.__ModuleLoader__.load({
 
       return h(
         'div',
-        { className: 'sb-root', 'data-superboard': '' },
+        { className: 'sb-root', 'data-superboard': '', 'data-conversation-composer-overlay': '' },
         h(BoardStyles),
         // The board and the strip share the tab. They have to: only the active `conversation.view`
         // renders, so while the board is open the transcript is not on screen anywhere else, and a
@@ -1562,8 +1701,11 @@ window.__ModuleLoader__.load({
       return h(
         'section',
         {
-          className: `sb-groupBox ${layoutClass(block.layout)}${innerNeedsAnchor ? ' sb-anchored' : ''}${at === undefined ? '' : ' sb-pinned'}`,
-          style: { ...layoutStyle(block.layout, width), ...(at ?? {}) },
+          // Exactly one element per group carries the layout: the body below, which is the one
+          // that arranges the children. The box stays a plain flex column so its two rows — the
+          // head and the body — behave the same whatever the children are arranged with.
+          className: `sb-groupBox${at === undefined ? '' : ' sb-pinned'}`,
+          style: at,
           'data-block-id': block.id,
           'data-block-slug': block.slug,
           'data-superboard-group': '',
@@ -1572,11 +1714,17 @@ window.__ModuleLoader__.load({
           'div',
           { className: 'sb-groupHead' },
           h('span', { className: 'sb-slug' }, block.slug),
-          block.title !== undefined && h('span', { className: 'sb-groupTitle' }, block.title),
+          // A slug is the address and a title is the label; when the Agent uses the same words for
+          // both, printing them twice reads as a rendering fault rather than as information.
+          block.title !== undefined &&
+            block.title !== block.slug &&
+            h('span', { className: 'sb-groupTitle' }, block.title),
           h('span', { className: 'sb-kind' }, `${children.length} 项`),
           region?.label !== undefined && h('span', { className: `sb-regionTag sb-tone-${region.tone ?? 'neutral'}` }, region.label),
         ),
-        // A group with no layout of its own still needs to arrange its children somehow.
+        // A group with no layout of its own still needs to arrange its children somehow, and
+        // `sb-anchored` is what makes `at` on a grandchild measure against this box rather than
+        // against the page.
         h(
           'div',
           {
@@ -1658,13 +1806,15 @@ window.__ModuleLoader__.load({
                   inject: (sessionId) => {
                     const session = ctx.sessions?.binding?.(sessionId)?.session
                     return {
+                      // Returns whether a page was actually requested, so the view can tell a
+                      // real load from a no-op. Whether older history *remains* is deliberately not
+                      // answered here: that is state, and it arrives as the standard `useSession`
+                      // prop below, because a plain field read off this object never re-renders.
                       loadOlder: async () => {
-                        if (session === undefined) return
+                        if (session === undefined) return false
                         await session.loadOlder()
+                        return true
                       },
-                      // Not a store: the session keeps paging state as plain fields, so this is
-                      // re-read after each load rather than subscribed to.
-                      hasOlder: () => session?.hasMore === true,
                       // The research's recommendation: an attachment is pure public API, touches
                       // no official slot, and yields the official card with its delete button.
                       attachFeedback: async ({ payload }) => {
