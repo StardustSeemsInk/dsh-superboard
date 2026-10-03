@@ -43,18 +43,92 @@ Each one *removes* options, which is why they come first.
 | **S9** | Context injection has exactly two supported routes: `ctx.systemPrompt.section()` and `agent.inject()` (which does **not** wake the driver) | **U6 is natively supported.** `inject()` can wait in the inbox until other input arrives — exactly the "outline attached to the turn that needs it" behaviour. |
 | **S10** | `ctx.tools.register({ parameters })` takes **plain JSON Schema**; `execute` returns content blocks | The Agent-facing tool surface is unconstrained by schema-library ceremony. Design it for the model, not the framework. |
 | **S11** | Client `layout` service: `selectPanel`, `toggleSidebar`, `openRightbar(track, fullscreen)`, `closeRightbar` | U8's three layout states (canvas-primary / chat-primary / both) are all expressible with one service. |
-| **S12** | Verified mechanism for the canvas as primary UI: `main` key `superboard` + a `sidebar.panellist` entry with the same `id`; `ctx.layout.selectPanel("superboard")` shows the canvas, `selectPanel(null)` restores the conversation | **U8's swap is available in v1**, contradicting round 1's "phase it" recommendation. |
+| **S12** | Verified mechanism for the canvas as primary UI: `main` key `superboard` + a `sidebar.panellist` entry with the same `id`; `ctx.layout.selectPanel("superboard")` shows the canvas, `selectPanel(null)` restores the conversation | The `main`-panel route works mechanically — **but see S13/S14: it is the wrong route for this product.** |
+| **S13** | The right sidebar is only shown while `activePanelId === null`: `show(layout.panelInfo.getSnapshot().activePanelId === null ? selected?.sessionId : void 0)` (`dsh-client-ui-sidebar-right/lib/client.js:9062`) | **Any plugin `main` panel auto-hides the right sidebar.** So "canvas in the centre + chat in the right pane" is impossible, and the Q1 option (a) from round 1 is dead. |
+| **S14** | The main conversation **cannot** be embedded in a right-pane tab. It lives at `main` key `conversation`; a slot can be declared once (`dsh-client-ui-slots/lib/index.js:191-194`) and `renderSlot` only accepts keys the caller declared (`dsh-client-ui-renderer/lib/client.js:332`, `SlotOwnershipError`). The `sidebar.chat.conversation` slot belongs to `dsh-client-ui-subagent` and binds a **subagent child session**, not the main one. | "Chat becomes a collapsible right-sidebar module" is **not achievable within the framework.** Any chat surface on the board must be rendered by us from session data, not embedded. |
+| **S15** | The conversation page's own tab strip is the `conversation.view` **list** slot: declared with `children: { "conversation.view": { kind: "list", scope: "session" } }` on `conversation.session` (`dsh-client-ui-conversation/lib/client.js:18209-18214`); enumerated as `slots.entries("conversation.view")` → `{id, label}` (`:17972-17984`); rendered as a `role="tablist"` of buttons when `tabs.length > 1` (`:16460`, `:16512-16526`); only the active view renders, via `renderSlot("conversation.view", props, { only: viewId })` (`:16412-16421`). The active view persists per session behind `readConversationViewPreference`/`activateView` (`:17985-17991`). Registration is a single ordinary `ctx.slots.register({ name: "conversation.view", id, order, label }, View)`. | **The board is a third tab, not a third panel.** One registration; DSH builds the tab button and the tab strip appears on its own. Because the main panel stays `conversation`, `activePanelId` stays `null` and the right sidebar keeps working. |
 
 ---
 
-## Open — round 1
+## Resolved — round 1
+
+### Q1 — where the board lives · **SETTLED: a third `conversation.view` tab**
+
+**Decision (user, after asking to look at the existing tab strip):** the board is added as a
+view tab on the conversation page — the same strip that already holds *对话* and *轨迹* — and
+the conversation simply stays in its own tab. The user also chose **B** on the follow-up: the
+board carries its own **collapsible condensed chat strip**, since the right pane cannot host
+the real conversation.
+
+**Mechanism (verified, S15):**
+
+```js
+ctx.slots.inject("conversation.view", () => ctx.slots.register({
+  name: "conversation.view",
+  id: "board",
+  order: 20,
+  label: () => t("board"),
+}, BoardView))
+```
+
+That is the whole integration. DSH builds the tab button, and `tabs.length > 1` turns the strip
+on. Only the active view renders, so **the board unmounts when the user switches away** — which
+is not a new cost, because the settled storage model (Q4: log-native) already requires all board
+state to live outside React.
+
+**Why the alternatives were rejected:**
+
+- **Board as a `main` panel** — mechanically works (S12) but S13 kills it: a non-null
+  `activePanelId` auto-hides the right sidebar, so U8's collapse behaviour dies with it.
+- **Board in the right sidebar** (U9, the user's own simpler proposal) — works, but confines the
+  board to a narrow column and abandons "the canvas replaces the conversation as the UI subject".
+- **Chat in a right-pane tab** — impossible (S14).
+
+**Consequences accepted:**
+
+1. **U8 is partially unmet and cannot be met.** "Chat becomes a collapsible right-sidebar
+   module" is not expressible in the framework (S14). Replaced by: chat and board are peer tabs,
+   and the board provides a collapsible condensed chat strip of our own rendering.
+2. **Chat and board are mutually exclusive** in view. The right sidebar remains available for the
+   map, attachments, and file previews.
+3. **Every board state change must survive unmount.** The board's React tree is disposable.
+
+---
+
+## Settled — storage and edit model (round 1, Q4)
+
+**Q4 — the Agent's write path — SETTLED: log-native.**
+
+**Decision (user):** the board *is* the fold of its own committed `board_apply` tool calls.
+Every edit is a tool call, therefore a committed session event, therefore replayable. A
+read-only `.dsh-superboard/` mirror provides git diffability. No plugin-owned truth.
+
+This is the compliant reading of S8, and it buys fork/resume/replay for free.
+
+**The question it opens (was Q6, now Q-A below):** if the board is a fold over the Agent's tool
+calls, then **what happens when the *user* edits the board directly?** A drag or an inline text
+edit produces no tool call, so under a strict log-native model the user's edit is either not
+durable or not authoritative. The two coherent answers are:
+
+- **Agent-only writes.** The board is read-only to the user; every user gesture becomes input to
+  the next message (a selection, a comment, an annotation), and only the Agent writes. Perfectly
+  consistent with "log is truth". Cost: the user cannot tidy the board without asking.
+- **User writes are also logged.** A user edit must then become a committed event, and the only
+  appendable vocabulary is *existing* documented event types (S8) plus tool calls — so a direct
+  edit has to be routed through a tool call (the client asks the host to invoke a tool) or
+  written into `ctx.storageDomain` and reconciled. Consistent, but the "fold over tool calls"
+  claim gets a second author and needs a reconciliation rule.
+
+**This is the next question (Q-A).**
+
+---
 
 Asked, unanswered. Recommendations marked ➡️. Rationale lives in the interview; only the
 decision and its consequence are recorded here.
 
 | # | Decision | ➡️ Recommendation | Consequence if yes |
 |---|---|---|---|
-| **Q1** | Where the canvas lives and how the swap works: (a) `main` panel + chat in right pane, (b) right-sidebar tab only, (c) both, with a live swap | **(c)** — upgraded from "phased" to **full v1** after S12 turned out to be a shell facility | Canvas becomes a peer of the conversation; `sidebar.panellist` gains a row; the right pane hosts either chat or a live canvas minimap |
+| ~~**Q1**~~ | ~~Where the canvas lives and how the swap works~~ | **SETTLED — board is a third `conversation.view` tab** (see below) | — |
 | **Q2** | Rendering technology: own DOM/SVG layer / React Flow / Excalidraw | **Own DOM/SVG layer**, with the scene model strictly separated from the renderer | A few hundred lines of pan/zoom/marquee/selection plumbing; total control over PDF anchoring and real editable markdown DOM; React Flow's attribution licensing stays unresolved rather than becoming a dependency |
 | **Q3** | Primary element model: freeform absolute rectangles vs block-flow with optional absolute offsets | **Block-flow-first** — ordered typed blocks with stable ids, plus optional position overrides and region grouping; arrows connect element anchors | The Agent reasons in reading order and relationships instead of guessing pixel coordinates |
 | **Q4** | Agent write path: granular per-op tools / transactional `board_apply(ops[])` / DSL source file / raw `fs` | **Transactional `board_apply` with expected-revision check**, plus `board_outline`, `board_read`, `board_render`, `board_query` | A 12-node diagram costs one tool call, not twelve; a stale write fails loudly instead of clobbering |
