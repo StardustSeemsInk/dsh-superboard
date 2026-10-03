@@ -14,7 +14,7 @@
  */
 
 import { z } from 'zod'
-import { BLOCK_KINDS, EDGE_RELS, LAYOUT_TEMPLATES } from './model.js'
+import { BLOCK_KINDS, BOARD_MODEL_VERSION, EDGE_RELS, LAYOUT_TEMPLATES } from './model.js'
 
 const anchorAt = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('block') }),
@@ -107,6 +107,15 @@ const block = z.discriminatedUnion('kind', [
     title: z.string().optional(),
     children: z.array(z.string()),
     collapsed: z.boolean().optional(),
+    /**
+     * How this container arranges its children.
+     *
+     * A group is the only thing that lays anything out besides a page, and groups nest — so the
+     * visual tree the Agent edits is `page → group → group → … → block`. `region` deliberately has
+     * no layout: it is annotation, not arrangement, and giving both a layout is what made them
+     * ambiguous in the first place.
+     */
+    layout: layout.optional(),
   }),
 ])
 
@@ -119,13 +128,20 @@ const page = z.object({
   createdAtRev: z.string(),
 })
 
+/**
+ * A region: a labelled, toned set of blocks.
+ *
+ * **Annotation, not arrangement** (the layout grill's division of labour). A region says "watch
+ * these" — it draws attention without moving anything — while a `group` decides where things go.
+ * Membership is flat rather than nested on purpose: a highlight should be able to sit inside a
+ * layout without fighting it. That is also why there is no `layout` field here any more.
+ */
 const region = z.object({
   id: z.string(),
   slug: z.string(),
   alias: z.array(z.string()),
   blockIds: z.array(z.string()),
   label: z.string().optional(),
-  layout: layout.optional(),
   tone: z.enum(['neutral', 'warn', 'danger', 'ok']).optional(),
   createdAtRev: z.string(),
 })
@@ -173,7 +189,7 @@ const boardModel = z.object({
  * something we can promise a shape for. The fold treats anything unusable as "skip".
  */
 export const boardDocSchema = z.object({
-  modelVersion: z.literal(1),
+  modelVersion: z.literal(BOARD_MODEL_VERSION),
   sessionId: z.string(),
   model: boardModel,
   diag: z.record(z.string(), renderDiagnostic),
@@ -190,7 +206,7 @@ export const boardDocSchema = z.object({
 
 /** What the client receives. */
 export const boardWireSchema = z.object({
-  modelVersion: z.literal(1),
+  modelVersion: z.literal(BOARD_MODEL_VERSION),
   model: boardModel,
   diag: z.record(z.string(), renderDiagnostic),
 })

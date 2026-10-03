@@ -634,8 +634,9 @@ function buildBlock(op, context, model, page, id) {
       return {
         ...base,
         ...(typeof op.title === 'string' ? { title: op.title } : {}),
-        children: normaliseChildren(op.children, page),
+        children: normaliseChildren(op.children, page, id),
         ...collapsed(op.collapsed),
+        ...(op.layout === undefined ? {} : { layout: normaliseLayout(op.layout) }),
       }
     default:
       throw new BoardOpError(`unsupported block kind ${JSON.stringify(kind)}`)
@@ -745,6 +746,28 @@ function opUpdateBlock(model, op, context) {
   if (Array.isArray(op.anchors)) {
     touched = true
     patched.anchors = op.anchors
+  }
+  // `children` and `layout` are group-only, and they are patched rather than normalised in the
+  // loop above because both need the block's own id: `children` to keep a container from adopting
+  // itself, and neither is a plain string assignment.
+  if (op.children !== undefined) {
+    if (block.kind !== 'group') {
+      throw new BoardOpError(
+        `block ${JSON.stringify(block.slug)} is a ${block.kind}; only a group has children`,
+      )
+    }
+    touched = true
+    patched.children = normaliseChildren(op.children, page, block.id)
+  }
+  if (op.layout !== undefined) {
+    if (block.kind !== 'group') {
+      throw new BoardOpError(
+        `block ${JSON.stringify(block.slug)} is a ${block.kind}; only a group carries a layout — ` +
+          'use set_layout for a page',
+      )
+    }
+    touched = true
+    patched.layout = normaliseLayout(op.layout)
   }
   if (typeof op.slug === 'string' && op.slug.trim() !== '') {
     touched = true
@@ -948,7 +971,7 @@ function opDeleteEdge(model, op) {
 }
 
 /**
- * `set_layout` — replace a page's or region's layout wholesale; `null` restores the default.
+ * `set_layout` — replace a page's or group's layout wholesale; `null` restores the default.
  *
  * The scope arrives as a plain reference string (the tool schema says `scope` is a page or region
  * reference, and that is what a model sends), but the op form also accepts the explicit
@@ -1002,26 +1025,45 @@ function resolveLayoutScope(model, scope) {
   if (typeof scope === 'string') {
     const asPage = tryResolve(model, scope, 'page')
     if (asPage !== undefined) return { kind: 'page', element: asPage.element }
-    const asRegion = tryResolve(model, scope, 'region')
-    if (asRegion !== undefined) return { kind: 'region', element: asRegion.element }
+    const asGroup = tryResolve(model, scope, 'block')
+    if (asGroup !== undefined && asGroup.element.kind === 'group') {
+      return { kind: 'group', element: asGroup.element, page: asGroup.page }
+    }
     throw new BoardOpError(
-      `set_layout scope ${JSON.stringify(scope)} matches no page or region. Pages: ${
+      `set_layout scope ${JSON.stringify(scope)} matches no page or group. Pages: ${
         model.pages.map((page) => page.slug).join(', ') || '(none)'
-      }; regions: ${model.regions.map((region) => region.slug).join(', ') || '(none)'}`,
+      }; groups: ${model.pages
+        .flatMap((page) => page.blocks.filter((block) => block.kind === 'group'))
+        .map((block) => block.slug)
+        .join(', ') || '(none)'}`,
     )
   }
   if (typeof scope === 'object' && scope !== null) {
     if (scope.page !== undefined) {
       return { kind: 'page', element: resolveElement(model, scope.page, 'page').element }
     }
-    if (scope.region !== undefined) {
-      return { kind: 'region', element: resolveElement(model, scope.region, 'region').element }
+    if (scope.group !== undefined) {
+      const found = resolveElement(model, scope.group, 'block')
+      if (found.element.kind !== 'group') {
+        throw new BoardOpError(
+          `set_layout scope.group names ${JSON.stringify(found.element.slug)}, a ${found.element.kind}, not a group`,
+        )
+      }
+      return { kind: 'group', element: found.element, page: found.page }
     }
   }
-  throw new BoardOpError('set_layout requires "scope" as a page or region reference')
+  throw new BoardOpError(
+    'set_layout requires "scope" as a page or group reference. Regions are annotation only and carry no layout.',
+  )
 }
 
-/** Apply a layout (or its absence) to a resolved scope. */
+/**
+ * Apply a layout (or its absence) to a resolved scope.
+ *
+ * A `region` is deliberately not a legal scope: the layout grill split "where things go" (a group,
+ * or a page) from "what to look at" (a region). Accepting a region here is what made the two
+ * ambiguous, so a region scope now fails with a message naming the group alternative.
+ */
 function withLayout(model, target, layout) {
   if (target.kind === 'page') {
     return replacePage(model, target.element.id, (current) => {
@@ -1031,16 +1073,22 @@ function withLayout(model, target, layout) {
       return next
     })
   }
-  return {
-    ...model,
-    regions: model.regions.map((current) => {
-      if (current.id !== target.element.id) return current
-      const next = { ...current }
+  const page = target.page ?? model.pages.find((candidate) =>
+    candidate.blocks.some((block) => block.id === target.element.id),
+  )
+  if (page === undefined) {
+    throw new BoardOpError(`set_layout cannot find the page owning group ${JSON.stringify(target.element.slug)}`)
+  }
+  return replacePage(model, page.id, (current) => ({
+    ...current,
+    blocks: current.blocks.map((block) => {
+      if (block.id !== target.element.id) return block
+      const next = { ...block }
       if (layout === undefined) delete next.layout
       else next.layout = layout
       return next
     }),
-  }
+  }))
 }
 
 /** `set_region` — upsert a semantic cluster; membership is replaced wholesale. */
@@ -1059,7 +1107,6 @@ function opSetRegion(model, op, context) {
       if (region.id === previous.element.id) {
         const next = { ...region, blockIds: [...members] }
         if (op.label !== undefined) next.label = String(op.label).normalize('NFC')
-        if (op.layout !== undefined) next.layout = normaliseLayout(op.layout)
         if (op.tone !== undefined) {
           next.tone = requireOneOf(op.tone, ['neutral', 'warn', 'danger', 'ok'], 'region tone')
         }
@@ -1088,7 +1135,6 @@ function opSetRegion(model, op, context) {
         alias: [],
         blockIds: [...members],
         ...(op.label === undefined ? {} : { label: String(op.label).normalize('NFC') }),
-        ...(op.layout === undefined ? {} : { layout: normaliseLayout(op.layout) }),
         ...(op.tone === undefined
           ? {}
           : { tone: requireOneOf(op.tone, ['neutral', 'warn', 'danger', 'ok'], 'region tone') }),
@@ -1195,19 +1241,44 @@ function normaliseItems(value, context, model, page) {
   })
 }
 
-/** Validate a group's children: same page, existing, and claimed by no other group. */
-function normaliseChildren(value, page) {
+/**
+ * Validate a group's children: same page, existing, and claimed by no other group.
+ *
+ * **Groups nest**, which is the point of the layout grill's decision: a page lays out its blocks, a
+ * group lays out its children, and a group may itself be a child — so the Agent edits a tree, the
+ * structure it already reasons in natively.
+ *
+ * Two rules keep that tree well-formed rather than merely acyclic:
+ *
+ *   - **Exclusive membership.** A block belongs to at most one group, so the structure is a forest
+ *     by construction — which is what makes a cycle impossible without needing a traversal to
+ *     detect one. The owner set deliberately excludes `selfId`, since a container's own children
+ *     are being replaced and must be free to re-adopt.
+ *   - **No self-membership.** With exclusive membership the only cycle left is a group listing
+ *     itself, which is cheap to reject outright.
+ *
+ * @param value - the `children` references.
+ * @param page - the owning page.
+ * @param selfId - the id of the group being built or patched, excluded from the owner scan.
+ * @returns the resolved child ids.
+ */
+function normaliseChildren(value, page, selfId) {
   if (!Array.isArray(value)) throw new BoardOpError('group "children" must be an array of block references')
   const claimed = new Set()
   for (const block of page.blocks) {
-    if (block.kind !== 'group') continue
+    if (block.kind !== 'group' || block.id === selfId) continue
     for (const child of block.children ?? []) claimed.add(child)
   }
+  const seen = new Set()
   return value.map((ref) => {
     const child = resolveBlockInPage(page, ref)
-    if (child.kind === 'group') {
-      throw new BoardOpError(`group ${JSON.stringify(child.slug)} is itself a group; groups cannot nest`)
+    if (child.id === selfId) {
+      throw new BoardOpError(`group ${JSON.stringify(child.slug)} cannot contain itself`)
     }
+    if (seen.has(child.id)) {
+      throw new BoardOpError(`block ${JSON.stringify(child.slug)} is listed twice in the same group`)
+    }
+    seen.add(child.id)
     if (claimed.has(child.id)) {
       throw new BoardOpError(
         `block ${JSON.stringify(child.slug)} already belongs to another group; a block may belong to at most one`,

@@ -11,8 +11,15 @@
  * @module dsh-superboard/model
  */
 
-/** The projection's state version. Bump on any change to `BoardDoc`'s fields or fold semantics. */
-export const BOARD_MODEL_VERSION = 1
+/**
+ * The projection's state version.
+ *
+ * Bumped to 2 by the layout grill: `group` blocks gained a `layout`, `region` lost one, and the
+ * template vocabulary changed (`tree` out — nested groups *are* a tree; `row` in). Bumping is what
+ * makes an old checkpoint get re-folded from the log rather than parsed into a shape it no longer
+ * matches, and re-folding is exactly what the log-native design buys.
+ */
+export const BOARD_MODEL_VERSION = 2
 
 /** Block kinds, in the order `board-model.md` §1.3 lists them. */
 export const BLOCK_KINDS = Object.freeze([
@@ -38,8 +45,23 @@ export const EDGE_RELS = Object.freeze([
   'relates',
 ])
 
-/** Layout templates (Q-E: the Agent declares structure, the engine decides geometry). */
-export const LAYOUT_TEMPLATES = Object.freeze(['flow', 'columns', 'grid', 'tree', 'canvas'])
+/**
+ * Layout templates — the arrangement vocabulary (Q-E, extended after the layout grill).
+ *
+ * Each name maps to something the model already knows cold from CSS, because the Agent cannot see
+ * the canvas: it reasons about a **tree**, the way it reasons about DOM or any GUI toolkit. A
+ * vocabulary it has read a million times beats a bespoke one it has to learn.
+ *
+ *   `flow`    — a vertical stack; the default.
+ *   `row`     — a horizontal run that wraps when it runs out of width.
+ *   `columns` — a grid of `cols` equal columns.
+ *   `grid`    — a grid that fits as many `minCardWidth` cards per row as the width allows.
+ *   `canvas`  — no arrangement at all; children place themselves with `at`.
+ *
+ * The former `tree` template is gone: nesting a `group` inside a `group` *is* a tree, and having
+ * both would be two ways to say one thing.
+ */
+export const LAYOUT_TEMPLATES = Object.freeze(['flow', 'row', 'columns', 'grid', 'canvas'])
 
 /** Element-id prefixes, one per addressable element kind. */
 export const ID_PREFIX = Object.freeze({
@@ -282,8 +304,6 @@ export function encodeModelForHash(model) {
       FIELD_SEP,
       region.label ?? '',
       FIELD_SEP,
-      region.layout === undefined ? '' : encodeLayout(region.layout),
-      FIELD_SEP,
       region.tone ?? '',
       FIELD_SEP,
       ELEMENT_SEP,
@@ -387,7 +407,16 @@ function encodeBlock(block) {
       )
       break
     case 'group':
-      parts.push(block.title ?? '', FIELD_SEP, block.children.join(','), FIELD_SEP, block.collapsed === true ? '1' : '0')
+      parts.push(
+        block.title ?? '',
+        FIELD_SEP,
+        block.children.join(','),
+        FIELD_SEP,
+        block.collapsed === true ? '1' : '0',
+        FIELD_SEP,
+        // A container's layout is content, not presentation: changing it changes the board.
+        block.layout === undefined ? '' : encodeLayout(block.layout),
+      )
       break
     default:
       parts.push(JSON.stringify(block))

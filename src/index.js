@@ -33,7 +33,7 @@ import {
   emptyActivity,
   foldActivity,
 } from './activity.js'
-import { emptyBoardDoc } from './model.js'
+import { emptyBoardDoc, BOARD_MODEL_VERSION } from './model.js'
 import { boardDocSchema, boardWireSchema, toWire } from './schema.js'
 import { registerBoardTools, renderOutlineText } from './tools.js'
 
@@ -79,7 +79,7 @@ export function apply(ctx) {
       init: (header) => emptyBoardDoc(header?.id ?? ''),
       apply: (state, event) => foldBoard(state, event),
       wire: { viewSchema: boardWireSchema, view: (state) => toWire(state) },
-      stateVersion: 1,
+      stateVersion: BOARD_MODEL_VERSION,
     })
 
     // The condensed chat strip's data source. A second projection rather than a transport: the

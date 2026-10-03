@@ -522,7 +522,15 @@ function operationSchema() {
     // block belongs to" (a slug). One name cannot be both a slug and a page number.
     pdfPage: int('pdf-page: 1-based page number.'),
     title: str('group: container title.'),
-    children: arrayOf('group: block references on the same page.'),
+    children: arrayOf('group: block references on the same page. Groups may nest.'),
+    layout: closedObject(
+      {
+        template: oneOfStrings('How this group arranges its children.', [...LAYOUT_TEMPLATES]),
+        params: openObject('Template parameters, such as { cols: 2 } or { minCardWidth: 240 }.'),
+      },
+      ['template'],
+      'group: how this container arranges its children. Omit to use the default flow.',
+    ),
   }
 
   return {
@@ -602,12 +610,11 @@ function operationSchema() {
         opBranch(
           'set_layout',
           {
-            scope: str('Page or region reference.'),
+            scope: str('Page or group reference. A region carries no layout.'),
             template: oneOfStrings('Layout template.', [...LAYOUT_TEMPLATES]),
-            cols: int('columns and grid: maximum columns.'),
+            cols: int('columns: how many equal columns.'),
             gap: int('Spacing between cards, in pixels.'),
-            root: str('tree: the root block reference.'),
-            direction: oneOfStrings('flow: direction.', ['down', 'right']),
+            direction: oneOfStrings('row: wrap direction.', ['down', 'right']),
             minCardWidth: int('grid: minimum card width, in pixels.'),
           },
           ['scope', 'template'],
@@ -619,7 +626,6 @@ function operationSchema() {
             blockIds: arrayOf('The complete membership list.'),
             label: str('Region label.'),
             tone: oneOfStrings('Visual tone.', ['neutral', 'warn', 'danger', 'ok']),
-            template: oneOfStrings('Layout template for this cluster.', [...LAYOUT_TEMPLATES]),
           },
           ['blockIds'],
         ),
