@@ -1,12 +1,12 @@
 # dsh-superboard — design tree
 
-**Status: main tree settled (rounds 1–4). Remaining work is verification, not preference.**
+**Status: main tree settled (rounds 1–4); M0–M4 built and tested. Q7 revised at M4.**
 This file is the working record of the design tree. It becomes a specification once the
 §Remaining unknowns are closed and the user confirms shared understanding.
 
 | Settled | Remaining |
 |---|---|
-| **Q1** board home · **Q2** renderer · **Q3** element model · **Q4** write path · **Q-A** who writes · **Q-B** v1 scope · **Q-C** pages · **Q-D** context injection · **Q-E** layout templates · **Q-F** arrow semantics · **Q-G** addressing · **Q-H** feedback payload · **Q7** feedback channel · **Q-J** scope · **Q-K** chat strip | **Q-I** mermaid reachability · **Q7-impl** draft attachment · **Q-L** revision contract · **Q-M** outline budget · **Q-N** chat strip data |
+| **Q1** board home · **Q2** renderer · **Q3** element model · **Q4** write path · **Q-A** who writes · **Q-B** v1 scope · **Q-C** pages · **Q-D** context injection · **Q-E** layout templates · **Q-F** arrow semantics · **Q-G** addressing · **Q-H** feedback payload · **Q7** feedback channel *(revised: board-local tray)* · **Q-J** scope · **Q-K** chat strip | **Q-I** mermaid reachability · **Q-L** revision contract · **Q-M** outline budget · **Q-N** chat strip data source |
 
 Read [`../research/dsh-plugin-contract.md`](../research/dsh-plugin-contract.md) first: it holds
 the verified Harness constraints these decisions must respect.
