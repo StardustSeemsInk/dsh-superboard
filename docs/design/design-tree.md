@@ -1,12 +1,12 @@
 # dsh-superboard — design tree
 
-**Status: in progress — rounds 1 and 2 settled; round 3 open.**
+**Status: in progress — rounds 1–3 settled; round 4 open. Two verifiers running.**
 This file is the working record of the design tree. It is not a specification until every
 branch is marked settled and the user confirms shared understanding.
 
 | Settled | Open |
 |---|---|
-| **Q1** board home · **Q2** renderer · **Q3** element model · **Q4** write path · **Q-A** who writes · **Q-B** v1 scope · **Q-C** pages · **Q-D** context injection | **Q7** feedback channel · layout engine · chat strip · addressing · revisions · arrow semantics · Q-F cross-conversation reuse |
+| **Q1** board home · **Q2** renderer · **Q3** element model · **Q4** write path · **Q-A** who writes · **Q-B** v1 scope · **Q-C** pages · **Q-D** context injection · **Q-E** layout templates · **Q-F** arrow semantics · **Q-G** addressing · **Q-H** feedback payload | **Q7** feedback channel · **Q-I** mermaid reachability · chat strip · revisions · outline budget · **Q-J** cross-conversation reuse |
 
 Read [`../research/dsh-plugin-contract.md`](../research/dsh-plugin-contract.md) first: it holds
 the verified Harness constraints these decisions must respect.
@@ -203,11 +203,60 @@ Consequences:
 
 ---
 
-## Open — Q7 (carried from round 1)
+## Resolved — round 3
+
+### Q-E — layout · **SETTLED: templates first, the Agent declares structure**
+
+The Agent declares *what belongs to what* and *what points at what* — never coordinates. The
+engine produces a readable default arrangement; a block or region can carry a template name
+(flow / columns / grid / tree). "Make it tidy" becomes *the Agent switches templates*, not the
+Agent guessing pixels. Absolute positioning survives as the exception.
+
+This follows directly from Q-A: a board that is read more often than it is written makes layout
+quality a feature. Borrowing the GUI-framework division of labour (declarative structure, engine
+geometry) is exactly the user's stated intent.
+
+### Q-F — arrows · **SETTLED: directed semantic edges with optional labels**
+
+An arrow means "A → B" and is queryable in that direction; it may additionally carry a free-text
+label or type name (depends / causes / contains / next). Both a casual arrow and a queryable
+relation, without forcing a controlled vocabulary onto every stroke.
+
+### Q-G — addressing · **SETTLED: readable slug as the address, stable id underneath**
+
+Blocks carry a human-readable slug (`架构图`, `风险-1`) as the primary address plus an opaque
+stable id. The Agent may reference either; **renaming does not break arrows, because edges anchor
+to ids and the slug is only an alias.** Collisions get a numeric suffix. This keeps the
+transcript, the outline, and tool arguments legible for the user as well as the model.
+
+Rejected: opaque ids only (unreadable to both the model and the user), and positional references
+(page + index), which silently break on every insert or delete.
+
+### Q-H — feedback payload · **SETTLED: structured text in v1, on-demand bitmaps later**
+
+v1 sends only the structured form: the selected blocks' ids, their text, and the edges connected
+to them. **The user's rationale, which I think is better than my recommendation:**
+
+> 排版乱了之类的，由于现在模型基本上都有视觉能力了，用户截图给模型能解决大部分问题。
+> 可选地（后续），添加由 Agent 主动发起的位图查询工具。
+
+So visual grounding arrives as **a bitmap query the Agent initiates**, rather than a bitmap
+attached to every feedback event. Two advantages over attaching snapshots: it costs no tokens
+unless the Agent judges that it needs to *look*, and the user can always paste a screenshot
+through the ordinary composer — the host already supports image attachments.
+
+Recorded for later: a `board_snapshot(region)`-style tool that rasterizes a board region on
+demand. Note it needs rasterization **in the host document** (S7 forbids the iframe route), and
+it partially reopens the "is the renderer also a renderer *for the model*" question — see Q-I.
+
+---
+
+## Open
 
 | # | Decision | ➡️ Recommendation | Status |
 |---|---|---|---|
 | **Q7** | User→Agent feedback channel: send immediately / stage into composer / silent attachment / bulletin | **Stage into the composer draft** as a visible, dismissable context object, with an explicit "send now" affordance | ❓ open |
+| **Q-I** | Can mermaid (a large browser library) even load in a client plugin, and if not, what is the fallback? | **UNVERIFIED — a verification task is running.** `fetch` is removed from the client half, so pulling our own static asset is not obviously possible; and `practices.md` forbids importing other Harness client packages. Candidates: bundle it and `require`/dynamic-`import` our own copy, declare it via `dsh.client.external`, or render server-side and hand the client markup. | ⏳ verifying |
 
 ### Q5 — diagram engine · **DEFERRED** (with PDF, per Q-B)
 
@@ -216,37 +265,34 @@ Recommendation on record for when it lands: **Mermaid** (parses in-process, so s
 (ii) structured diagnostics inside the tool result, (iii) a `board_render` dry-run the Agent is
 told to call first, and (iv) a post-render **geometric** check for overflow and clipping — the
 last one is what catches silent rendering mistakes rather than mere syntax errors.
+**Q-I gates this**: if mermaid cannot run in the client, the engine choice changes.
 
 ---
 
-## Round-3 frontier
+## Round-4 frontier
 
-Recomputed after rounds 1–2. Prerequisites that were missing are now settled.
+Recomputed after round 3. Two verification tasks are running in parallel; only the questions
+downstream of *those* specific unknowns wait for them.
 
-1. **Layout and auto-alignment engine.** Now the highest-value unknown, because Q-A made
-   readability a first-class requirement. What does the Agent declare, what decides geometry, and
-   what are the named templates ("排版模板")? Depends on **Q3** + **Q-A**, both settled.
-2. **The condensed chat strip.** What it shows, how it reads live session data on the client, and
-   what collapses it. Depends on **Q1**(b), settled.
-3. **Addressability and naming.** How the Agent names and references blocks and pages
-   (`page/block` slugs? generated ids?) — this is the substrate for both `board_apply` and the
-   standing outline, so it gates Q4's and Q-D's concrete shapes. Depends on **Q3** + **Q-C**.
-4. **Revision and concurrency.** What `board_apply`'s expected-revision check compares (a fold
-   hash? a counter?), what happens on a stale write, and what the Agent is told. Depends on **Q4**.
-5. **What "an arrow" means semantically.** A pure visual, or a typed relation the Agent can query
-   ("what depends on X?")? This decides whether the board is a diagram or a knowledge graph, and
-   it changes `board_query`'s whole reason to exist. Depends on **Q3**.
-6. **Outline size and context budget.** How much board fits in a standing outline before it needs
-   summarising or truncating. Depends on **Q-D**.
-7. **Feedback-object shape.** What exactly a marquee produces as a message payload — ids, quoted
-   text, a rendered snapshot image, or all three. Depends on **Q7**.
-8. **Q-F — cross-conversation reuse.** Should a board (or its outline) be referenceable from
-   another conversation? U7 says scope is the conversation; the user's "a little bit of memory"
-   remark hints at wanting more. Real tension, worth asking rather than assuming.
-9. **Deferred subsystems** — UML + error loop, PDF rasterization and page-space anchoring under
+1. **Q-I — mermaid reachability in the client.** See above. Gates Q5 and, indirectly, the
+   `board_snapshot` idea from Q-H.
+2. **Q7 — the feedback channel** (carried, still open). Now much better specified: the payload is
+   settled (Q-H) and the destination is settled (a message), so the only real question left is
+   whether a marquee stages a draft or sends immediately.
+3. **The condensed chat strip.** What it shows, how it reads live session data on the client, and
+   what collapses it. Depends on **Q1** and **Q-A**, settled.
+4. **Revision and concurrency.** What `board_apply`'s expected-revision check compares, what
+   happens on a stale write, and what the Agent is told. Depends on **Q4**; verifier #2 is
+   drafting this.
+5. **Outline size and context budget.** How much board fits in a standing outline before it needs
+   summarising or truncating, and the exact text format. Depends on **Q-D**.
+6. **Q-J — cross-conversation reuse.** Should a board, or its outline, be referenceable from
+   another conversation? U7 says scope is the conversation, but the user's *"a little bit of
+   Agent memory"* remark hints at wanting more. A real tension, worth asking rather than assuming.
+7. **Deferred subsystems** — UML + error loop, PDF rasterization and page-space anchoring under
    S7, image pinning, git mirror, freeform layer.
-10. **Packaging and install** — package name, how a user installs it, what `Config` exposes.
-    Low priority until the shape is fixed.
+8. **Packaging and install** — package name, how a user installs it, what `Config` exposes.
+   Low priority until the shape is fixed.
 
 ---
 
@@ -255,4 +301,5 @@ Recomputed after rounds 1–2. Prerequisites that were missing are now settled.
 | Round | Date | Outcome |
 |---|---|---|
 | 1 | 2026-02 | Frontier mapped to 8 questions. API research landed mid-round: S12 initially suggested the `main`-panel route, then S13/S14 killed it. **Q1 settled** — the board is a third `conversation.view` tab (the user's own suggestion, verified in the source). **Q4 settled** — log-native. |
-| 2 | 2026-02 | **Q2** own DOM/SVG renderer · **Q3** block-flow model · **Q-B** v1 = foundation only · **Q-C** explicit pages · **Q-D** standing outline + pull. **Q-A settled: only the Agent writes**, which reframed the board as a *persistent display surface* and promoted layout/auto-alignment to the top of the frontier. Q7 carried over. |
+| 2 | 2026-02 | **Q2** own DOM/SVG renderer · **Q3** block-flow model · **Q-B** v1 = foundation only · **Q-C** explicit pages · **Q-D** standing outline + pull. **Q-A settled: only the Agent writes**, which reframed the board as a *persistent display surface* and promoted layout/auto-alignment to the top of the frontier. |
+| 3 | 2026-02 | **Q-E** layout templates, Agent declares structure only · **Q-F** directed semantic edges with optional labels · **Q-G** readable slug addresses over stable ids · **Q-H** structured text in v1 with Agent-initiated bitmap queries later (the user's call, and better than mine). Two verifiers dispatched: **Q-I** mermaid reachability and the render/runtime surface, and the board data model + tool surface. |
