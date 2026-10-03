@@ -253,22 +253,33 @@ it partially reopens the "is the renderer also a renderer *for the model*" quest
 
 ## Resolved — round 4
 
-### Q7 — feedback channel · **SETTLED: stage into the composer draft**
+### Q7 — feedback channel · **SETTLED, then revised at M4: a board-local tray**
 
-A marquee plus a typed sentence becomes a **visible, dismissable context object in the composer
-draft**, which the user confirms before sending. An explicit "send now" chord covers the
-confident case.
+**Settled intent (unchanged):** a marquee plus a typed sentence becomes a **visible, dismissable
+context object** that the user confirms before sending, rather than auto-sending. The
+highest-frequency board gesture is *pointing at something while thinking*, so auto-sending would
+spend a turn per stray marquee; and because Q-H settled the payload as structured text, the user
+needs to see what the Agent will actually receive in order to debug a bad answer.
 
-Rationale recorded: the highest-frequency board gesture is *pointing at something while
-thinking*, so auto-sending would spend a turn per stray marquee; and because Q-H settled the
-payload as structured text, the user needs to see what the Agent will actually receive in order
-to be able to debug a bad answer.
+**Revised container.** The original plan staged it in the composer draft. Two findings killed that
+(full evidence in [`../research/dsh-plugin-contract.md`](../research/dsh-plugin-contract.md) §12.1):
 
-**Implementation dependency (unverified):** how a plugin appends a context object to the
-composer draft from the client half. The conversation package owns the draft
-(`inputActions.setDraft`, `bindDraftMirror`, `useInput`, `useStore`) but those are *its* internal
-shares, not a published API — the composer slot family (`conversation.input.*`) is the likely
-route. **Must be verified before Q7 can be implemented.**
+1. **No public API writes the composer draft.** The dock slot exposes no shell or actions; the
+   public `UiConversation` service has no draft method; `conversation.input.for(actx)` needs the
+   session's own context, which a slot component cannot resolve; the `slash/input-insert-text`
+   channel has **zero external emitters**; and the client may only call
+   `ctx.remote.workspaceFiles`.
+2. **The draft is invisible while the board is open.** `conversation.view` renders only the active
+   view, so the composer is not mounted at all when the board tab is showing. Staging feedback
+   where the user cannot see it defeats the whole reason staging beat auto-sending.
+
+**Revised decision:** feedback accumulates in **a tray on the board** — visible, individually
+dismissable chips — and an explicit copy action hands the structured payload to the clipboard for
+the user to paste into the composer.
+
+This is *closer* to the settled intent than the original was: visible, removable, never auto-sent,
+entirely under the user's control. It is also more honest about where the user's attention is,
+which is the board.
 
 ### Q-J — scope · **SETTLED: strictly conversation-level**
 

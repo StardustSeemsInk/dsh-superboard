@@ -207,6 +207,125 @@ test('an absurd column request is clamped rather than trusted', () => {
 })
 
 // ---------------------------------------------------------------------------
+// Marquee geometry
+// ---------------------------------------------------------------------------
+
+test('a marquee normalises whichever way the user dragged', () => {
+  // Down-right.
+  assert.equal(JSON.stringify(client.normaliseRect({ x: 10, y: 20 }, { x: 60, y: 80 })), JSON.stringify({ left: 10, top: 20, width: 50, height: 60 }))
+  // Up-left: the same rectangle, not a negative one.
+  assert.equal(JSON.stringify(client.normaliseRect({ x: 60, y: 80 }, { x: 10, y: 20 })), JSON.stringify({ left: 10, top: 20, width: 50, height: 60 }))
+  // A click produces a zero-size rectangle rather than something inverted.
+  assert.equal(client.normaliseRect({ x: 5, y: 5 }, { x: 5, y: 5 }).width, 0)
+})
+
+test('intersection is inclusive of the edges a block actually occupies', () => {
+  const block = { left: 100, top: 100, width: 50, height: 50 }
+
+  // Fully inside.
+  assert.equal(client.rectsIntersect({ left: 90, top: 90, width: 80, height: 80 }, block), true)
+  // Partially overlapping.
+  assert.equal(client.rectsIntersect({ left: 140, top: 140, width: 40, height: 40 }, block), true)
+  // Merely touching the corner still counts: the user's rectangle reaches the block.
+  assert.equal(client.rectsIntersect({ left: 150, top: 150, width: 10, height: 10 }, block), false)
+  // Clearly apart.
+  assert.equal(client.rectsIntersect({ left: 200, top: 200, width: 10, height: 10 }, block), false)
+  // A zero-size rectangle inside the block still intersects, so an accidental tiny drag is not
+  // silently ignored once it passes the click threshold.
+  assert.equal(client.rectsIntersect({ left: 110, top: 110, width: 0, height: 0 }, block), true)
+})
+
+test('a marquee never selects a block it does not overlap', () => {
+  const rect = client.normaliseRect({ x: 0, y: 0 }, { x: 100, y: 100 })
+  const blocks = [
+    { left: 10, top: 10, width: 40, height: 40 },
+    { left: 200, top: 200, width: 40, height: 40 },
+    { left: 90, top: 90, width: 40, height: 40 },
+  ]
+  const hits = blocks.filter((block) => client.rectsIntersect(rect, block))
+  assert.equal(hits.length, 2, 'the distant block is not selected')
+})
+
+// ---------------------------------------------------------------------------
+// The feedback payload
+// ---------------------------------------------------------------------------
+
+const edge = (fromId, toId, rel, fromSlug, toSlug) => ({
+  id: `ed_${fromId}${toId}`,
+  from: { blockId: fromId },
+  to: { blockId: toId },
+  rel,
+  fromSlug,
+  toSlug,
+})
+
+test('an edge inside the selection is described as being between the selected blocks', () => {
+  const slugOf = (id) => ({ a: '登录服务', b: '渠道适配器' })[id]
+  const described = client.describeSelectedEdges(
+    [{ id: 'e1', from: { blockId: 'b' }, to: { blockId: 'a' }, rel: 'depends' }],
+    new Set(['a', 'b']),
+    slugOf,
+  )
+  assert.equal(described.length, 1)
+  assert.match(described[0], /渠道适配器/)
+  assert.match(described[0], /登录服务/)
+  assert.match(described[0], /depends/)
+})
+
+test('an edge leaving the selection says so, rather than claiming it is between them', () => {
+  const slugOf = (id) => ({ a: '登录服务', z: '风控' })[id]
+  const described = client.describeSelectedEdges(
+    [{ id: 'e1', from: { blockId: 'z' }, to: { blockId: 'a' }, rel: 'depends' }],
+    new Set(['a']),
+    slugOf,
+  )
+  assert.equal(described.length, 1)
+  // Overstating the selection would make the Agent reason about a block the user never pointed at.
+  assert.match(described[0], /源在选区外/)
+})
+
+test('an edge wholly outside the selection is not reported at all', () => {
+  const described = client.describeSelectedEdges(
+    [{ id: 'e1', from: { blockId: 'x' }, to: { blockId: 'y' }, rel: 'next' }],
+    new Set(['a']),
+    (id) => id,
+  )
+  assert.equal(described.length, 0)
+})
+
+test('the payload carries the blocks, the relations and the question — and nothing else', () => {
+  const text = client.formatFeedback({
+    pageSlug: '架构总览',
+    rev: 'r3-abcdef012345',
+    blocks: ['登录服务', '渠道适配器'],
+    edges: ['渠道适配器 -[depends]-> 登录服务'],
+    note: '这两个是不是耦合过紧？',
+  })
+
+  assert.match(text, /登录服务/)
+  assert.match(text, /渠道适配器/)
+  assert.match(text, /depends/)
+  assert.match(text, /耦合过紧/)
+  // The revision is included so the Agent can tell whether the user was looking at the board it
+  // is about to edit.
+  assert.match(text, /r3-abcdef012345/)
+  // No geometry: the Agent reads the model, and coordinates would be noise it cannot act on.
+  assert.doesNotMatch(text, /\d+px/)
+})
+
+test('a payload with no note still names what was selected', () => {
+  const text = client.formatFeedback({
+    pageSlug: 'main',
+    rev: 'r1-000000000000',
+    blocks: ['风险-1'],
+    edges: [],
+    note: '   ',
+  })
+  assert.match(text, /风险-1/)
+  assert.doesNotMatch(text, /说明：/)
+})
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 

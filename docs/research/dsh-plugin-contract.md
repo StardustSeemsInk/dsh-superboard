@@ -426,6 +426,35 @@ mermaid — small by comparison — is well within what the platform already doe
 
 ## 12. Host ↔ client transport: HTTP + SSE, not RPC
 
+### 12.1 There is no way to write the composer draft from a plugin
+
+This was the milestone-4 prerequisite, and the answer is a firm **no** — plus a second finding that
+makes the question moot. Both are worth recording because the same wall will be hit again.
+
+**Finding 1 — no public write path exists.** Every candidate was checked:
+
+| Candidate | Why it does not work |
+|---|---|
+| `conversation.composer.bar` / `conversation.input.dock` slot `inject` | The dock registers with no `inject` at all (`dsh-client-ui-conversation/lib/client.js:17752-17757`), so no shell or actions reach a slot occupant. |
+| `ctx.uiConversation` (the public `UiConversation` service) | Its surface is `binding`, `imageUrl`, `peekImageUrl`, `seedImageUrl`, `inspectSystemPrompt`, `inspectRequestPrompt`, `drop` — **and `events` / `groups` / `views` registries**. No draft method. |
+| `conversation.input.for(actx)`, whose shell really does have `setDraft` (`:13551`) | It needs the **session's own `actx`** (`:14201-14207`, *"requires a retained Session scope"*), and a slot component has no way to resolve that context. |
+| The `slash/input-insert-text` event (`:14263-14266`) | It is a genuine public-looking channel, and `insertText` is CAS-guarded on `span.draftRev`. But **the only emitters in the entire installation are those three lines inside the conversation package itself** — zero external precedent, and nothing documents how a plugin obtains a valid span. |
+| `ctx.remote.*` | The client may only call `ctx.remote.workspaceFiles`. There is no remote for submitting a message or a prompt. |
+| A plugin's own Typert remote | Real — `dsh-client-ui-message-feedback` injects `remote.messageFeedback` — but it is produced by `@Remote` **decorators** and a generated `/remote` contribution, which needs a build pipeline. Not available to a hand-written, build-free plugin. |
+
+**Finding 2 — the draft is the wrong container anyway.** `conversation.view` renders **only the active
+view** (`:16412-16421`), so while the board tab is open **the composer is not mounted at all**. A
+feedback object staged into the draft would be invisible to the user at exactly the moment they
+created it, and would only appear after they switched back to chat. Staging "where the user cannot
+see it" defeats the reason staging was chosen over auto-sending.
+
+**Conclusion.** Board feedback lives in a **tray on the board itself** — selections accumulate as
+visible, individually dismissable chips, and an explicit copy action hands the structured payload to
+the clipboard for the user to paste into the composer. That is *more* faithful to the settled Q7
+intent than the original plan was: visible, removable, never auto-sent, and under the user's control.
+The clipboard route is available: the client half is a classic script in the real page global, and
+shipped client packages already use it.
+
 Because a plugin's client half has no `host.call` and no plugin event bus (§2.1), and because
 `@Remote({mode: 'stream'})` is unavailable to third parties — it needs `InvocationDescriptor`
 records produced by Typert's build pipeline plus a generated `/remote` contribution mounted via
