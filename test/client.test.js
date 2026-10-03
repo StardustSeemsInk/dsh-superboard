@@ -17,12 +17,15 @@ import vm from 'node:vm'
 
 const CLIENT_PATH = new URL('../src/client.js', import.meta.url)
 
-/** Minimal React stand-in: the factories only need createElement to exist at load time. */
+/** Minimal React stand-in: the factories only need hooks to exist at load time. */
 const fakeReact = {
   createElement: (type, props, ...children) => ({ type, props, children }),
   useRef: (initial) => ({ current: initial }),
   useState: (initial) => [typeof initial === 'function' ? initial() : initial, () => {}],
   useEffect: () => {},
+  // The reading column memoises its transcript derivation and its loader callback.
+  useMemo: (compute) => compute(),
+  useCallback: (callback) => callback,
 }
 
 /**
@@ -87,8 +90,11 @@ test('the factory registers itself under the package name', () => {
   assert.equal(typeof client.apply, 'function')
   // Compare element-wise: the client half runs in its own VM realm, so arrays it produces do not
   // share this realm's prototype and deepStrictEqual would reject equal contents.
-  assert.equal(client.inject.length, 1)
+  assert.equal(client.inject.length, 2)
   assert.equal(client.inject[0], 'slots')
+  // 'sessions' is the service that makes history paging reachable: the real loader lives on
+  // ctx.sessions.binding(id).session, not on anything the chat package exposes.
+  assert.equal(client.inject[1], 'sessions')
   assert.equal(client.PROJECTION_KEY, 'board')
 })
 

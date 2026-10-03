@@ -100,16 +100,12 @@ function probeDimensions(attachment) {
 }
 ```
 
-`addAttachments` 本身**不做任何校验**（`:13547-13561`）：
+`addAttachments` 本身**不做任何校验**，`dsh-client-ui-conversation/lib/client.js:13554-13561` 逐字：
 
 ```js
-/**
- * Adopt ordered draft attachments created elsewhere into the input state.
- * @param ids - draft attachment ids to append.
- * @returns whether the input accepted them.
- */
+/** Append ordered attachment ids unless an admission transaction is locked. */
 addAttachments(ids) {
-    if (this.snapshot.phase === "adjudicating" || this.snapshot.phase === "submitting" || this.disposed) return false;
+    if (this.snapshot.phase === "adjudicating" || this.snapshot.phase === "submitting") return false;
     if (ids.length === 0) return true;
     this.attachmentIds = [...this.attachmentIds, ...ids];
     this.publish();
@@ -117,26 +113,70 @@ addAttachments(ids) {
 }
 ```
 
-> 注意：`addAttachments` 不校验 id 是否存在。真正清理坏 id 的是 InputBar 的一个 effect，
-> `lib/client.js:17298-17305` 逐字：
-> ```js
-> react.useEffect(() => {
->     if (input === void 0 || inputActions === void 0) return;
->     if (attachments.length !== input.attachmentIds.length) inputActions.pruneAttachments(attachments.map((attachment) => attachment.id));
-> }, [attachments, input?.attachmentIds, inputActions]);
-> ```
-> 而 `resolveDraftAttachments(ids)`（`:3601-3608`）只从 `draftAttachments` 里查：
-> ```js
-> resolveDraftAttachments(ids) {
->     const attachments = [];
->     for (const id of ids) {
->         const attachment = this.draftAttachments.get(id);
->         if (attachment !== void 0) attachments.push(attachment);
->     }
->     return attachments;
-> }
-> ```
-> **结论：任何不在 `draftAttachments` 里的 id 都会被静默丢弃，不会渲染出 chip。**
+注意它的 JSDoc 逐字只说 *"Append ordered attachment ids unless an admission transaction is locked."*——
+**完全没有提到「校验 id」**，实现里也确实没有。对照同文件 `:13562-13574` 的 `addFiles(references, ids)`，
+那一个才叫 *"Add **validated** file references and attachment ids while admission is editable."*，
+并且多了一步 `if (!this.draftEditor.insertFileReferences(references)) return false;`。
+两者都不要的 `ids` 校验由 `pruneAttachments` 事后补救（见下）。
+
+注意：`addAttachments` 不校验 id 是否存在。真正清理坏 id 的是 InputBar 的一个 effect，
+`lib/client.js:17298-17305` 逐字：
+
+```js
+react.useEffect(() => {
+    if (input === void 0 || inputActions === void 0) return;
+    if (attachments.length !== input.attachmentIds.length) inputActions.pruneAttachments(attachments.map((attachment) => attachment.id));
+}, [attachments, input?.attachmentIds, inputActions]);
+```
+
+`pruneAttachments` 逐字（`:13588-13598`）：
+
+```js
+/**
+ * Keep only ids that still resolve in the browser attachment registry.
+ * @param available - live registry ids.
+ */
+pruneAttachments(available) {
+    const keep = new Set(available);
+    const next = this.attachmentIds.filter((id) => keep.has(id));
+    if (next.length === this.attachmentIds.length) return;
+    this.attachmentIds = next;
+    this.publish();
+}
+```
+
+`removeAttachment` 逐字（`:13575-13587`）：
+
+```js
+/**
+ * Remove one attachment id from this draft. Busy admission phases refuse, like
+ * {@link addAttachments}: a removal landing while a command submit serializes
+ * would otherwise vanish from the rail yet still ride the in-flight send.
+ */
+removeAttachment(id) {
+    if (this.snapshot.phase === "adjudicating" || this.snapshot.phase === "submitting") return false;
+    const next = this.attachmentIds.filter((candidate) => candidate !== id);
+    if (next.length === this.attachmentIds.length) return false;
+    this.attachmentIds = next;
+    this.publish();
+    return true;
+}
+```
+
+而 `resolveDraftAttachments(ids)`（`:3601-3608`）只从 `draftAttachments` 里查：
+
+```js
+resolveDraftAttachments(ids) {
+    const attachments = [];
+    for (const id of ids) {
+        const attachment = this.draftAttachments.get(id);
+        if (attachment !== void 0) attachments.push(attachment);
+    }
+    return attachments;
+}
+```
+
+**结论：任何不在 `draftAttachments` 里的 id 都会被静默丢弃，不会渲染出 chip。**
 
 ### A2. 附件的来源**不止**文件——但一定得是「字节」
 
@@ -763,9 +803,12 @@ register(options, component) {
 
 ### C2. 第三方可用的 composer 槽清单（kind / scope / 是否已有 owner）
 
-全部来自 `dsh-client-ui-conversation/lib/client.js:18293-18333`（`conversation.composer.bar` 的 children 表）
-与 `dsh-cordis-client-runner/lib/client.js` 的 slot 目录（行号见下）。
-「owner」列为 grep 全安装得到的真实 `slots.inject` 调用点。
+全部来自两个权威来源：`dsh-client-ui-conversation/lib/client.js` 的槽声明
+（`registerConversationContent` 的 children 表 `:18150-18188`，其中 `"conversation.composer"` 是 `kind:"chain"` / `"conversation.composer.bar"` 是 `kind:"single"`；
+`registerConversationSession` `:18209-18214` 声明 `"conversation.view"`；
+`conversation.composer.bar` 自己的 children 表 `:18293-18333`，其余 `conversation.input.*` 与 `conversation.composer.dock` 都在这里），
+以及 `dsh-cordis-client-runner/lib/client.js` 的 `CLIENT_SLOT_API` 目录（行号见下）。
+「现有 owner」列为 grep 全安装得到的真实 `slots.inject` 调用点。
 
 | 槽 | kind | scope | 现有 owner | replaceRisk |
 |---|---|---|---|---|
