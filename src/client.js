@@ -1013,7 +1013,7 @@ window.__ModuleLoader__.load({
      * It is read-only on purpose. The composer is right below it and is the place to type.
      */
     function ReadingColumn({ sessionId, useChat, loadOlder, hasOlder, width, onResize }) {
-      const chat = typeof useChat === 'function' ? useChat((snapshot) => snapshot.nodes) : undefined
+      const chat = typeof useChat === 'function' ? useChat((snapshot) => snapshot?.nodes) : undefined
       const [loading, setLoading] = React.useState(false)
       // Bumped after a page loads so `hasOlder()` is re-read; the session keeps it as a plain
       // field, so there is nothing to subscribe to.
@@ -1171,8 +1171,10 @@ window.__ModuleLoader__.load({
       const [sending, setSending] = React.useState(false)
       const [sendError, setSendError] = React.useState(null)
       // Read at the top because hooks cannot live inside the handler. Appending rather than
-      // replacing matters: the user may already have been typing when they marqueed.
-      const draft = typeof useInput === 'function' ? useInput((snapshot) => snapshot.draft) : undefined
+      // replacing matters: the user may already have been typing when they marqueed. The snapshot
+      // is guarded because `useInput` resolves to the composer's shell state, which is `undefined`
+      // until the composer mounts — and a throw here would blank the whole pane.
+      const draft = typeof useInput === 'function' ? useInput((snapshot) => snapshot?.draft) : undefined
 
       const model = board?.model
       const pages = model?.pages ?? []
@@ -1207,6 +1209,11 @@ window.__ModuleLoader__.load({
       )
       const slugOf = (id) => pageBlocks.find((block) => block.id === id)?.slug ?? id
 
+      /** Block id to block, for resolving a container's children without rescanning. */
+      const byId = new Map(pageBlocks.map((block) => [block.id, block]))
+      /** Region id to region, for toning a block without a lookup per block. */
+      const regions = new Map((model?.regions ?? []).map((region) => [region.id, region]))
+
       /**
        * Resolve a block address across the whole board, not just the visible page.
        *
@@ -1214,17 +1221,30 @@ window.__ModuleLoader__.load({
        * `bl_9c02e1` instead of that block's name would make the feedback harder to act on than the
        * board it came from.
        */
-      /** Block id to block, for resolving a container's children without rescanning. */
-      const byId = new Map(pageBlocks.map((block) => [block.id, block]))
-      /** Region id to region, for toning a block without a lookup per block. */
-      const regions = new Map((model?.regions ?? []).map((region) => [region.id, region]))
-
       const boardSlugOf = (id) => {
         for (const page of pages) {
           const block = page.blocks.find((candidate) => candidate.id === id)
           if (block !== undefined) return block.slug
         }
         return id
+      }
+
+      /**
+       * Clamp and remember the reading column's width.
+       *
+       * `Splitter` reports an absolute width in pixels, already derived from the pointer position.
+       * The cap is a **fraction of the pane** rather than a fixed number, so the board keeps the
+       * majority of the width at every window size — the column is a reference beside the board,
+       * not a second board. Persisting on every move is deliberate: a drag is already a burst of
+       * pointer events, and one `localStorage` write per frame costs less than losing the width
+       * when the drag ends outside the window.
+       */
+      const resizeColumn = (next) => {
+        const total = containerRef.current?.clientWidth ?? 0
+        const cap = total > 0 ? Math.max(COLUMN_MIN_WIDTH, Math.round(total * COLUMN_MAX_FRACTION)) : next
+        const clamped = Math.min(Math.max(Math.round(next), COLUMN_MIN_WIDTH), cap)
+        setColumnWidth(clamped)
+        writeNumber(COLUMN_WIDTH_KEY, clamped)
       }
 
       /**
@@ -1480,13 +1500,16 @@ window.__ModuleLoader__.load({
     }
 
     /** One block, with its selection state. */
-    function Block({ block, selected, region }) {
+    function Block({ block, selected, region, at }) {
       // A region is annotation, so it tints the block and adds its label — it never moves anything.
       const tone = region?.tone === undefined || region.tone === 'neutral' ? '' : ` sb-tone-${region.tone}`
       return h(
         'article',
         {
-          className: `sb-card${selected ? ' sb-cardSel' : ''}${tone}`,
+          className: `sb-card${selected ? ' sb-cardSel' : ''}${tone}${at === undefined ? '' : ' sb-pinned'}`,
+          // `at` is the escape hatch: absolute, and layered on top of whatever the container's
+          // layout computed. It is spread last so it wins, which is the point of an override.
+          style: at,
           'data-block-id': block.id,
           'data-block-slug': block.slug,
         },
@@ -1532,7 +1555,7 @@ window.__ModuleLoader__.load({
       const at = atStyle(block.at)
       const region = block.regionId === undefined ? undefined : regions.get(block.regionId)
 
-      if (block.kind !== 'group') return h(Block, { block, selected: selected.has(block.id), region })
+      if (block.kind !== 'group') return h(Block, { block, selected: selected.has(block.id), region, at })
 
       const children = (block.children ?? []).map((id) => byId.get(id)).filter((child) => child !== undefined)
       const innerNeedsAnchor = children.some((child) => child.at !== undefined)
@@ -1695,11 +1718,15 @@ window.__ModuleLoader__.load({
       dialogueFromChat,
       readNumber,
       writeNumber,
-      // Inline markdown. The tokenizer and the link guard are the security-relevant halves, so they
-      // are checked without a DOM: board content is written by the Agent, which makes it untrusted
-      // by the time it renders.
-      parseInline,
-      safeHref,
+      // The components themselves. Exported so a test can actually *render* them with a stubbed
+      // React: every pure helper above can be green while the view still throws on mount, and a
+      // throw inside a slot takes the whole pane down to a blank rectangle with no message.
+      BoardView,
+      ReadingColumn,
+      SelectionBar,
+      BlockNode,
+      Block,
+      Markdown,
     }
   },
 })
