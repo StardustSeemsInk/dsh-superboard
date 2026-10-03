@@ -239,7 +239,16 @@ export function applyOps(model, ops, context) {
 
   let next = model
   ops.forEach((op, index) => {
-    next = applyOne(next, op, { ...context, opIndex: index })
+    try {
+      next = applyOne(next, op, { ...context, opIndex: index })
+    } catch (error) {
+      // Tag the failing position so the tool can quote `op[i]` back to the model. Without it
+      // the Agent gets a reason with no location, which is only half an error.
+      if (error instanceof BoardOpError && error.detail?.opIndex === undefined) {
+        error.detail = { ...(error.detail ?? {}), opIndex: index, op: op?.op }
+      }
+      throw error
+    }
   })
   return next
 }
@@ -248,7 +257,7 @@ export function applyOps(model, ops, context) {
 export class BoardOpError extends Error {
   /**
    * @param message - the model-facing explanation.
-   * @param detail - optional machine-readable context.
+   * @param detail - optional machine-readable context, including the failing `opIndex`.
    */
   constructor(message, detail) {
     super(message)
@@ -485,8 +494,10 @@ function replacePage(model, pageId, mutate) {
 
 /** `add_page` — append or insert a page. */
 function opAddPage(model, op, context) {
-  const explicit = op.slug === undefined ? undefined : String(op.slug)
-  const base = toSlug(explicit ?? op.title ?? 'page', 'page', model.pages.length + 1)
+  // The tool schema calls this argument `page` (it may be a slug or a human title), while the
+  // op's own field is `slug`. Accepting both keeps the model's most likely phrasing working.
+  const requested = op.slug ?? op.page ?? op.title
+  const base = toSlug(requested === undefined ? 'page' : String(requested), 'page', model.pages.length + 1)
   const slug = uniqSlug(base, takenPageSlugs(model, undefined))
   const page = {
     id: mintId(model, context, 'page', ID_PREFIX.page),
@@ -612,7 +623,9 @@ function buildBlock(op, context, model, page, id) {
       return {
         ...base,
         src: text(op.src, 'src'),
-        page: requirePageNumber(op.page),
+        // `pdfPage` is the schema name; `page` is the natural phrasing a model reaches for
+        // when updating rather than creating. Accept both.
+        page: requirePageNumber(op.pdfPage ?? op.page),
         ...(op.crop === undefined ? {} : { crop: normaliseCrop(op.crop) }),
         ...(typeof op.caption === 'string' ? { caption: op.caption } : {}),
         ...(op.pageCount === undefined ? {} : { pageCount: Number(op.pageCount) }),
@@ -660,9 +673,7 @@ function opAddBlock(model, op, context) {
   const block = buildBlock(op, context, model, page, id)
 
   const explicit = typeof op.slug === 'string' && op.slug.trim() !== ''
-  const source = explicit ? op.slug : slugSource(block)
-  const family = block.kind === 'list' ? 'item' : block.kind
-  const base = toSlug(source, family, page.blocks.length + 1)
+  const base = toSlug(explicit ? op.slug : slugSource(block), block.kind === 'list' ? 'item' : block.kind, page.blocks.length + 1)
   block.slug = uniqSlug(base, takenBlockSlugs(page, id))
 
   const blocks = [...page.blocks]
@@ -725,7 +736,7 @@ function opUpdateBlock(model, op, context) {
     if (field === 'level') patched.level = normaliseLevel(op.level)
     else if (field === 'items') patched.items = normaliseItems(op.items, context, model, page)
     else if (field === 'crop') patched.crop = normaliseCrop(op.crop)
-    else if (field === 'page') patched.page = requirePageNumber(op.page)
+    else if (field === 'page') patched.page = requirePageNumber(op.pdfPage ?? op.page)
     else if (field === 'pageCount') patched.pageCount = Number(op.pageCount)
     else if (field === 'ordered') patched.ordered = op.ordered === true
     else if (field === 'collapsed') patched.collapsed = op.collapsed === true
@@ -752,6 +763,8 @@ function opUpdateBlock(model, op, context) {
     blocks: current.blocks.map((candidate) => (candidate.id === block.id ? patched : candidate)),
   }))
 }
+
+/** `move_block` — reorder within a page or move across pages. */
 
 /** `move_block` — reorder within a page or move across pages. */
 function opMoveBlock(model, op) {
@@ -1179,6 +1192,43 @@ function normaliseSize(value) {
 /** Quantise edge waypoints. */
 function normaliseWaypoints(value) {
   return value.map((point) => ({ x: quantise(point?.x), y: quantise(point?.y) }))
+}
+
+/**
+ * The revision hash a model encodes to.
+ *
+ * Exposed because the revision is the Agent's concurrency token, and a tool that cannot tell
+ * the Agent what the board will be called afterwards leaves it guessing.
+ *
+ * @param model - the authoritative board model.
+ * @returns the 16-hex content hash.
+ */
+export function hashModel(model) {
+  return sha256Hex(encodeModelForHash(model)).slice(0, 16)
+}
+
+/**
+ * The revision a batch would settle at, without committing anything.
+ *
+ * The hash depends on element ids, and element ids are derived from the committed event's
+ * `seq`. Until the call settles that seq is unknown, so a preview necessarily uses a stand-in
+ * and its hash will differ from the authoritative one. The sequence number, however, is exact —
+ * and that is the part the Agent uses to recognise its own write. Callers must therefore say
+ * plainly that this string is a preview.
+ *
+ * @param model - the model to apply against.
+ * @param ops - the batch.
+ * @param options - session id and the stand-in call seq.
+ * @returns the projected `rev` string.
+ */
+export function previewRevision(model, ops, options = {}) {
+  const draft = applyOps(structuredClone(model), ops, {
+    sessionId: options.sessionId ?? '',
+    callSeq: options.callSeq ?? 'preview',
+    callerRev: model.rev,
+  })
+  const revSeq = model.revSeq + 1
+  return composeRev(revSeq, hashModel(draft))
 }
 
 export { emptyBoardDoc, MAX_ALIAS }
