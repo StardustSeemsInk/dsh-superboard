@@ -1,0 +1,41 @@
+{
+  "name": "dsh-superboard",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Agent-editable board for DeepSeek Harness — the canvas replaces the conversation box as the primary UI surface.",
+  "type": "module",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/StardustSeemsInk/dsh-superboard.git"
+  },
+  "keywords": [
+    "deepseek",
+    "harness",
+    "dsh",
+    "dsh-plugin",
+    "canvas",
+    "board"
+  ],
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./src/client.js"
+  },
+  "files": [
+    "src",
+    "cordis.patch.yml"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-session"
+      ]
+    }
+  }
+}
