@@ -1,0 +1,11 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Reference extracts of the DSH implementation. Regenerate with scripts/extract-dsh-ref.mjs
+# instead of committing hundreds of KB of vendored official code.
+.ref/
+
+# Runtime output
+.scratch/
+*.log
