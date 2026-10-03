@@ -137,9 +137,15 @@ export function defineBoardTool({ name, description, parameters, outputSchema, r
 /**
  * Wrap the model-visible text of a successful call.
  *
+ * The array itself **is** the content. DSH assigns whatever `output.render` returns straight to
+ * the result's `content` (`dsh-tools/lib/index.js:3552`) and then calls array methods on it
+ * (`content.some` at `:1384`, `content.map` at `:2602`). Wrapping it once more in
+ * `{ content: [...] }` therefore fails every call with `content.some is not a function` — after
+ * the value has already passed its schema check, which is why no schema validation catches it.
+ *
  * @param text - the rendered text.
  * @returns the content-block array a tool returns.
  */
 export function textResult(text) {
-  return { content: [{ type: 'text', text }] }
+  return [{ type: 'text', text }]
 }

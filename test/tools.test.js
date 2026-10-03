@@ -509,3 +509,64 @@ test('block previews are one line, so the outline stays scannable', () => {
   assert.equal(blockPreview({ kind: 'prose', markdown: 'first line\nsecond line' }), 'first line')
   assert.ok(blockPreview({ kind: 'prose', markdown: 'x'.repeat(500) }).length < 80)
 })
+
+// ---------------------------------------------------------------------------
+// The output contract DSH actually enforces
+// ---------------------------------------------------------------------------
+
+/**
+ * Every tool's return value must satisfy the schema that tool declared, and its `render` must
+ * return the content blocks themselves.
+ *
+ * Neither half is covered by rendering text or folding events, and both only surface in a live
+ * session: the registry validates the **value** against `output.schema` (where
+ * `additionalProperties: false` turns one undeclared field into a failed call) and then treats
+ * the `render` result as `content`, calling array methods on it. The first `board_outline` and
+ * `board_read` calls ever made against a real host failed on exactly those two points, while
+ * the suite was green — so they are asserted here, through the real wiring, per tool.
+ *
+ * This is the smoke test, at the point of use. `test/output-contract.test.js` drives the same
+ * pipeline across every query kind, every read target, and the empty, dangling and rejection
+ * paths — and it fails when a tool is added without coverage.
+ */
+test("every tool's value satisfies its own output schema, and its render returns content blocks", async (t) => {
+  if (dsh === undefined) {
+    t.skip('extracted DSH application not present')
+    return
+  }
+
+  const doc = seededDoc()
+  const exec = (name, args) => ({ agent: { session: { id: 'sess-tools' } }, callId: 'test', name, arguments: args })
+  const calls = [
+    ['board_outline', {}],
+    ['board_read', { refs: ['main'] }],
+    ['board_query', { kind: 'orphans' }],
+    [
+      'board_apply',
+      {
+        expected_revision: doc.model.rev,
+        ops: [{ op: 'add_block', page: 'main', kind: 'prose', markdown: '新块' }],
+      },
+    ],
+  ]
+  const { registered } = harness(doc)
+
+  for (const [name, args] of calls) {
+    const tool = registered.find((each) => each.name === name)
+    const value = await tool.execute(args, exec(name, args))
+
+    assert.deepEqual(
+      dsh.validateJsonSchemaValue(tool.output.schema, value, 'value'),
+      [],
+      `${name}: its return value violates the schema it declared`,
+    )
+
+    const content = tool.output.render(args, value)
+    assert.ok(Array.isArray(content), `${name}: output.render must return the content-block array`)
+    assert.ok(content.length > 0, `${name}: rendered no content at all`)
+    for (const block of content) {
+      assert.equal(block.type, 'text', `${name}: unexpected content block type`)
+      assert.equal(typeof block.text, 'string', `${name}: content block without text`)
+    }
+  }
+})

@@ -351,10 +351,15 @@ const outlineTool = defineBoardTool({
       ),
       truncated: bool('Whether the text was cut short.'),
       omitted: str('What was left out, when truncated.'),
+      // Declared because `executeOutline` returns it and `additionalProperties: false` makes an
+      // undeclared field a failed call, not an ignored one. Read, apply and query all declare
+      // theirs; this one was the omission that made every board_outline call fail in a live
+      // session while the whole suite stayed green.
+      text: str("Rendered outline, also returned as this tool's content."),
     },
-    ['rev', 'title', 'pages', 'edges', 'diag', 'truncated'],
+    ['rev', 'title', 'pages', 'edges', 'diag', 'truncated', 'text'],
   ),
-  render: (_args, value) => textResult(value.text ?? ''),
+  render: (_args, value) => textResult(value.text),
 })
 
 // ---------------------------------------------------------------------------
@@ -1020,6 +1025,30 @@ function describeEdge(model, edge) {
   }
 }
 
+/**
+ * One query hit, reduced to what the model was promised.
+ *
+ * `runQuery` works in block ids: `describeEdge` carries `fromId`/`toId` so the filters and the
+ * path search can compare them, and `orphans` reuses both for the block it reports. The declared
+ * output schema is closed and promises addresses, so the ids are dropped here rather than
+ * declared as fields the model has no use for. Left undeclared they failed every `board_query`
+ * call in a live session, which is what this projection exists to prevent.
+ *
+ * @param hit - one raw hit from `runQuery`.
+ * @returns the hit with only the fields `board_query` declares.
+ */
+function modelFacingHit(hit) {
+  return {
+    edge: hit.edge,
+    from: hit.from,
+    to: hit.to,
+    ...(hit.rel === undefined ? {} : { rel: hit.rel }),
+    ...(hit.label === undefined ? {} : { label: hit.label }),
+    ...(hit.via === undefined ? {} : { via: hit.via }),
+    ...(hit.dangling === undefined ? {} : { dangling: hit.dangling }),
+  }
+}
+
 /** Resolve a required query reference. */
 function requireRef(model, ref, field) {
   if (ref === undefined) throw new BoardOpError(`this query needs a '${field}' reference`)
@@ -1227,7 +1256,7 @@ function executeRead(doc, args) {
 /** `board_query`. */
 function executeQuery(doc, args) {
   const model = doc.model
-  const hits = runQuery(model, args)
+  const hits = runQuery(model, args).map(modelFacingHit)
   const empty = hits.length === 0
   const hint = empty ? hintFor(model, args) : undefined
   const text = empty
