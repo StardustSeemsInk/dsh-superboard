@@ -94,39 +94,31 @@
 
 ---
 
-### M4 · 框选反馈入草稿（下一步）
+### M4 · 框选反馈 ✅ 已完成（容器由草稿改为看板就地托盘）
 
-**交付**：框选（矩形选择区域内的块）+ 写一句话 → 变成 composer 草稿里一个**可见、可删除**的上下文对象；`Ctrl+Enter` 直接发。
+**交付**：`src/client.js` 的框选 + 托盘；`test/client.test.js` 新增 8 个测试。70 个测试全绿。
 
-**前置待验（阻塞项）**：**插件如何把上下文对象追加进 composer 草稿。** 草稿由 `dsh-client-ui-conversation` 通过内部 share 持有（`inputActions.setDraft`、`bindDraftMirror`、`useInput`、`useStore`），那些不是公开 API；`conversation.input.*` 槽族是可能的公开路径。**动工前必须先验。**
+**前置验证的结论：草稿这条路走不通，而且本来就是错的容器。** 完整证据在 `../research/dsh-plugin-contract.md` §12.1：
 
-**验收标准**：框选三个块并写下问题，草稿里出现一个可删除的引用对象；发送后 Agent 的回答显示它确实收到了那三个块。
+1. **没有任何公开 API 能写 composer 草稿。** dock 槽完全不带 `inject`，所以 shell 和 actions 都到不了占用者；公开的 `UiConversation` 服务有 `events`/`groups`/`views`/`binding` 但**没有草稿方法**；`conversation.input.for(actx)` 确实返回带 `setDraft` 的 shell，但它需要**会话自己的 context**，槽组件无法解析；`slash/input-insert-text` 通道有 CAS 守卫、看着像公开 API，但**整个安装里唯一的发送方就是 conversation 包自己那三行**；客户端只能调 `ctx.remote.workspaceFiles`。第三方自己的 Typert remote 是真实的，但需要装饰器与构建流水线。
+2. **更要紧：草稿本来就是看不见的容器。** `conversation.view` 只渲染激活项，所以**看板标签打开时 composer 根本没挂载**。反馈暂存在那里，要等用户切回对话才出现——那正好抵消了「暂存而非自动发送」的全部理由。
 
----
+**改后的形态**：反馈累积在**看板上的托盘**里——拖框选中、块高亮、写下问题，条目落进一串可逐个删除的 chip，配一个显式的复制动作。**永不代替用户发送**。这比原计划更贴近既定意图（可见、可删、在用户掌控下），也更诚实地承认用户的注意力在看板上。
 
-### M3 · 渲染器
+**两个值得点名的细节**：
 
-**交付**：自建 DOM/SVG 层——世界坐标容器 + CSS `transform` 做平移缩放；块流布局（Q-E 的模板优先：`flow` / `columns` / `grid` / `tree`，Agent 只声明结构与关系）；箭头为 SVG path，锚在块锚点上；显式多页与页签栏（Q-C）。
+- **跨选区的边被描述为「离开选区」**，而不是「在这些块之间」——夸大用户指过的范围会让 Agent 去推理用户根本没指的块。
+- **块地址在整个看板范围解析**，不只当前页，否则跨页边的目标会打印成不透明 id。
 
-**验收标准**：Agent 建的两页看板能在页签间切换；箭头正确连到目标块并在窗口缩放后仍正确；切到「对话」标签再切回来，看板内容不变（证明状态确实不在 React 里）。
-
----
-
-### M4 · 框选反馈入草稿
-
-**交付**：框选（矩形选择区域内的块）+ 写一句话 → 变成 composer 草稿里一个**可见、可删除**的上下文对象；`Ctrl+Enter` 直接发。
-
-**前置待验**：**插件如何把上下文对象追加进 composer 草稿。** composer 的草稿由 `dsh-client-ui-conversation` 通过内部 share 持有（`inputActions.setDraft`、`bindDraftMirror`、`useInput`、`useStore`），那些不是公开 API；`conversation.input.*` 槽族是可能的公开路径。**这是 M4 的阻塞项，动工前必须先验。**
-
-**验收标准**：框选三个块并写下问题，草稿里出现一个可删除的引用对象；发送后 Agent 的回答显示它确实收到了那三个块。
+**验收标准**：框选三个块并写下问题 → 托盘出现一个可删除的条目 → 复制后得到结构化文本，含块地址、其间关系、问题、以及**当时的 rev**（让 Agent 能判断用户看的是不是它即将改的那一版看板）。✅（静态验证；交互确认待用户刷新页面）
 
 ---
 
-### M5 · 精简对话条
+### M5 · 精简对话条（下一步）
 
 **交付**：折叠态一行——Agent 状态点 + 最新消息首行 + 未读计数；展开态——最近几轮只读（Q-K）。
 
-**前置待验**：客户端如何读取实时会话数据。client 半没有插件事件总线，且**没有 `host.call`**——通道是 HTTP：`fetch` 打 host 用 `ctx.webServer.register` 注册的路由，host 用 SSE 推回（抄 `dsh-client-hmr`）。另外 `wire.view` 投影是更便宜的读路径。
+**前置待验**：客户端如何读取实时会话数据。client 半**没有插件事件总线，也没有 `host.call`**；通道是 HTTP：`fetch` 打 host 用 `ctx.webServer.register` 注册的路由，host 用 SSE 推回（抄 `dsh-client-hmr`）。另外 wired projection（`wire.view`）是更便宜的读路径——看板自己的状态就是这么到客户端的，会话状态若已有官方投影（如 `subagent`、`goal`、`modelSelection`、`inbox`）则可能直接复用。
 
 **验收标准**：看板为主时，Agent 开始/结束运行能在对话条上看到状态变化，不需要切标签。
 
