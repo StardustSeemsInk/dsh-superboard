@@ -47,16 +47,32 @@
 
 ---
 
-### M2 · 工具面与常驻大纲（进行中）
+### M2 · 工具面与常驻大纲 ✅ 已完成
 
-**交付**：
-- `board_outline` / `board_read` / `board_apply` / `board_query`，参数用 DSH 的**裸属性表**（不是 zod、不是 JSON Schema：无顶层 `type: "object"`，`required: true` 写在每个属性上）。
-- `board_apply` 带 `expected_revision`，`isConcurrencySafe: false`。
-- 常驻大纲接进 M0 已经占好的 `systemPrompt.context()` 位置。
+**交付**：`src/schema-dsl.js`（手写编译后的 JSON Schema）、`src/tools.js`（四个工具）、`test/tools.test.js`（27 个测试）。42 个测试全绿。
 
-**验收标准**：让 Agent「在看板上写下三个块并用箭头连起来」，然后 `board_outline` 能读回它刚写的东西；故意传一个过期 revision，Agent 收到可理解的错误并自行重读重试。
+**验收标准**：`board_outline` 能读回 `board_apply` 刚写的东西；过期 revision 被拒且回带当前 rev；失败 op 报出位置、原因、合法取值、下一步。✅
 
-**注意**：`board_apply` 的 schema 有 14 个 `oneOf` 分支约 70 个属性，常驻请求头估计 4–6k 字符（~2–3k token），**比常驻大纲更硬**——大纲可以降级，schema 不能。`deferLoading` 或许能省掉它，属待验项。
+**这一步最重要的决定：不用 `defineTool`。** `ctx.tools.register` 要的是**编译后的 JSON Schema**，它自己不做作者规格转换（`dsh-tools/lib/index.js:2878-2887`）；而官方编译器 `defineTool` 在 `@deepseek-ai/dsh-tools` 里，属于**运行时不能 import** 的包（本地副本会变成宿主的第二实例）。所以 `src/schema-dsl.js` 直接产出编译形态。
+
+这个选择的回报是：测试可以把每个定义喂给 **DSH 自己的** `assertSupportedJsonSchema` 与 `validateJsonSchemaValue`（从已安装的应用里加载），而不是只对着自己的预期断言。这查出了两个真缺陷：
+
+- **`add_block` 的 `page` 被覆盖了。** 该分支平铺了所有 kind 的内容字段，而 `pdf-page` 的 `page` 是 integer 页码——于是「所属页的 slug」被当成整数校验。改名 `pdfPage`；`update_block` 上仍接受 `page`，因为那里没有冲突。
+- **`minItems` 不在 DSH 的强制子集里**（支持集是 `type/oneOf/properties/required/additionalProperties/items/enum/const` + 注记）。
+
+**另有四个缺陷来自工具测试**：`uniqSlug` 被传错了集合（显式 slug 永不判冲突）；空看板把标题和页名渲染进**每一个**请求；slug 冲突警告比较错了对象；`execute` 返回 `{ value }` 而注册表要的是被 `output.schema` 校验的那个裸值。
+
+**与契约的一处差异**：契约 §3.2.3 的表把 `add_page` 的参数写作 `page` 且标为 slug，但 §2.2 的 op 表写的是 `slug`。两者都接受了（`slug ?? page ?? title`）。同理 `set_region` 的 `region` 在 schema 里是可选的（有 `region` 就更新，没有就新建）。
+
+---
+
+### M3 · 渲染器（下一步）
+
+**交付**：自建 DOM/SVG 层——世界坐标容器 + CSS `transform` 做平移缩放；块流布局（Q-E 的模板优先：`flow` / `columns` / `grid` / `tree`，Agent 只声明结构与关系）；箭头为 SVG path，锚在块锚点上；显式多页与页签栏（Q-C）。
+
+**验收标准**：Agent 建的两页看板能在页签间切换；箭头正确连到目标块并在窗口缩放后仍正确；切到「对话」标签再切回来，看板内容不变（证明状态确实不在 React 里）。
+
+**读路径已经就绪**：M1 注册的投影带 `wire` 面，客户端用 `useProjection('board')` 零 RPC 读取——M0 的 `BoardView` 已经留好了这个钩子。
 
 ---
 
