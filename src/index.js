@@ -24,6 +24,15 @@
  */
 
 import { BOARD_PROJECTION_KEY, BOARD_TOOL_NAME, foldBoard } from './fold.js'
+import {
+  ACTIVITY_PROJECTION_KEY,
+  ACTIVITY_STATE_VERSION,
+  activityStateSchema,
+  activityToWire,
+  activityWireSchema,
+  emptyActivity,
+  foldActivity,
+} from './activity.js'
 import { emptyBoardDoc } from './model.js'
 import { boardDocSchema, boardWireSchema, toWire } from './schema.js'
 import { registerBoardTools, renderOutlineText } from './tools.js'
@@ -71,6 +80,19 @@ export function apply(ctx) {
       apply: (state, event) => foldBoard(state, event),
       wire: { viewSchema: boardWireSchema, view: (state) => toWire(state) },
       stateVersion: 1,
+    })
+
+    // The condensed chat strip's data source. A second projection rather than a transport: the
+    // client half has no event bus and no RPC, so a wired projection is the only cheap way to get
+    // live session facts into the browser. It folds two existing event kinds, adding no new
+    // vocabulary — the rule the whole design rests on.
+    projections.register({
+      key: ACTIVITY_PROJECTION_KEY,
+      stateSchema: activityStateSchema,
+      init: () => emptyActivity(),
+      apply: (state, event) => foldActivity(state, event),
+      wire: { viewSchema: activityWireSchema, view: (state) => activityToWire(state) },
+      stateVersion: ACTIVITY_STATE_VERSION,
     })
 
     ctx.inject(['tools'], (scope) => {

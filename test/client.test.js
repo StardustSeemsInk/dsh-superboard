@@ -48,6 +48,17 @@ function loadClient() {
     },
     cancelAnimationFrame: () => {},
     ResizeObserver: undefined,
+    // The strip remembers whether it was left open, so component construction reads storage.
+    // A minimal in-memory stand-in keeps the load honest without a DOM.
+    localStorage: {
+      store: new Map(),
+      getItem(key) {
+        return this.store.has(key) ? this.store.get(key) : null
+      },
+      setItem(key, value) {
+        this.store.set(key, String(value))
+      },
+    },
     Math,
     JSON,
     String,

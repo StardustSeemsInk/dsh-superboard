@@ -79,6 +79,27 @@ window.__ModuleLoader__.load({
       '.sb-button:disabled{opacity:.5;cursor:default;}',
       '.sb-input{font:inherit;font-size:12px;line-height:18px;flex:1;min-width:0;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l2);border-radius:5px;padding:4px 8px;}',
       '.sb-hint{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);}',
+      // The strip and the board share the tab. Only the active view renders, so the transcript is
+      // not on screen while the board is open; this is the framework-acceptable answer to that.
+      '.sb-main{display:flex;align-items:stretch;gap:10px;flex:1;min-height:0;min-width:0;}',
+      '.sb-column{display:flex;flex-direction:column;gap:10px;flex:1;min-width:0;min-height:0;}',
+      '.sb-strip{display:flex;flex-direction:column;gap:6px;flex:0 0 auto;border-left:1px solid var(--dsw-alias-border-l2);padding-left:10px;transition:width .12s ease;}',
+      '.sb-stripOpen{width:min(320px,38%);}',
+      '.sb-strip:not(.sb-stripOpen){width:132px;}',
+      '.sb-stripToggle{display:flex;align-items:center;gap:6px;width:100%;font:inherit;background:none;border:none;padding:2px 0;cursor:pointer;text-align:left;min-width:0;}',
+      '.sb-stripLabel{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary);white-space:nowrap;}',
+      '.sb-stripPreview{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);text-align:right;}',
+      '.sb-stripChevron{font-size:12px;color:var(--dsw-alias-label-tertiary);}',
+      '.sb-stripBody{display:flex;flex-direction:column;gap:8px;min-width:0;}',
+      '.sb-stripRow{display:flex;align-items:center;gap:8px;}',
+      '.sb-stripTitle{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);text-transform:uppercase;letter-spacing:.04em;}',
+      '.sb-stripMsg{display:flex;flex-direction:column;gap:2px;background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2);border-radius:6px;padding:6px 8px;}',
+      '.sb-dot{width:8px;height:8px;border-radius:50%;flex:0 0 auto;background:var(--dsw-alias-label-tertiary);}',
+      '.sb-dot-running{background:var(--dsw-alias-brand-primary);animation:sb-pulse 1.4s ease-in-out infinite;}',
+      '.sb-dot-needs-you{background:var(--dsw-alias-state-warn-primary,var(--dsw-alias-brand-primary));}',
+      '.sb-badge{font-size:10px;line-height:14px;padding:0 4px;border-radius:7px;background:var(--dsw-alias-brand-primary);color:var(--dsw-alias-label-inverse,var(--dsw-alias-bg-base));}',
+      '@keyframes sb-pulse{0%,100%{opacity:1}50%{opacity:.35}}',
+      '@media (prefers-reduced-motion: reduce){.sb-dot-running{animation:none}}',
     ].join('')
 
     /** Render the stylesheet as a component so unmounting removes it. */
@@ -442,6 +463,125 @@ window.__ModuleLoader__.load({
     }
 
     // -----------------------------------------------------------------------
+    // The condensed chat strip
+    // -----------------------------------------------------------------------
+
+    /** Where the strip remembers whether it was left open, per session. */
+    const STRIP_OPEN_KEY = 'dsh.superboard.stripOpen'
+
+    /** Read a localStorage flag, tolerating a hostile or absent storage. */
+    function readFlag(key) {
+      try {
+        return globalThis.localStorage?.getItem(key) === '1'
+      } catch {
+        return false
+      }
+    }
+
+    /** Write a localStorage flag, tolerating a hostile or absent storage. */
+    function writeFlag(key, value) {
+      try {
+        globalThis.localStorage?.setItem(key, value ? '1' : '0')
+      } catch {
+        /* private mode, a full quota, or no storage at all — the strip simply forgets */
+      }
+    }
+
+    /**
+     * The condensed chat strip (Q-K).
+     *
+     * It exists because the board and the chat are mutually exclusive in view: only the active
+     * `conversation.view` renders, so while the board is open the transcript is not on screen at
+     * all. The strip answers "what is the Agent doing right now" without a tab switch, and it is
+     * the one thing the framework would not give us — a right-pane tab cannot host the main
+     * conversation (S14), so this is rendered from projected state instead.
+     *
+     * Two data sources, both already wired: `boardActivity` carries the latest message (a host
+     * projection, because the client half has no event bus), and the session status map carries
+     * running / awaiting-input / completion-unread, which the host already computes — so the
+     * unread badge is the framework's own notion of unread, not a second opinion.
+     */
+    function ChatStrip({ sessionId, useProjection, useSessionStatus }) {
+      const activity = useProjection('boardActivity')
+      // The selector runs per status publication, so it must stay cheap.
+      const status = useSessionStatus?.((map) => (sessionId === undefined ? undefined : map.get(sessionId)))
+
+      const [open, setOpen] = React.useState(() => readFlag(STRIP_OPEN_KEY))
+
+      const toggle = () => {
+        setOpen((current) => {
+          writeFlag(STRIP_OPEN_KEY, !current)
+          return !current
+        })
+      }
+
+      const running = status?.running === true
+      const awaiting = status?.pendingInteraction !== undefined && status.pendingInteraction !== null
+      const unread = status?.completionUnread === true
+
+      // A slot only receives the standard hooks its owner declares, so `useSessionStatus` may not
+      // arrive. The strip then shows the message preview without a live status rather than
+      // claiming the Agent is idle — that would be a lie, not a degradation.
+      const hasStatus = typeof useSessionStatus === 'function'
+      const state = !hasStatus ? 'unknown' : awaiting ? 'needs-you' : running ? 'running' : 'idle'
+      const statusLabel = !hasStatus ? '状态不可用' : awaiting ? '需要你回答' : running ? '正在处理' : '空闲'
+      const preview = activity?.preview ?? ''
+
+      return h(
+        'aside',
+        {
+          className: `sb-strip${open ? ' sb-stripOpen' : ''}`,
+          'data-superboard-strip': state,
+          'aria-label': '对话状态',
+        },
+        h(
+          'button',
+          {
+            type: 'button',
+            className: 'sb-stripToggle',
+            onClick: toggle,
+            'aria-expanded': open,
+            title: `${statusLabel}${preview === '' ? '' : ` — ${preview}`}`,
+          },
+          h('span', { className: `sb-dot sb-dot-${state}`, 'aria-hidden': 'true' }),
+          open ? null : h('span', { className: 'sb-stripLabel' }, statusLabel),
+          open ? null : h('span', { className: 'sb-stripPreview' }, preview === '' ? '还没有消息' : preview),
+          unread && h('span', { className: 'sb-badge' }, '新'),
+          h('span', { className: 'sb-stripChevron', 'aria-hidden': 'true' }, open ? '›' : '‹'),
+        ),
+        open &&
+          h(
+            'div',
+            { className: 'sb-stripBody' },
+            h(
+              'div',
+              { className: 'sb-stripRow' },
+              h('span', { className: 'sb-stripTitle' }, '最近'),
+              h('span', { className: 'sb-spacer' }),
+              h('span', { className: 'sb-rev' }, statusLabel),
+            ),
+            activity === undefined || activity.seq === 0
+              ? h('div', { className: 'sb-hint' }, '这段对话还没有消息。')
+              : h(
+                  'div',
+                  { className: 'sb-stripMsg' },
+                  h(
+                    'div',
+                    { className: 'sb-chipRefs' },
+                    `${activity.role === 'user' ? '你' : 'Agent'}${activity.turn === null ? '' : ` · 第 ${activity.turn} 轮`}`,
+                  ),
+                  h('div', { className: 'sb-chipNote' }, activity.preview === '' ? '（这条消息没有文本内容）' : activity.preview),
+                ),
+            h(
+              'div',
+              { className: 'sb-hint' },
+              '完整的对话记录在「对话」标签里 —— 这条只是状态提示，不替代它。',
+            ),
+          ),
+      )
+    }
+
+    // -----------------------------------------------------------------------
     // The view
     // -----------------------------------------------------------------------
 
@@ -453,7 +593,7 @@ window.__ModuleLoader__.load({
      * `GoalDock`). It is always defined and returns `undefined` while the key carries no value,
      * so this renders a waiting state rather than crashing before the host half loads.
      */
-    function BoardView({ sessionId, useProjection }) {
+    function BoardView({ sessionId, useProjection, useSessionStatus }) {
       const board = useProjection('board')
       const containerRef = React.useRef(null)
       const [pageId, setPageId] = React.useState(null)
@@ -505,7 +645,7 @@ window.__ModuleLoader__.load({
       /**
        * Resolve a block address across the whole board, not just the visible page.
        *
-       * A selection can include an edge whose other endpoint lives on another page, and saying
+       * A selection can include an edge whose other endpoint lives on another page, and printing
        * `bl_9c02e1` instead of that block's name would make the feedback harder to act on than the
        * board it came from.
        */
@@ -650,81 +790,93 @@ window.__ModuleLoader__.load({
         'div',
         { className: 'sb-root', 'data-superboard': '' },
         h(BoardStyles),
-        h(
-          'header',
-          { className: 'sb-head' },
-          h('span', { className: 'sb-title' }, model.title ?? 'Board'),
-          h('span', { className: 'sb-rev' }, model.rev),
-          h('span', { className: 'sb-spacer' }),
-          h(
-            'span',
-            { className: 'sb-rev' },
-            `${pages.reduce((sum, page) => sum + page.blocks.length, 0)} block(s) · ${(model.edges ?? []).length} edge(s)`,
-          ),
-        ),
-        pages.length > 1 &&
-          h(
-            'nav',
-            { className: 'sb-pages', role: 'tablist' },
-            pages.map((page) =>
-              h(
-                'button',
-                {
-                  key: page.id,
-                  type: 'button',
-                  role: 'tab',
-                  'aria-selected': page.id === (activePage?.id ?? ''),
-                  className: `sb-page${page.id === (activePage?.id ?? '') ? ' sb-pageOn' : ''}`,
-                  onClick: () => setPageId(page.id),
-                },
-                page.slug,
-                h('span', { className: 'sb-pageCount' }, String(page.blocks.length)),
-              ),
-            ),
-          ),
+        // The board and the strip share the tab. They have to: only the active `conversation.view`
+        // renders, so while the board is open the transcript is not on screen anywhere else, and a
+        // right-pane tab cannot host the main conversation (S14).
         h(
           'div',
-          {
-            className: `sb-canvas${marquee === null ? '' : ' sb-picking'}`,
-            ref: containerRef,
-            'data-superboard-canvas': '',
-            onPointerDown,
-            onPointerMove,
-            onPointerUp,
-            onPointerCancel: onPointerUp,
-          },
-          pageBlocks.length === 0
-            ? h('div', { className: 'sb-empty' }, hasBlocks ? 'This page is empty.' : 'The board is empty.')
-            : h(
-                'div',
-                { className: layoutClass(activePage?.layout), style: layoutStyle(activePage?.layout, width) },
-                pageBlocks.map((block) => h(Block, { key: block.id, block, selected: selected.has(block.id) })),
+          { className: 'sb-main' },
+          h(
+            'div',
+            { className: 'sb-column' },
+            h(
+              'header',
+              { className: 'sb-head' },
+              h('span', { className: 'sb-title' }, model.title ?? 'Board'),
+              h('span', { className: 'sb-rev' }, model.rev),
+              h('span', { className: 'sb-spacer' }),
+              h(
+                'span',
+                { className: 'sb-rev' },
+                `${pages.reduce((sum, page) => sum + page.blocks.length, 0)} block(s) · ${(model.edges ?? []).length} edge(s)`,
               ),
-          pageEdges.length > 0 && h(EdgeLayer, { containerRef, blocks: pageBlocks, edges: pageEdges }),
-          marquee !== null &&
-            h('div', {
-              className: 'sb-marquee',
-              style: { left: marquee.left, top: marquee.top, width: marquee.width, height: marquee.height },
+            ),
+            pages.length > 1 &&
+              h(
+                'nav',
+                { className: 'sb-pages', role: 'tablist' },
+                pages.map((page) =>
+                  h(
+                    'button',
+                    {
+                      key: page.id,
+                      type: 'button',
+                      role: 'tab',
+                      'aria-selected': page.id === (activePage?.id ?? ''),
+                      className: `sb-page${page.id === (activePage?.id ?? '') ? ' sb-pageOn' : ''}`,
+                      onClick: () => setPageId(page.id),
+                    },
+                    page.slug,
+                    h('span', { className: 'sb-pageCount' }, String(page.blocks.length)),
+                  ),
+                ),
+              ),
+            h(
+              'div',
+              {
+                className: `sb-canvas${marquee === null ? '' : ' sb-picking'}`,
+                ref: containerRef,
+                'data-superboard-canvas': '',
+                onPointerDown,
+                onPointerMove,
+                onPointerUp,
+                onPointerCancel: onPointerUp,
+              },
+              pageBlocks.length === 0
+                ? h('div', { className: 'sb-empty' }, hasBlocks ? 'This page is empty.' : 'The board is empty.')
+                : h(
+                    'div',
+                    { className: layoutClass(activePage?.layout), style: layoutStyle(activePage?.layout, width) },
+                    pageBlocks.map((block) => h(Block, { key: block.id, block, selected: selected.has(block.id) })),
+                  ),
+              pageEdges.length > 0 && h(EdgeLayer, { containerRef, blocks: pageBlocks, edges: pageEdges }),
+              marquee !== null &&
+                h('div', {
+                  className: 'sb-marquee',
+                  style: { left: marquee.left, top: marquee.top, width: marquee.width, height: marquee.height },
+                }),
+            ),
+            h(FeedbackTray, {
+              tray,
+              note,
+              setNote,
+              selectedCount: selected.size,
+              selectedSlugs: [...selected].map(slugOf),
+              copied,
+              onStage: stageFeedback,
+              onCopy: copyTray,
+              onClear: () => {
+                setTray([])
+                setCopied(false)
+              },
+              onRemove: (id) => {
+                setTray((current) => current.filter((entry) => entry.id !== id))
+                setCopied(false)
+              },
             }),
+          ),
+          h(ChatStrip, { sessionId, useProjection, useSessionStatus }),
         ),
-        h(FeedbackTray, {
-          tray,
-          note,
-          setNote,
-          selectedCount: selected.size,
-          selectedSlugs: [...selected].map(slugOf),
-          copied,
-          onStage: stageFeedback,
-          onCopy: copyTray,
-          onClear: () => {
-            setTray([])
-            setCopied(false)
-          },
-          onRemove: (id) => {
-            setTray((current) => current.filter((entry) => entry.id !== id))
-            setCopied(false)
-          },
-        }),
       )
     }
 
