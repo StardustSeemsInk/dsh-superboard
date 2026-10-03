@@ -85,10 +85,38 @@ host-only bundle, no dependencies at all** (`host-plugin.md` L55).
 | `styles` | `styles.insert(css) → disposer` |
 | `console` | package-tagged logging |
 
-Browser timers, Node builtins, and `fetch` are removed and redirect to cordis services.
-There are only **8 client Services** (`layout`, `locale`, `sessions`, `slots`, `theme`,
+> ⚠️ **This table is the *dynamic cordis plugin* sandbox, not an ordinary plugin, and an earlier
+> version of this document wrongly generalised it.** See §2.1 — for a normally installed plugin
+> such as ours, the factory receives **only `require`**, and `host.call` does not exist.
+
+Browser timers, Node builtins, and `fetch` are removed **in that sandbox** and redirect to cordis
+services. There are only **8 client Services** (`layout`, `locale`, `sessions`, `slots`, `theme`,
 `timer`, `uiWorkspace`, `workspaces`) and **4 client Events** (`connection/reset`,
 `locale/change`, `slots/changed`, `theme/change`). There is **no generic plugin event bus**.
+
+### 2.1 What a normally installed plugin actually gets — corrected
+
+The client-module loader materialises a factory with exactly one argument
+(`dsh-client-modules/lib/client.js:683`):
+
+```js
+exports: registered.factory(this.makeRequire(ownerId, edges)),
+```
+
+So a plugin's `factory(require)` gets `require` and **nothing else**. Consequences, all verified
+against the installed third-party plugin `dshmarket` (724 KB compiled client):
+
+| Claim | Evidence |
+|---|---|
+| **No `host.call`.** It is a sandbox affordance, not a plugin one. | `0` occurrences of `host.call` in dshmarket's client |
+| **`fetch` is available and is the normal client→host channel.** | `51` bare `fetch(` calls in dshmarket's compiled client |
+| **Only four modules are requirable in practice**, because that is what the seed actually offers for plugin code. | dshmarket requires exactly `react`, `react-dom`, `react/jsx-runtime`, `@deepseek-ai/dsh-client-ui-primitives` |
+| **`dsh.client` has only four legal keys**: `platform` (required), `inject`, `external`, `immediately`. | `dsh-client-modules/lib/client.js:67`, `README.md:34` |
+| **"No JSX transform" is a *build-time* fact, not a runtime limit** — a plugin may write `.tsx` and compile it. | dshmarket's source is `.tsx`; its output calls `react_jsx_runtime.jsx(...)` |
+| **`external` only adds module-graph edges.** Naming a static-table key is a no-op; naming a missing supplier is skipped at composition and **throws only at runtime**. | `README.md:46` vs the compose path in `dsh-client-modules/lib/index.js` (the README's "composition rejects missing suppliers" claim was not found in code) — **UNVERIFIED** |
+
+**Therefore our plugin's client↔host channel is HTTP, not RPC**: the client `fetch`es plain routes
+the host half registers with `ctx.webServer.register`, and the host pushes back over SSE. See §13.
 
 ## 3. Slots
 
@@ -259,12 +287,18 @@ L681-689. Three facts in six lines:
 1. It **returns the seq**, and the result event must cite it — `appendToolResult(…, callSeq)`
    passes it as `sourceEventSeqs: [callSeq]` (L691-707). So call-before-result is structural,
    not incidental.
-2. `block.arguments` is stored **raw** — the unparsed model output. The run loop parses it only
-   for dispatch, into a *separate* field: `arguments: parseArguments(block.arguments)`
-   (L514), where `parseArguments` is documented as *"Parse model arguments, preserving invalid
-   JSON as text and mapping empty input to `{}`"* (L534-541).
-3. Every call is logged, including ones that never dispatch: the abort path also calls both
-   `appendToolCall` and `appendToolResult` (L664-678, L528).
+2. `block.arguments` is stored **raw**, and it is a **string**. The chain:
+   `dsh-llm/lib/index.js:1035` builds the tool-call block as `arguments: partial.toolCallArguments`,
+   and that field is accumulated from the stream — `partial.toolCallArguments += chunk.argumentsDelta`
+   (L988), with `if (typeof chunk.argumentsDelta !== "string") throw new TypeError(…)` (L1190).
+   `appendToolCall` never parses it. The run loop parses it only for dispatch, into a *separate*
+   field: `arguments: parseArguments(block.arguments)` (L514), where `parseArguments` is
+   documented as *"Parse model arguments, preserving invalid JSON as text and mapping empty input
+   to `{}`"* (L534-541).
+3. Every call is logged, **including ones that fail argument validation**. The ordering inside
+   `startCall` is explicit (L578-586): `callSeqs[index] = appendToolCall(…)` runs *before*
+   `ctx.tools[TOOL_RUNTIME_SCHEDULER].prepare(call.exec)`, and `prepare` is where validation
+   happens. The abort path additionally logs both events with `isError: true` (L664-678).
 
 Ordering is guaranteed at the call site — `callSeqs[index] = appendToolCall(...)` happens
 **before** `prepare`/`dispatch` (L580-586), and results are only appended from `commitReady()`
@@ -296,7 +330,7 @@ durable record equals what was dispatched. The sub-dispatch events are
 | | Path 1 | Path 2 |
 |---|---|---|
 | events | `tool/call` + `tool/result` | `tool/ptc-dispatch-start` + `tool/ptc-dispatch` |
-| `arguments` type | **string** (raw) | **object** (already JSON) |
+| `arguments` type | **string** (raw, unparsed) | **object** (already JSON) |
 | the board fold must | `JSON.parse` defensively | use as-is |
 
 So the fold has to recognise **two** event pairs and normalise the `arguments` shape itself. A
@@ -314,7 +348,146 @@ unterminated start.
 
 ---
 
-## 11. Open / unverified
+## 11. Can a large browser library (mermaid) load into a client plugin? **Answered: yes, as a package-local chunk**
+
+This was the top open question, because it gates the diagram engine.
+
+> **Correction to an earlier draft of this section.** I first wrote that mermaid was unreachable
+> because "`fetch` is removed from the client half". **That was wrong** — the removal applies to
+> the *dynamic cordis plugin sandbox* (§2), not to a normally installed plugin, whose client half
+> is an ordinary classic script in the real page global. dshmarket's compiled client contains
+> **51 bare `fetch(` calls**. The `PLATFORM_MODULES` analysis below still holds and is the part
+> that matters.
+
+**The platform module table is a frozen, nine-entry allowlist.** The shell seeds it and the
+module system refuses anything else:
+
+```js
+function rM(){return{react:Ef,"react/jsx-runtime":If,"react-dom":Rf,"react-dom/client":Df,
+"@deepseek-ai/cordis":sf,"@deepseek-ai/dsh-client-store":lh,
+"@deepseek-ai/dsh-client-ui-slots":hh,"@deepseek-ai/dsh-client-ui-primitives":sE,
+"@deepseek-ai/dsh-client-ui-dockkit":XS}}
+```
+`dsh-web-frontend/dist/assets/index-5SrrfWpU.js` — this is `PLATFORM_MODULES`, passed as
+`staticModules` into `modules.create({ boot, staticModules: rM(), … })`.
+
+**Resolution is a closed list, and a miss throws:**
+
+| branch | code |
+|---|---|
+| `if (this.seed.has(spec)) return this.seed.get(spec)` | a seed word |
+| memoized factory record | an already-materialised module |
+| registered package factory | another plugin's client half |
+| otherwise | `throw new Error('client-modules: require("…") missed the module table …')` |
+
+`dsh-client-modules/lib/client.js:696-705`. `dsh.client.external` does **not** widen this: it only
+adds module-graph edges, and is *"answered by the dynamic package row it names or an exact
+static-table key"* (`README.md:46`). `dshmarket` omits `external` entirely.
+
+**So a large library must ship inside our own package, as a chunk, and load lazily.** The
+sanctioned mechanism is a build-time split (`README.md:38`): a source `import()` compiles to
+`require.async("./client.<name>.js")`, and the loader implementation confirms the shape
+(`dsh-client-modules/lib/client.js:707-713`):
+
+```js
+require.async = async (spec) => {
+  edges.add(spec);
+  if (!spec.startsWith("./")) return await this.import(spec);
+  const fileName = spec.slice(2);
+  if (!CLIENT_CHUNK.test(fileName)) throw new Error(`client-modules: invalid relative chunk request ${JSON.stringify(spec)}`);
+  return await this.importChunk(ownerId, fileName);
+};
+```
+
+Three hard rules for a chunk: the filename must match `client\.[A-Za-z0-9][A-Za-z0-9._-]*\.js`
+(`:470`), the request must be **`./`-relative**, and **the chunk must be self-contained** — *"entry
+and chunk outputs cannot synchronously require another relative `client*.js` output"*
+(`README.md:68`). Chunks register as `window.__ModuleLoader__.load({ id, chunk, factory })` and
+travel as classic `<script src>` (`dsh-client-modules/lib/client.js:451-464`).
+
+**Shipped precedent for exactly this, at scale:** `dsh-client-ui-sidebar-documentpreview` loads a
+**7 MB pdf.js** via `require.async("./client.pdf.js")` (`lib/client.js:4883`) and a **7 MB
+SheetJS** (`:5790`); `dsh-client-ui-sidebar-terminal` loads **686 KB of xterm** (`:167`). So
+mermaid — small by comparison — is well within what the platform already does.
+
+**Consequences worth keeping:**
+
+- `ui-primitives` and `dockkit` are *resolvable* but **forbidden** by `practices.md:35` (a
+  throwing component blanks the whole slot entry). The 9-entry seed is a maximum, not a menu.
+- Host-side rendering is **not** a fallback: `mermaid`/`puppeteer`/`playwright`/`resvg`/`canvas`
+  have zero hits in the whole asar. **`sharp` 0.35.5 is present** (used by
+  `dsh-attachment-local`, and its input parameter table mentions `'svg'`), so SVG→PNG is
+  dependency-plausible — but whether the bundled libvips can rasterise SVG is **UNVERIFIED**, and
+  `ctx.attachments` accepts only PNG/JPEG/WebP/GIF, **not SVG**.
+- **A `board_snapshot` bitmap tool (Q-H's later phase) is the mirror of this problem**: it needs
+  rasterisation *in the host document*, because S7 forbids the iframe route.
+
+---
+
+## 12. Host ↔ client transport: HTTP + SSE, not RPC
+
+Because a plugin's client half has no `host.call` and no plugin event bus (§2.1), and because
+`@Remote({mode: 'stream'})` is unavailable to third parties — it needs `InvocationDescriptor`
+records produced by Typert's build pipeline plus a generated `/remote` contribution mounted via
+`ctx.remote.$mount()`, neither of which a plain plugin has — the transport is ordinary HTTP both
+ways. `dshmarket` (51 `fetch` calls, ~45 routes) is the working proof.
+
+**Client → host:** bare `fetch` against a route the host registered.
+
+```js
+ctx.webServer.register({
+  kind: 'exact',            // or 'prefix'
+  path: '/plugins/<name>/…',
+  handler: (req, res) => {  // NATIVE Node IncomingMessage / ServerResponse
+    …                       // write res directly; do NOT return a Response
+  },
+})
+```
+`WebRoute` = `{ kind: 'exact' | 'prefix'; path: string; handler: (req, res) => void | Promise<void> }`.
+
+**Host → client:** copy `dsh-client-hmr`, the one shipped SSE precedent — host side
+`dsh-client-hmr/lib/index.js:124-152` registers `/plugins/events`, writes
+`{'content-type':'text/event-stream','cache-control':'no-cache','connection':'keep-alive'}`,
+keeps the `res` objects in a `Set`, cleans up on `res.on('close')`, and broadcasts with
+`res.write('data: ' + JSON.stringify(frame) + '\n\n')`; client side (`lib/client.js:64-80`) opens
+`new EventSource(EVENTS_ROUTE)` and closes it in the `ctx.effect` cleanup. **The route string must
+be document-relative — `"/plugins/events".slice(1)`, no leading slash.**
+
+**`wire.view` is not a transport.** It is confirmed to be an optional field on a projection
+definition — `wire?: { viewSchema: ZodType<…>; view(state): … }` — doing only a state→view fold.
+A projection that registers `wire` *is* pushed to the client through the ordinary control frame,
+and the client reads it with `useProjection(key)`, which is the cheap read path for board state.
+
+**Boundary caveat:** `host.call()`, the restricted `ctx`, and the `require`-only `fetch` removal
+belong to the **dynamic cordis plugin** sandbox. If this project ever ships that way instead of as
+an installed bundle, §2 applies rather than §2.1.
+
+---
+
+## 13. Context injection: `context()` is per-step, synchronous, cache-safe
+
+- `PromptContext.text` is `string | ((context: AssembleContext) => string)` — **it returns a
+  string, not a Promise** — and `assemble()` calls `entry.text(context)` **without `await`**
+  (`dsh-system-prompt/lib/index.js:350`). So a standing outline can be computed synchronously.
+- There is **no** official `SYNC` or `@Remote` synchronous mechanism; the only synchronous read
+  path for live session-derived data is `ctx.sessionProjections` — `snapshot(session, keys?)` is
+  documented *"Fully synchronous — every value and asOfSeq reflect the same log position"*, and
+  `stateOf(session, key)` is synchronous too.
+- `context()` **is re-evaluated every step** (`preStep` calls `assemble()` inside the turn loop)
+  and its product is a **user-role snapshot message appended at the end of history**, only when
+  the rendered result changes. It **does not rewrite the system prefix.** By contrast, dynamic
+  text in `section()` rewrites the system node. **So the standing outline (Q-D) must use
+  `context()`, exactly as recommended.**
+- `AssembleContext` is `{ agent, scope, signal? }` at runtime; the session id comes from
+  `context.agent.id`.
+
+**`agent.inject` — corrected shape.** It is single-argument: `inject(input)`, where `input` is
+`{ content: ContentBlock[]; source: { kind } }` (or a `createUserMessage(...)` product).
+`content` is **`ContentBlock[]`, not a string**. And **it does not take effect in the current
+step** — it lands in the inbox's `next-step` queue **without waking the driver**, and is claimed
+at the next step boundary. Two events are logged: `agent/inbox/spliced` on injection and
+`user/message` on admission. Use `createUserMessage()` to mint a message with an id, or two
+injections will collide on `undefined === undefined` and throw `already pending`.
 
 Carried forward from the research report's UNVERIFIED list, plus what this file still needs:
 
