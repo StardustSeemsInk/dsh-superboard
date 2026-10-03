@@ -220,9 +220,7 @@ status,error}`, `session/{created,event,flush,disposed}`, `fs/{write-intent,edit
 `domain/changed`, `system-prompt/{assemble,change}`. Modes: `emit` | `serial` | `parallel` |
 `waterfall`. A waterfall listener that does not own the decision **must return `next()`**.
 
-## 9. UI rules that constrain the renderer
-
-- **No iframes for plugin pages** (`practices.md` L33): *"an iframe document does not receive
+## 9. UI rules that constrain the renderer- **No iframes for plugin pages** (`practices.md` L33): *"an iframe document does not receive
   the host's theme tokens, light/dark switching, or `ctx.locale`."* Render React components in
   a slot. → A canvas that must show PDF pages has to rasterize into the host document, not
   embed a viewer frame.
@@ -239,7 +237,84 @@ status,error}`, `session/{created,event,flush,disposed}`, `fs/{write-intent,edit
 - Choose the rendering surface **before** writing any view — later styling inside the wrong
   surface cannot recover consistency.
 
-## 10. Open / unverified
+## 10. Tool calls are durably logged — the log-native basis, verified
+
+This settles the risk that `docs/design/board-model.md` §8 flagged as load-bearing: *if DSH ever
+dispatches a tool without committing a `tool/call`, then "the board is the fold of its
+`board_apply` calls" has no foundation.* It does commit, on both dispatch paths, and the logged
+arguments are semantically the model's/program's own JSON in both.
+
+**Path 1 — the ordinary agent tool call** (`dsh-agent-loop/lib/index.js`):
+
+```js
+/** Append a started call and return the event seq that its result must cite. */
+function appendToolCall(session, turn, step, block) {
+  return session.append("tool/call", {
+    turn, step, callId: block.id, name: block.name, arguments: block.arguments
+  }).seq;
+}
+```
+L681-689. Three facts in six lines:
+
+1. It **returns the seq**, and the result event must cite it — `appendToolResult(…, callSeq)`
+   passes it as `sourceEventSeqs: [callSeq]` (L691-707). So call-before-result is structural,
+   not incidental.
+2. `block.arguments` is stored **raw** — the unparsed model output. The run loop parses it only
+   for dispatch, into a *separate* field: `arguments: parseArguments(block.arguments)`
+   (L514), where `parseArguments` is documented as *"Parse model arguments, preserving invalid
+   JSON as text and mapping empty input to `{}`"* (L534-541).
+3. Every call is logged, including ones that never dispatch: the abort path also calls both
+   `appendToolCall` and `appendToolResult` (L664-678, L528).
+
+Ordering is guaranteed at the call site — `callSeqs[index] = appendToolCall(...)` happens
+**before** `prepare`/`dispatch` (L580-586), and results are only appended from `commitReady()`
+through that recorded seq (L565-576).
+
+**Path 2 — a PTC `run_code` sub-dispatch** (`dsh-tools/lib/index.js`). PTC is an agent-level mode
+(`mode: 'ptc'`), not something a plugin can opt out of, so this path must be handled:
+
+```js
+function jsonNormalizeArgs(value) {
+  let snapshot;
+  try { snapshot = snapshotJsonValue(value); }
+  catch (error) { throw new Error(`tool arguments must be lossless JSON: …`); }
+  if (snapshot === void 0) throw new Error("tool arguments must be lossless JSON …");
+  const logged = snapshotJsonValue(snapshot);
+  …
+  return { dispatched: snapshot, logged };
+}
+```
+L997-1012. **"normalized" here means a detached lossless-JSON snapshot, not a semantic
+rewrite** — `logged` and `dispatched` are two independent copies of the same JSON value, so the
+durable record equals what was dispatched. The sub-dispatch events are
+`tool/ptc-dispatch-start` (L1354-1360, before `scheduler.prepare`) and `tool/ptc-dispatch`
+(L1331-1340, carrying `rootCallId`, `parentCallId`, `subCallId`, `name`, `arguments`, `isError`,
+`content`).
+
+**Consequences for the fold:**
+
+| | Path 1 | Path 2 |
+|---|---|---|
+| events | `tool/call` + `tool/result` | `tool/ptc-dispatch-start` + `tool/ptc-dispatch` |
+| `arguments` type | **string** (raw) | **object** (already JSON) |
+| the board fold must | `JSON.parse` defensively | use as-is |
+
+So the fold has to recognise **two** event pairs and normalise the `arguments` shape itself. A
+`JSON.parse` failure is possible on path 1 (invalid model JSON is preserved as text by design),
+so the fold must skip a malformed call rather than throw. And when `board_apply` runs as a PTC
+sub-dispatch, its result goes back into the running program rather than straight to the model —
+which means the render-error feedback loop (Q5, deferred) behaves differently on that path and
+must be designed for both.
+
+**Open sub-question for implementation:** whether the sub-dispatch's `tool/ptc-dispatch-start` is
+*always* committed before a `run_code` turn can settle, or whether an abandoned sub-call can be
+logged without its start. The `abandon` handler rejects with *"run_code run is over …; <name> tool
+call abandoned"* (L1350-1352), which suggests teardown races exist and the fold must tolerate an
+unterminated start.
+
+---
+
+## 11. Open / unverified
 
 Carried forward from the research report's UNVERIFIED list, plus what this file still needs:
 

@@ -33,6 +33,7 @@
 | **F13** | 不能追加自定义 session 事件类型；可追加的是**既有**已文档化类型 | `dsh-session/lib/index.js` L79-139 已知类型集 + `ignorable` 规则 |
 | **F14** | `exec.agent.session.append(type, data)` 返回**已提交事件**（含 `seq`）；`session.header.cwd` 是绝对路径；`session.inheritedEventCount` 标记 fork 继承前缀长度 | 同上 L1441-1481；L1044-1046；L1342-1349 |
 | **F15** | 工具并发：`isConcurrencySafe(args)` 返回 `true` 才允许并行，否则该工具在调度里是 `exclusive` | `dsh-tools/lib/index.js` L3059-3061 |
+| **F16** | 投影服务有两个**同步**读面：`stateOf(session, key)` → 原始 state（未注册返回 `undefined`，返回值是 live 引用，调用方不得改）与 `snapshot(session, keys?)` → `{asOfSeq, values}`，每个值过 `wire.viewSchema.parse` | `dsh-session-projection/lib/index.js` L121-156 |
 
 ---
 
@@ -440,6 +441,12 @@ return candidate
 
 因为工具调用本身是已提交事件（F6），这条定义让 fork / resume / replay / 投影缓存全部免费（F7）。**这是 Q4 决策的机制化表述。**
 
+**两个必须一起成立的附带条件（否则「免费」是假的）：**
+
+1. **所有分配出来的东西都必须是折叠时确定性推导的**——元素 id（D8）、slug（`uniqSlug` 的输入是内容与顺序，见 §1.7）、边端的解析结果。任何一处用了 `Math.random()`、`Date.now()`、内存计数器或文件系统状态，resume 之后同一段 log 会折出两份不同的看板。
+2. **工具结果里的一切都不进模型。** `board_apply` 返回的 `created[].slug` 只是**给模型看的信息**；它在 log 里只体现为 `tool/result.data.message.content` 的文本。折叠器**不得**从工具结果里解析任何东西（这是备选入口 C 被否掉的原因，§2.7.4）。
+
+
 ### 2.2 op 集合
 
 `board_apply` 的 `ops` 是一个**按序执行的事务批**。批内第一个失败中止整批（§2.4）。所有 op 共用一个信封形状：
@@ -452,10 +459,16 @@ type Op =
   | SetLayoutOp | SetRegionOp | DeleteRegionOp
 
 interface OpBase {
-  /** 供 Agent 与日志阅读的短说明；不参与折叠语义。 */
+  /**
+   * 供人类与日志阅读的短说明；**不参与折叠语义、不进 revHash**。
+   * 只在 `update_block` / `update_edge` / `set_layout` / `set_region` 上建议使用；
+   * 其他 op 的意图已由 op 名表达，写 note 只是浪费 token。
+   */
   note?: string
 }
 ```
+
+> 注意区分两个 `note`：op 上的 `OpBase.note` 属于模型片、随块/边一起被记（但不进哈希）；`board_apply` 参数上的顶层 `note` 是**批级**说明，属于工具调用参数、**不进模型**（它只在 transcript 与 git 镜像的 commit message 里出现）。
 
 | op | 参数 | 不变量 / 语义 |
 |---|---|---|
@@ -463,8 +476,8 @@ interface OpBase {
 | `rename_page` | `page`, `slug` | 按 §1.7 R1/R3 处理 alias；改的是 `Page.slug`，`id` 不动。 |
 | `reorder_pages` | `order: string[]` | 必须是**当前全部页 id/slug 的一个排列**；长度不符或缺项即失败（不做「只移动一页」的模糊语义——那会造出两种实现）。 |
 | `delete_page` | `page`, `force?` | 若该页有块或有边端点在页内块上，且 `force !== true`，失败并回报计数；`force` 时删除该页及其块，相关边标 `dangling`。删最后一页失败（`pages.length >= 1` 是不变量）。 |
-| `add_block` | `page`, `block`(kind + 该 kind 的字段), 可选 `after` | slug 经 `uniqSlug`；`kind:'group'` 时 `children` 必须引用**同页已存在**的块，且每个子块至多属于一个 group。 |
-| `update_block` | `block`, `patch` | `patch` 只允许**内容字段**（`text/markdown/items/code/source/alt/caption/label/level/lang/ordered/collapsed/title`），禁止改 `kind`/`id`。改 `kind` 是「删+加」，刻意不给 op。 |
+| `add_block` | `page`, `kind`, `slug?`, `after?`, `region?` + **该 kind 的内容字段（同层平铺，不是嵌套的 `block` 对象）** | slug 经 `uniqSlug`；`kind:'group'` 时 `children` 必须引用**同页已存在**的块，且每个子块至多属于一个 group。 |
+| `update_block` | `block` + **要改的内容字段（同层平铺，至少一个）** | 允许改的字段：`text/markdown/items/ordered/level/code/lang/filename/source/engine/diagram/src/alt/caption/page/crop/pageCount/title/collapsed/anchors`。禁止改 `kind`/`id`/`slug`（slug 走 `rename_block` 语义时仍用本 op 的 `slug` 字段）。改 `kind` 是「删+加」，刻意不给 op。 |
 | `move_block` | `block`, `page`, 可选 `after` | 跨页移动时块内的 `AnchorAt.rect` 归一化坐标**保持原值**（它是相对该块自己的媒体，不是相对页面）；`regionId` 若指向的 region 不含新页块，region 的 `blockIds` 自动同步。 |
 | `delete_block` | `block`, `recursive?` | 删块；指向它的边标 `dangling`。`kind:'group'` 默认只解组（保留子块），`recursive:true` 连子块一起删。 |
 | `add_edge` | `from`, `to`, `rel?`, `label?`, `style?`, `slug?` | 两端锚点按 §1.4 校验（kind 兼容性）；重复边（同 from、同 to、同 rel、同 label）被**拒绝**并回报已存在的 edge slug —— 防模型重复画同一支箭。 |
@@ -497,13 +510,13 @@ interface OpBase {
 `board_apply.execute` 的步骤顺序是强制的：
 
 1. **参数形状**由 DSH 在 `defineTool` 包装里校验（`validateJsonSchemaValue`，F1/F4）。注意裸属性表**无法表达**「`oneOf` 之外还要求某个字段」这类约束，所以 `op` 与 `kind` 的**取值合法性由我们在 execute 里再查一遍**，非法即 `throw`。
-2. **解析折叠当前状态**：`const doc = projections.get(session, 'board')` 取当前 `BoardModel`（或直接从投影服务读）。若投影不可用 → `throw new Error('board state unavailable: sessionProjections/board projection is not registered')`。
+2. **解析折叠当前状态**：`const doc = ctx.sessionProjections.stateOf(session, 'board')`（F16：同步、返回 live 引用；**只读，不得就地修改**，干跑必须 `structuredClone`）。此时该 session 里此前**所有** `board_apply` 的结果都已提交、投影已前进（F7 的 eager drive），所以读到的是最新状态；本次调用自己的 `tool/call` 因为尚无结果而被投影忽略（§2.7.2 第 1 步），**不会把自己算进去**——这正是把折叠点放在 `tool/result` 而不是 `tool/call` 的第二个理由。`stateOf` 返回 `undefined` 即投影未注册 → `throw new Error('board state unavailable: the board projection is not registered')`。（`snapshot(session, ['board']).values.board` 是等价但会多跑一次 zod 校验的读法，只在需要 `asOfSeq` 时用。）
 3. **revision 闸**：`expected_revision` 比对（§2.6）。
 4. **干跑**：把 ops 施加到一个 `structuredClone(model)` 上。**任何失败都在这里发生，且不产生任何副作用**——这条让「失败批不影响状态」成为实现上的自然结果，而不是需要小心维护的性质。
 5. **不写日志**。看板的 log 写入由 DSH 自己完成（它已经写了 `tool/call`）。我们**只在工具结果里回带新状态摘要**。
 6. 返回 `{ ok: true, rev, changed, applied, created, warnings }`。
 
-**UNVERIFIED（重要）**：第 5 步意味着权威状态完全由「已提交的 `tool/call` 事件」驱动。若 DSH 在某些路径下**不写** `tool/call`（例如 PTC / `run_code` 模式的转发调用，F13 里存在 `tool/ptc-dispatch` 事件类型），本设计的根基会松动。**动工前必须验证：`board_apply` 被调用时，`tool/call` 一定先于 `tool/result` 落盘，且 `data.arguments` 就是模型给的原始 JSON。** 验证方法见 §8 V1。
+**UNVERIFIED（重要）**：第 5 步意味着权威状态完全由「已提交的 `tool/call` 事件」驱动。若 DSH 在某些路径下**不写** `tool/call`（例如 PTC / `run_code` 模式的转发调用，F13 里存在 `tool/ptc-dispatch` 事件类型），本设计的根基会松动。**动工前必须验证：`board_apply` 被调用时，`tool/call` 一定先于 `tool/result` 落盘，且 `data.arguments` 就是模型给的原始 JSON。** 验证方法见 §8.3 V1。
 
 ### 2.5 revision 算法
 
@@ -594,6 +607,8 @@ ctx.sessionProjections.register({
 })
 ```
 
+`stateVersion` 的纪律（F7）：**只要 `BoardDoc` 的字段或折叠语义变了就必须 +1**，否则已 checkpoint 的旧行会被当成可用，冷启动会读到一份按旧语义折出来的状态。具体会触发 +1 的改动：op 集合的语义变化、`revHash` 的编码规则变化、slug 生成算法变化、`diag` 形状变化。**不会**触发 +1 的改动：新增工具、模板几何、outline 文本格式（后者只是提示词，不进状态——但它有自己的冻结要求，见 §8.1 R7）。
+
 #### 2.7.2 `apply` 收到的两个事件形状（V）
 
 ```ts
@@ -650,7 +665,7 @@ ctx.sessionProjections.register({
 | fork 是否免费 | 是。fork 的继承前缀里就有 `tool/call` 的 `arguments`；`session.inheritedEventCount` 存在（F14），折叠不需要特殊处理。 |
 | resume/replay 是否免费 | 是。**但前提是 D8 的 id 推导只用 `callSeq`**——绝不能用 `time`、`Date.now()`、随机数或内存计数器。 |
 | 客户端怎么看到 | 注册了 `wire` 就会推（F9）；客户端 `conversation.view` 的 board tab 用 `useProjection('board')`（F9）读，零额外 RPC。 |
-| host 自己怎么读 | `ctx.sessionProjections.snapshot(session, ['board'])` / `.get(session,'board')`。 |
+| host 自己怎么读 | `ctx.sessionProjections.stateOf(session, 'board')`（原始 state，同步，live 引用只读）；需要 `asOfSeq` 时用 `snapshot(session, ['board'])`（F16）。 |
 
 #### 2.7.4 备选入口（若 V1 验证失败时用）
 
@@ -660,7 +675,7 @@ ctx.sessionProjections.register({
 **备选 C —— 工具结果自带摘要。**
 `board_apply` 的 `output.render` 产出可机器解析的首行（如 `[board-apply ok rev=r18 ops=3]`），投影从 `tool/result.data.message.content[0].text` 解析。问题：这要求渲染文本既是给模型看的又是给机器看的（两个消费者抢一个字符串），且 `output.schema` 的结构化值**不进 log**（log 里只有 `message.content`，见 F6），所以只能靠文本。**不推荐**。
 
-**判定方法（§8 V1）：** 在一个测试 session 里手工调 `board_apply`，然后 dump session log（`.dsh/sessions/` 下的 jsonl / 或 `dsh --dump-config` 之外的 session 导出），确认：
+**判定方法（§8.3 V1）：** 在一个测试 session 里手工调 `board_apply`，然后 dump session log（`.dsh/sessions/` 下的 jsonl，或 session 导出），确认：
 
 - 存在 `tool/call` 且 `data.arguments` 是完整 JSON 对象；
 - 存在配对的 `tool/result` 且 `data.message.isError === false`；
@@ -814,6 +829,16 @@ parameters: {
 
 `missing[]` **不抛错**（与 `board_apply` 不同）：读操作容忍部分失败，把未命中的列出来即可。写操作必须全命中，否则抛错。
 
+**`output.render` 产出什么：** 单个 `{type:'text'}` 块，内容 = `value.text`。**不在 render 里做任何加工**——`text` 已经由 `execute` 按 `format` 渲染好，`render` 只负责把它交给模型。这样「模型看到什么」与「结构化值里有什么」永远一致，也避免 render 抛错（F4：render 抛错会被包成 projection error，比 execute 抛错难查）。
+
+`missing` 非空时，`execute` 在 `text` 末尾追加一段固定提示（不靠 render）：
+
+```
+not found: 风险-9, page:部署
+(the board has: pages 架构总览, 依赖分析, 部署拓扑 — call board_outline for slugs)
+```
+
+
 #### 3.2.3 `board_apply`
 
 ```
@@ -849,39 +874,45 @@ parameters: {
 }
 ```
 
-**批内每个 op 的完整形状**（每个分支都是 `type:"object"` + `additionalProperties:false` + 属性级 `required:true`；`oneOf` 的分支不接受 `required` 键，见 F2）：
+**批内每个 op 的完整形状。**
 
-| 分支 | 属性（全部 `required: true`，除标注 `optional` 者） |
+**头号实现陷阱（先读这条）：** 编译后的 op 分支是 `{type:'object', additionalProperties:false, properties:{…}, required:[…]}`，而 `oneOf` 要求**恰好一个**分支匹配。因此：
+
+1. **`op` 必须是每个分支唯一的判别键，且用 `const` 而非 `enum`。** 若两个 `oneOf` 分支只有一个字段不同，模型给出另一个取值时会 0 匹配或 2 匹配，`oneOf` 失败 → `ToolArgsError(INVALID_ARGS)`，错误文案是 schema 走查结果，**不是你写的**。所以判别键必须硬。
+2. **不要用 `oneOf` 表达「`add_block` 的 8 种 kind」。** 若把 kind 拆成 8 个分支，每个分支都带 `additionalProperties:false`，那么公共可选字段（`slug`/`after`/`region`/`note`）必须在**每一个**分支里重复声明，漏一个就会让合法调用被拒。**正确做法：`add_block` 是单个分支，`kind` 是 `enum`，所有 kind 的内容字段都在该分支里平铺声明；只把 `op`+`page`+`kind` 标 `required:true`，其余内容字段全部 `required:false`，由 `execute` 按 kind 校验必填（见下方实现注记）。** 这样「按 kind 二选一」的约束从 schema 层挪到了我们自己能写好错误文案的地方。
+3. 同理，`update_block`/`update_edge` 是单分支 + 全字段 optional，`execute` 负责「至少要改一个字段」与「字段属于该 kind」。
+
+| 分支 | 属性（`required:true` 者加粗语义；其余 optional） |
 |---|---|
-| `add_page` | `op`(`const:"add_page"`), `page`(string: 新页 slug), `after`(string, optional), `layout`(string, optional) |
-| `rename_page` | `op`(`const:"rename_page"`), `page`(string), `slug`(string) |
-| `reorder_pages` | `op`(`const:"reorder_pages"`), `order`(array of string) |
-| `delete_page` | `op`(`const:"delete_page"`), `page`(string), `force`(boolean, optional) |
-| `add_block` | `op`(`const:"add_block"`), `page`(string), `kind`(enum: heading/prose/list/code/uml/image/pdf-page/group), `slug`(string, optional), `after`(string, optional), `region`(string, optional), 加上**该 kind 的内容字段**（同一层平铺，见下） |
-| `update_block` | `op`(`const:"update_block"`), `block`(string), 加上**要改的字段**（同一层平铺，至少一个；全部 optional，由 execute 校验「至少一个」） |
-| `move_block` | `op`(`const:"move_block"`), `block`(string), `page`(string), `after`(string, optional) |
-| `delete_block` | `op`(`const:"delete_block"`), `block`(string), `recursive`(boolean, optional) |
-| `add_edge` | `op`(`const:"add_edge"`), `from`(string), `to`(string), `rel`(enum, optional), `label`(string, optional), `style`(enum: solid/dashed/dotted, optional), `slug`(string, optional) |
-| `update_edge` | `op`(`const:"update_edge"`), `edge`(string), `rel`(optional), `label`(optional), `style`(optional), `from`(optional), `to`(optional) |
-| `delete_edge` | `op`(`const:"delete_edge"`), `edge`(string) |
-| `set_layout` | `op`(`const:"set_layout"`), `scope`(string: page 或 region 引用), `template`(enum: flow/columns/grid/tree/canvas), `cols`(integer, optional), `gap`(integer, optional), `root`(string, optional), `direction`(enum, optional), `minCardWidth`(integer, optional) |
-| `set_region` | `op`(`const:"set_region"`), `region`(string), `blockIds`(array of string), `label`(optional), `tone`(enum, optional), `template`(optional) |
-| `delete_region` | `op`(`const:"delete_region"`), `region`(string) |
+| `add_page` | `op`(`const`), **`page`**(string: 新页 slug), `after`(string), `layout`(string) |
+| `rename_page` | `op`(`const`), **`page`**(string), **`slug`**(string) |
+| `reorder_pages` | `op`(`const`), **`order`**(array of string) |
+| `delete_page` | `op`(`const`), **`page`**(string), `force`(boolean) |
+| `add_block` | `op`(`const`), **`page`**(string), **`kind`**(enum), `slug`(string), `after`(string), `region`(string), `note`(string), + 下方 kind 字段表里的**全部**字段（均 optional） |
+| `update_block` | `op`(`const`), **`block`**(string), `slug`(string), `after`(string), `region`(string), `note`(string), + 可改字段（均 optional，至少一个由 execute 校验） |
+| `move_block` | `op`(`const`), **`block`**(string), **`page`**(string), `after`(string) |
+| `delete_block` | `op`(`const`), **`block`**(string), `recursive`(boolean) |
+| `add_edge` | `op`(`const`), **`from`**(string), **`to`**(string), `rel`(enum), `label`(string), `style`(enum: solid/dashed/dotted), `slug`(string) |
+| `update_edge` | `op`(`const`), **`edge`**(string), `rel`, `label`, `style`, `from`, `to`(均 optional，至少一个由 execute 校验) |
+| `delete_edge` | `op`(`const`), **`edge`**(string) |
+| `set_layout` | `op`(`const`), **`scope`**(string: page 或 region 引用), **`template`**(enum: flow/columns/grid/tree/canvas), `cols`(integer), `gap`(integer), `root`(string), `direction`(enum), `minCardWidth`(integer) |
+| `set_region` | `op`(`const`), **`region`**(string), **`blockIds`**(array of string), `label`(string), `tone`(enum), `template`(enum) |
+| `delete_region` | `op`(`const`), **`region`**(string) |
 
-**`add_block` 的 kind 内容字段（同层平铺，这是为了让裸属性表能表达「按 kind 二选一」）：**
+**`add_block` 的 kind 内容字段（全部平铺在同一分支里，全部 `required:false`）：**
 
-| kind | 字段 |
-|---|---|
-| `heading` | `text`(string), `level`(integer, 1–3) |
-| `prose` | `markdown`(string) |
-| `list` | `items`(array of string), `ordered`(boolean, optional) |
-| `code` | `code`(string), `lang`(string, optional), `filename`(string, optional) |
-| `uml` | `source`(string), `engine`(enum: mermaid/plantuml, optional), `diagram`(enum, optional) |
-| `image` | `src`(string), `alt`(string), `caption`(string, optional) |
-| `pdf-page` | `src`(string), `page`(integer), `caption`(string, optional) |
-| `group` | `title`(string, optional), `children`(array of string) |
+| kind | 必需（由 execute 强制） | 可选 |
+|---|---|---|
+| `heading` | `text`(string) | `level`(integer, 1–3, 默认 2) |
+| `prose` | `markdown`(string) | — |
+| `list` | `items`(array of string) | `ordered`(boolean) |
+| `code` | `code`(string) | `lang`(string), `filename`(string) |
+| `uml` | `source`(string) | `engine`(enum: mermaid/plantuml), `diagram`(enum) |
+| `image` | `src`(string), `alt`(string) | `caption`(string) |
+| `pdf-page` | `src`(string), `page`(integer) | `caption`(string) |
+| `group` | `children`(array of string) | `title`(string) |
 
-> **实现注记（必读）：** 声明层**不做**「`kind:'code'` 就必须有 `code`」这类条件必填（裸属性表表达不了）。DSH 只会校验每个属性的类型；平台会把「属于该 kind 的字段缺失」留给 `execute` 抛错（F5）。因此 `add_block` 的 execute 第一步就是 `requireFieldsForKind(kind, args)`，错误文案列出该 kind 必需的字段名。**这不是妥协，是正确的位置**：错误由我们自己写，才能带上该 kind 的必填清单与一个 `board_read` 例子。
+> **实现注记（必读）：** 声明层**不做**「`kind:'code'` 就必须有 `code`」这类条件必填——裸属性表表达不了，而把它硬塞进 `oneOf` 会产生上面第 2 条的重复声明陷阱。DSH 只校验每个属性**出现时**的类型；「属于该 kind 的字段是否齐全」留给 `execute` 抛错（F5）。因此 `add_block` 的 execute 第一步是 `requireFieldsForKind(kind, args)`。**这不是妥协，是正确的位置**：错误由我们自己写，才能给出该 kind 的必填清单、一个合法示例、以及「用 `board_read` 看一眼现有同类块」的建议。schema 层做不到这些。
 
 `output.schema`（成功时）：
 
@@ -995,6 +1026,17 @@ parameters: {
 
 **防错作用：** `hits[].from/to` 一律是**当前 slug**，`empty: true` 时 `hint` 直接给出下一步（例如 `"no edges with rel=depends point at 登录服务; 4 edges touch it with other rels — call board_query{kind:'neighbors_of'}"`）。模型不需要自己判断「空结果意味着什么」。
 
+**`output.render` 产出什么：** 单个 `{type:'text'}` 块，用**紧凑表格式文本**（比 JSON 省一半字符）：
+
+```
+board_query dependents_of 登录服务 → 2 hits (r19-77c1e0ba9d34)
+  渠道适配器 -[depends]-> 登录服务   "适配器假设会话长期有效"
+  风控校验   -[depends]-> 登录服务
+```
+
+`empty: true` 时 render 输出 `hint` 全文而不是「0 hits」——空结果的价值全在那句话里。
+
+
 #### 3.2.5 `board_feedback`
 
 ```
@@ -1052,9 +1094,28 @@ parameters: {
 
 **触发情境：** 用户消息里出现「这个/这块/选中的/这些箭头」；或用户消息很短且看起来在回答一个需要指代的问题。
 
-**防错作用：** 它把「用户指着什么」变成**当前 slug 列表 + 原文**（Q-H 的 v1 结构化载荷），并顺带回带 `edges[]` ——「选中的块之间有什么关系」。这正好覆盖「用户框选了两块问它们什么关系」这一高频场景，不需要额外的工具。
+**防错作用：** 它把「用户指着什么」变成**当前 slug 列表 + 原文**（Q-H 的 v1 结构化载荷），并顺带回带 `edges[]` ——「选中的块之间有什么关系」。这正好覆盖「用户框选了两块问它们什么关系」这一高频场景，不需要额外的工具。它还把「没有反馈」这一情形**显式化**（`present:false` + 「去问用户」），避免模型在空结果上编造指代对象。
 
-**持久化：** 反馈载荷由客户端在用户发消息时随消息一起提交（Q7 待定，见 `design-tree.md`）；`board_feedback` 只读取。**UNVERIFIED：** 尚未确定它落在哪条既有事件上（候选：`user/message` 的附件、`feedback/message-put` / `feedback/record` —— 后两者存在于 F13 的类型集中，语义待确认）。见 §8 V4。
+**持久化：** 反馈载荷由客户端在用户发消息时随消息一起提交（Q7 待定，见 `design-tree.md`）；`board_feedback` 只读取。**UNVERIFIED：** 尚未确定它落在哪条既有事件上（候选：`user/message` 的附件、`feedback/message-put` / `feedback/record` —— 后两者存在于 F13 的类型集中，语义待确认）。见 §8.3 V6。
+
+**`output.render` 产出什么：** 单个 `{type:'text'}` 块。`present: false` 时输出固定的三行，**不输出空结构**：
+
+```
+no board selection is staged for this session.
+The user may have selected on the board without sending, or this session's board has no user
+gestures yet. Ask the user which part they mean instead of guessing.
+```
+
+`present: true` 时输出**用户视角的引述块**（这是唯一一处工具输出偏向人类阅读而非模型解析的地方，因为它的内容最终会被回述给用户）：
+
+```
+[board selection] page 架构总览 · rect (0.12, 0.30, 0.44, 0.18)
+  block 风险-1 (list): "回调幂等缺失" / "对账延迟" / "重试放大"
+  block 渠道适配器 (code): "retry 只覆盖了超时"
+  edges between them: 风险-1 -[causes]-> 渠道适配器  "重试放大导致重复扣款"
+  user note: "这两块是不是同一个问题？"
+```
+
 
 ### 3.3 工具面如何系统性降低笔误
 
@@ -1233,6 +1294,14 @@ D  ⚠ 1 render failure
 
 **为什么不改用分段注入或按需注入全部：** 常驻大纲的**全部价值**在于「模型不需要想起去看」。一旦常驻部分小到无法回答「有哪些页」，模型每轮都要先 `board_outline`，那就退化成纯拉取，白白多一次往返。L0–L2 覆盖到约 60 块 / 50 边，这是单次评审对话的现实规模上限；L3 以上是「这个看板太大了，Agent 应该分页」的信号，而它会在文本里看到这句话。
 
+### 5.4 还有一块常驻预算：工具 schema
+
+上面算的只是大纲。**常驻的还有工具定义本身**——`board_apply` 的编译后 JSON Schema 有 14 个 `oneOf` 分支、约 70 个属性，序列化后是**全项目最大的一段每请求文本**（数量级在 4,000–6,000 字符，即 ~2,000–3,000 token），而它每一步都在请求头里。三点结论：
+
+1. **这份预算比大纲更硬**：大纲可以降级，工具 schema 不能——它是模型**正确构造调用**的唯一依据。所以大纲的 4,000 字符上限必须为它让路，不能把总预算算成大綱可无限膨胀。
+2. **`description` 要省着写。** 每个属性的 `description` 都会进 schema。规则：**参数级 `description` 只写「取值域与格式」，把「什么时候用、为什么」写在工具级 `description` 里**（后者每个工具一份，前者每个属性一份）。本文 §3.2 的属性描述已经是这个标准的示范——例如 `expected_revision` 的属性描述只说明它是什么，而「必须从最近结果复制」这条纪律写在工具描述里。
+3. **一个待验证的优化**：DSH 有 `deferLoading` 选项（`defineTool` 的 `options.deferLoading === true`，`dsh-tools` L869）。若它能让 `board_apply` 只在需要时进入请求头，就能省下这 2–3k token。**UNVERIFIED**——我没有读到 `deferLoading` 的消费方语义（见 §8.2 A7）。在验证之前，`board_apply` 按常驻计算预算。
+
 ---
 
 ## 6. 客户端与镜像（非 v1 重点，但接口已定）
@@ -1303,8 +1372,8 @@ D  ⚠ 1 render failure
 → **UNVERIFIED**，且在 v1 之外。现在定型 `engine: 'mermaid' | 'plantuml'` 只是保留字段；若最终选了别的渲染路线（例如自研极简 flowchart），`engine` 多一个取值即可，模型不变。
 
 **R7 —— 大纲的「稳定格式」可能不够稳定。**
-§5.1 的格式是我设计的，模型会据此形成解析习惯。若实现时为了省字符改了分隔符，模型不一定报错，可能只是悄悄误解。**格式必须当成对外契约冻结**，任何变动都要递增 `stateVersion`（因为它是同一个 `stateSchema` 家族的语义）。
-→ 建议：把 §5.1 的格式规则写成一份**黄金样例测试**（golden test），实现改动必须让样例同步更新。
+§5.1 的格式是我设计的，模型会据此形成解析习惯。若实现时为了省字符改了分隔符，模型不一定报错，可能只是悄悄误解。**格式必须当成对外契约冻结**，但注意它**不进 `stateVersion`**（它只在提示词里，不在投影状态里，§2.7.2），所以没有任何机制会自动拦住这种改动——只能靠纪律。
+→ 建议：把 §5.1 的格式规则写成一份**黄金样例测试**（golden test），实现改动若不能让样例逐字符相等就必须先改样例并说明理由。
 
 ### 8.2 需要先验证才能动工的断言
 
@@ -1316,6 +1385,7 @@ D  ⚠ 1 render failure
 | A4 | `exec.agent` 在 `board_apply` 里一定存在（非 agentless 调用） | 无 agent 时我们既不能确认 session 也无法报错 | 需要一个显式的 `throw`，行为已定义 |
 | A5 | 客户端 `useProjection('board')` 对第三方插件注册的键可用 | board tab 的读路径 | 需要退化为 `host.call` 拉取 + 轮询 |
 | A6 | `tool/call` 的 `data.arguments` 在 log 里是**完整 JSON 对象**（不是字符串、不是 delta） | 折叠的唯一输入 | 需要自己累积 delta，不可能做到纯同步 |
+| A7 | `defineTool` 的 `deferLoading` 能否让 `board_apply` 的 schema 不常驻请求头 | 省 2–3k token/步 | 保持常驻，预算按 §5.4 计算 |
 
 ### 8.3 验证清单（按优先级，动工前跑）
 
@@ -1323,7 +1393,7 @@ D  ⚠ 1 render failure
 - **V2** 在 PTC / `run_code` 模式下重复 V1。（`tool/ptc-dispatch` 事件类型的存在说明这条路可能不同。）
 - **V3** 注册一个 `wire` 缺省的投影，确认不报错。
 - **V4** 在某个 `conversation.view` tab 组件里调 `useProjection('board')`，确认能拿到 host 推送的值，且切换 tab 再回来仍然有效。
-- **V5** 在 `ctx.systemPrompt.context()` 的 `text` 函数里读 `ctx.sessionProjections.get(session, 'board')`，确认同步可用且拿到的是一致切面。
+- **V5** 在 `ctx.systemPrompt.context()` 的 `text` 函数里调 `ctx.sessionProjections.stateOf(session, 'board')`，确认同步可用、返回非 `undefined`，且拿到的是一致切面。
 - **V6** 确认 `feedback/record` 与 `feedback/message-put` 两个既有事件类型的语义（`board_feedback` 的载荷落点，Q7 的输入）。
 
 ---
@@ -1348,4 +1418,5 @@ rev        = 'r' + revSeq + '-' + sha256(encodeModelForHash(model))[0..11]
 工具       = board_outline / board_read / board_apply / board_query / board_feedback
 写入口     = 只有 board_apply（事务批 + expected_revision 必填 + isConcurrencySafe:false）
 常驻文本   = §5.1 格式，预算 4000 字符，L0→L5 逐级降级，头部行与诊断区块永不省略
+             另计 §5.4：board_apply 的编译后 schema 常驻请求头，~4–6k 字符
 ```
