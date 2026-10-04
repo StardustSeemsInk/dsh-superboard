@@ -61,6 +61,9 @@ export const TEMPLATE_MEANING = Object.freeze({
   row: 'a horizontal run that wraps',
   columns: 'a fixed number of equal columns (set cols)',
   grid: 'cards that fill the width (set minCardWidth), or named cells with spans (set areas)',
+  masonry:
+    'a waterfall: cards keep their own height and fill the columns in order (set cols, or ' +
+    'minCardWidth to let the width decide)',
   canvas: 'a plain box that arranges nothing — a section, not a surface to position in',
 })
 
@@ -732,10 +735,9 @@ function operationSchema() {
           {
             scope: str('Page or group reference. A region carries no layout — it only labels blocks.'),
             template: oneOfStrings(`Layout template. ${TEMPLATE_HELP}.`, [...LAYOUT_TEMPLATES]),
-            cols: int('columns: how many equal columns.'),
+            cols: int('columns and masonry: how many equal columns.'),
             gap: int('Spacing between cards, in pixels.'),
-            direction: oneOfStrings('row: wrap direction.', ['down', 'right']),
-            minCardWidth: int('grid: minimum card width, in pixels. Not with areas.'),
+            minCardWidth: int('grid and masonry: minimum card width, in pixels. Not with areas.'),
             // One string per row. The fold also accepts a single string with rows separated by `/`
             // or newline, but DSH's validator rejects a `type` array, so the schema declares the one
             // shape and the fold stays the more permissive of the two.

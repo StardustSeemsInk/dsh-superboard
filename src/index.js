@@ -37,6 +37,7 @@ import { emptyBoardDoc, BOARD_MODEL_VERSION } from './model.js'
 import { PdfFacts } from './pdf.js'
 import { boardDocSchema, boardWireSchema, toWire } from './schema.js'
 import { blockIndex, registerRuntimeRoutes, RenderReports } from './runtime.js'
+import { registerBoardSkills } from './skill.js'
 import { registerBoardTools, renderOutlineText } from './tools.js'
 
 /** The plugin name, used for prompt-context attribution and diagnostics. */
@@ -84,6 +85,14 @@ export function apply(ctx) {
   // `ctx.inject` keeps the plugin inactive for services it does not have rather than throwing.
   ctx.inject(['webServer'], (scope) => {
     registerRuntimeRoutes(scope, reports)
+  })
+
+  // The Agent-facing documentation, as a skill. It rides the host plane (this plugin's row is at
+  // the top level of the profile patch), so every preset's scope chain merges it — including a
+  // plain session with no board preset selected. Registered here rather than inside the
+  // projections injection because it does not depend on them.
+  ctx.inject(['skills'], (scope) => {
+    registerBoardSkills(scope)
   })
 
   ctx.inject(['sessionProjections'], (projectionScope) => {

@@ -56,10 +56,25 @@ window.__ModuleLoader__.load({
       '.sb-columns{display:grid;gap:12px;align-items:start;}',
       '.sb-row{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start;}',
       '.sb-row>.sb-card{flex:1 1 220px;min-width:0;}',
+      // The waterfall. `columns` is a multi-column container, which is the only way to get
+      // column-major filling in this runtime — and column-major filling *is* the definition of a
+      // waterfall. `break-inside:avoid` is what keeps a card whole: probed in Edge, a card taller
+      // than the balanced column height is moved to a column of its own rather than sliced.
+      //
+      // Spacing is `margin-bottom` on the cards, not `gap`, because `gap` does not apply to a
+      // multi-column container. Declared here rather than inline so the inline style only ever
+      // carries the column count and width.
+      '.sb-masonry{display:block;}',
+      '.sb-masonry>.sb-card,.sb-masonry>.sb-groupBox{break-inside:avoid;margin-bottom:12px;}',
       // The free-placement template. Nothing generic is positioned any more — pixel coordinates
       // belong to things whose nature is spatial, so this reserves a containing block for the
       // arrow layer and for whatever spatial block kind joins it.
+      //
+      // It declares no arrangement, but it still spaces its children: an `article` is block-level
+      // with no margin, so without this its cards stack border-to-border and read as one broken
+      // card. "Arranges nothing" was meant as "does not choose geometry", not "does not space".
       '.sb-absBox{position:relative;min-height:120px;}',
+      '.sb-absBox>.sb-card,.sb-absBox>.sb-groupBox{margin-bottom:12px;}',
       '.sb-groupBox{display:flex;flex-direction:column;gap:8px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;padding:10px;min-width:0;}',
       '.sb-groupHead{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}',
       '.sb-groupTitle{font-size:12px;font-weight:600;line-height:18px;}',
@@ -220,6 +235,8 @@ window.__ModuleLoader__.load({
           return 'sb-row'
         case 'grid':
           return 'sb-grid'
+        case 'masonry':
+          return 'sb-masonry'
         case 'columns':
           return 'sb-columns'
         case 'canvas':
@@ -260,16 +277,42 @@ window.__ModuleLoader__.load({
         // with a minimum card width is responsive by construction — the browser fits as many as the
         // current width allows, so no breakpoint is needed or wanted.
         const fixed = Number(layout.params?.cols)
-        if (layout.params?.cols !== undefined && Number.isFinite(fixed)) {
-          style.gridTemplateColumns = `repeat(${Math.max(1, Math.trunc(fixed) || 1)}, minmax(0, 1fr))`
+        const named = layout.params?.cells !== undefined
+        if (named) {
           // A named cell is a slot: a card spanning two rows fills them rather than sitting at the
           // top of the first one, which is what `.sb-grid`'s `align-items:start` would do.
+          //
+          // This is keyed on `cells` rather than on `cols` on purpose. Keying it on `cols` made
+          // every `grid` with a column count stretch its cards to the tallest in the row, which is
+          // how a one-line card becomes a large empty box — and `cols` reads as a *column count*,
+          // so nothing in the tool surface warned that it also changed card height.
+          style.gridTemplateColumns = `repeat(${Math.max(1, Math.trunc(fixed) || 1)}, minmax(0, 1fr))`
           style.alignItems = 'stretch'
+        } else if (layout.params?.cols !== undefined && Number.isFinite(fixed)) {
+          // A fixed count without named cells: still a grid, but cards keep their own height.
+          style.gridTemplateColumns = `repeat(${Math.max(1, Math.trunc(fixed) || 1)}, minmax(0, 1fr))`
         } else {
           const requested = Number(layout.params?.minCardWidth ?? 260)
           const safe = Number.isFinite(requested) ? requested : 260
           const min = Math.max(120, Math.min(Math.trunc(safe) || 260, 640))
           style.gridTemplateColumns = `repeat(auto-fill, minmax(${min}px, 1fr))`
+        }
+      }
+
+      if (layout?.template === 'masonry') {
+        // A fixed count, or as many columns as a card's minimum width allows — the same two shapes
+        // `grid` has, because an Agent reasons about both the same way.
+        const fixed = Number(layout.params?.cols)
+        if (layout.params?.cols !== undefined && Number.isFinite(fixed)) {
+          const cols = Math.max(1, Math.min(Math.trunc(fixed) || 1, 6))
+          style.columnCount = String(cols)
+        } else {
+          const requested = Number(layout.params?.minCardWidth ?? 260)
+          const safe = Number.isFinite(requested) ? requested : 260
+          const min = Math.max(120, Math.min(Math.trunc(safe) || 260, 640))
+          // `column-width` is a *hint*: the browser fits as many columns of at least this width as
+          // the container allows, which is the responsive behaviour `auto-fill` gives a grid.
+          style.columnWidth = `${min}px`
         }
       }
 

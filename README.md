@@ -4,7 +4,7 @@ An agent-editable board for [DeepSeek Harness](https://github.com/deepseek-ai) �
 
 看板是 Agent 思考的地方：markdown 块、关系箭头、渲染出的图表、钉住的 PDF 页与图片。它是**对话 / 轨迹旁边的第三个标签页**，所以聊天保留自己的家；同时它也是一块**常驻显示面**——钉在看板上的答案不会滚进历史里再被重新读一遍。
 
-> **状态：v1 完成并在用。** 343 个测试通过；模型版本 4；已以 `link:` 方式装进 `desktop` profile；附带三个看板专属的 agent 预设。
+> **状态：v1 完成并在用。** 357 个测试通过；模型版本 4；已以 `link:` 方式装进 `desktop` profile；附带三个看板专属的 agent 预设。
 > 设计访谈与技术决定见 [`docs/design/design-tree.md`](docs/design/design-tree.md)，
 > 可照着实现的模型契约见 [`docs/design/board-model.md`](docs/design/board-model.md)，
 > 逐条验证过的框架约束见 [`docs/research/dsh-plugin-contract.md`](docs/research/dsh-plugin-contract.md)，
@@ -26,7 +26,7 @@ An agent-editable board for [DeepSeek Harness](https://github.com/deepseek-ai) �
 - **多页看板**，作用域是**对话**（一个对话一块看板）。
 - **八种块**：标题 / 正文 / 列表 / 代码 / UML / 图片 / PDF 页 / 分组。
 - **容器可嵌套**：`group` 里可以再放 `group`，层级不限。
-- **五种排版模板**：`flow`（竖排）/ `row`（横排换行）/ `columns`（N 等分列）/ `grid`（卡片填满宽度）/ `canvas`（不排版，只做个盒子）。
+- **六种排版模板**：`flow`（竖排）/ `row`（横排换行）/ `columns`（N 等分列）/ `grid`（卡片填满宽度）/ `masonry`（瀑布流，卡片各随高度）/ `canvas`（不排版，只做个盒子）。
   **没有任何块带坐标**——容器声明它怎么安排子块，坐标不是块的事。
 - **`grid` 上的 `areas`**：用名字声明格子，从而表达跨行跨列。
 
@@ -39,6 +39,7 @@ An agent-editable board for [DeepSeek Harness](https://github.com/deepseek-ai) �
   ```
 
   单元格里写的是**子块引用**（slug / 别名 / id），`.` 是空位。每行格子数必须相同，同一个名字必须占一个**实心矩形**。这是用来表达「让正文横跨两列、让导航竖跨两行」这类排版的。
+- **`masonry` 瀑布流**：卡片保持各自高度、按列顺次填充（`cols` 指定列数，或 `minCardWidth` 让宽度决定）。`grid` 的行轨道高等于该行最高的卡，所以短卡旁边会留空；`masonry` 就是「把空间填满」的那个模板。它是 CSS multi-column，因此内容超过一栏后**按列优先**填充——顺序敏感的内容不要用它。
 - **有向语义箭头**，端点可以精确到块的内部——九种锚点：整块 / 字段（`title`、`code`、`caption`、`filename`）/ 列表项 / 代码行段 / 文本区间（带引文）/ 子块 / UML 节点 / 矩形 / 点。
 - **region**：只做标注和底色，**不参与排版**（要排版请用 `group`）。一个块最多属于一个 region。
 - **revision 闸**：每次写入都要带 `expected_revision`，并发写会被拒绝而不是静默覆盖。
@@ -115,7 +116,7 @@ console.log('投影:', p, '工具:', t)
 ## 开发
 
 ```bash
-npm test        # 343 个测试，node:test，无框架
+npm test        # 357 个测试，node:test，无框架
 npm run verify  # 测试 + 确认 host 半导出 apply()
 ```
 
@@ -134,13 +135,30 @@ src/diagnose.js     宿主侧的 mermaid 廉价校验（折叠时同步跑）
 src/runtime.js      浏览器侧运行时路由：mermaid、pdf.js、渲染失败上报
 src/pdf.js          宿主侧 PDF 解析：文本层与归一化坐标，供块内锚点使用
 src/preset.js       预设内的角色提示词（`dsh-superboard/preset` 子路径导出）
+src/skill.js        Agent 面向的文档提供者（`dsh-superboard/skill` 子路径导出）
+skills/             技能正文，一个目录一个技能
 src/client.js       client 半入口：看板视图、阅读栏、框选反馈，原样下发
 cordis.patch.yml    把本 bundle 插进 profile 的层栈，并声明三个 agent 预设
 docs/design/        设计树、模型契约、里程碑计划
 docs/research/      针对真实 DSH 0.2.0-rc.2 验证过的约束与 API 调研
 scripts/            开发工具（官方包参考提取）
-test/               343 个测试
+test/               357 个测试
 ```
+
+### Agent 怎么学到看板怎么排版：`board-layout` 技能
+
+四个工具描述**就是** Agent 免费拿到的全部文档面，而它们要**每个请求**都发一遍。所以那里只放
+「调用之前必须知道的事」，放不下「写完之后会长成什么样」。而后者恰恰是问题所在：一个 Agent
+可以完全按 schema 写出一块合法看板，却因为**看不到画布**而排得很难看——标题和它的列表变成两张
+互不相干的卡、短卡旁边留着大片空白、靠「相邻」表达归属而一换窗口就散架。
+
+`skills/board-layout/SKILL.md` 就是这份文档。它以**技能**形式注册（`src/skill.js` 自己实现
+provider，不 `import` 官方包），所以目录里只多一行 `name: description`，正文只在 Agent 决定要看
+时才被拉取——写一次的成本由真正画看板的那次会话付。
+
+里面写的是从渲染器里读出来的、schema 看不出来的东西：每种模板真实的 CSS、哪个字段会让卡高等高、
+行优先还是列优先、`region` 其实不包住任何东西、哪些字段**完全没有视觉效果**，以及一条「调用
+`set_layout` 之前的自查清单」。
 
 ### 三个 agent 预设
 

@@ -62,7 +62,7 @@ const findByKind = (state, kind) => blocksOf(state).filter((block) => block.kind
 // ---------------------------------------------------------------------------
 
 test('the vocabulary is the CSS-shaped set, with `row` in and `tree` out', () => {
-  assert.deepEqual([...LAYOUT_TEMPLATES], ['flow', 'row', 'columns', 'grid', 'canvas'])
+  assert.deepEqual([...LAYOUT_TEMPLATES], ['flow', 'row', 'columns', 'grid', 'masonry', 'canvas'])
   // A group nested in a group *is* a tree, so having a `tree` template as well would be two ways to
   // say one thing.
   assert.equal(LAYOUT_TEMPLATES.includes('tree'), false)

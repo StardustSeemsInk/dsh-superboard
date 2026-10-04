@@ -247,10 +247,48 @@ test('a grid with a fixed column count stops auto-filling', () => {
   // and the grid's own width cannot disagree. Auto-filling would silently reflow a named layout.
   const style = client.layoutStyle({ template: 'grid', params: { cols: 2 } }, 1200)
   assert.equal(style.gridTemplateColumns, 'repeat(2, minmax(0, 1fr))')
-  // A named cell is a slot, so a card spanning two rows fills them instead of sitting at the top.
-  assert.equal(style.alignItems, 'stretch')
   // Auto-fill keeps the default alignment, which is what makes a short card in a tall row stay short.
   assert.equal(client.layoutStyle({ template: 'grid' }, 1200).alignItems, undefined)
+})
+
+test('only a named-cell grid stretches its cards', () => {
+  // A named cell is a slot, so a card spanning two rows fills them rather than sitting at the top of
+  // the first. That is the ONLY case that stretches, and it is keyed on `cells` — the host's resolved
+  // placement — not on `cols`.
+  //
+  // This used to be keyed on `cols`, which meant a plain `grid` with a column count silently became
+  // an equal-height grid: a one-line card beside a long one turned into a large empty box. Nothing in
+  // the tool surface said `cols` changed card height, so it was unpredictable by construction.
+  const named = client.layoutStyle({ template: 'grid', params: { cols: 2, cells: {} } }, 1200)
+  assert.equal(named.alignItems, 'stretch')
+  const fixed = client.layoutStyle({ template: 'grid', params: { cols: 2 } }, 1200)
+  assert.equal(fixed.gridTemplateColumns, 'repeat(2, minmax(0, 1fr))')
+  assert.equal(fixed.alignItems, undefined, 'a fixed column count must not stretch cards')
+})
+
+test('masonry is a waterfall, by column count or by minimum card width', () => {
+  // The waterfall exists because a grid row is as tall as its tallest card. It is CSS multi-column,
+  // so the inline style carries `columnCount`/`columnWidth` rather than a grid template — `gap` has
+  // no effect in a multi-column container, which is why the class carries the spacing.
+  const byCount = client.layoutStyle({ template: 'masonry', params: { cols: 3 } }, 1200)
+  assert.equal(byCount.columnCount, '3')
+  assert.equal(byCount.columnWidth, undefined)
+
+  const byWidth = client.layoutStyle({ template: 'masonry' }, 1200)
+  assert.equal(byWidth.columnWidth, '260px')
+  assert.equal(byWidth.columnCount, undefined)
+  assert.equal(
+    client.layoutStyle({ template: 'masonry', params: { minCardWidth: 320 } }, 1200).columnWidth,
+    '320px',
+  )
+
+  // Clamped at both ends, like the grid's minimum.
+  assert.equal(
+    client.layoutStyle({ template: 'masonry', params: { minCardWidth: 99999 } }, 1200).columnWidth,
+    '640px',
+  )
+  assert.equal(client.layoutStyle({ template: 'masonry', params: { cols: 99 } }, 1200).columnCount, '6')
+  assert.equal(client.layoutStyle({ template: 'masonry', params: { cols: 0 } }, 1200).columnCount, '1')
 })
 
 test('gap is honoured on any template, and clamped', () => {

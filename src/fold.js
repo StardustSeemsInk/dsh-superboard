@@ -1046,8 +1046,6 @@ function collectLayoutParams(op) {
   const params = {}
   if (op.cols !== undefined) params.cols = Number(op.cols)
   if (op.gap !== undefined) params.gap = Number(op.gap)
-  if (op.root !== undefined) params.root = String(op.root)
-  if (op.direction !== undefined) params.direction = op.direction
   if (op.minCardWidth !== undefined) params.minCardWidth = Number(op.minCardWidth)
   if (op.areas !== undefined) params.areas = op.areas
   return Object.keys(params).length === 0 ? undefined : params

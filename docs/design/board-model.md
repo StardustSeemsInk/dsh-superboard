@@ -123,7 +123,7 @@ interface LayoutSpec {
   hints?: LayoutHints
 }
 
-type LayoutTemplate = 'flow' | 'columns' | 'grid' | 'tree' | 'canvas'
+type LayoutTemplate = 'flow' | 'row' | 'columns' | 'grid' | 'masonry' | 'canvas'
 
 interface LayoutParams {
   /** columns/grid 的列数上限（窄窗口会被 §4.4 的降级覆盖）。 */
@@ -898,7 +898,7 @@ parameters: {
 | `add_edge` | `op`(`const`), **`from`**(string), **`to`**(string), `rel`(enum), `label`(string), `style`(enum: solid/dashed/dotted), `slug`(string) |
 | `update_edge` | `op`(`const`), **`edge`**(string), `rel`, `label`, `style`, `from`, `to`(均 optional，至少一个由 execute 校验) |
 | `delete_edge` | `op`(`const`), **`edge`**(string) |
-| `set_layout` | `op`(`const`), **`scope`**(string: page 或 region 引用), **`template`**(enum: flow/columns/grid/tree/canvas), `cols`(integer), `gap`(integer), `root`(string), `direction`(enum), `minCardWidth`(integer) |
+| `set_layout` | `op`(`const`), **`scope`**(string: page 或 region 引用), **`template`**(enum: flow/row/columns/grid/masonry/canvas), `cols`(integer), `gap`(integer), `minCardWidth`(integer) |
 | `set_region` | `op`(`const`), **`region`**(string), **`blockIds`**(array of string), `label`(string), `tone`(enum), `template`(enum) |
 | `delete_region` | `op`(`const`), **`region`**(string) |
 
@@ -1141,18 +1141,20 @@ gestures yet. Ask the user which part they mean instead of guessing.
 
 ### 4.1 v1 模板清单
 
-模板是**页级或 region 级**的，Agent 通过 `set_layout` 或 `add_page{layout}` 声明。**Agent 不写坐标**（Q-E）。
+模板是**页级或 `group` 级**的，Agent 通过 `set_layout` 或 `add_page{layout}` 声明。**Agent 不写坐标**（Q-E）。`region` **不能**挂模板——它是标注，不是容器（§4.2）。
 
 | 模板 | Agent 怎么触发 | 引擎算几何的规则 | 需要的额外元数据 |
 |---|---|---|---|
-| **`flow`** | 默认值。什么都不写就是它。适合「一条推理链」 | 单列，按 `blocks` 顺序自上而下；卡片宽度 = 容器宽 - 2×margin；高度 = 内容自然高度（文本按容器宽度回流后测量）；`heading level:1` 额外加上间距 | 无。`direction: 'down'`（唯一 v1 取值）。首块为 `heading` 时作为页标题行渲染 |
-| **`columns`** | 页的内容明显成栏（对比、并列方案） | 由 `hints.bands` 或「连续的 `group` 块」切分栏；`cols` 缺省 = `min(块组数, 3)`；每栏宽度均分，栏内各自 `flow` | `cols`（可选）, `bands`（可选） |
-| **`grid`** | 一批同质卡片（风险清单、指标、对照表） | 列数 = `clamp(floor(容器宽 / minCardWidth), 1, cols ?? 4)`；行按顺序填充；卡高等高到该行最高卡 | `minCardWidth`（默认 280px）, `cols`（默认 4） |
-| **`tree`** | 有明确根与层次（依赖树、目录、故障树） | 根 = `root` 指定的块，缺省 = 该页第一条 `heading`；父子关系取「`contains`/`depends` 方向的边」；同层水平排布，层高固定；**边由引擎布线，用户不能拖** | `root`（可选）；页内至少有 1 条带方向的边，否则退化为 `flow` 并产生一条 `warning` |
-| **`canvas`** | 逃生舱：Agent 认为自动排版表达不了（时序图式布局、非规则相对位置） | 一块**自由摆放的画布**：容器内的空间留给「本质上就是空间性的」组件（今天只有箭头层，将来会有 Note 块）。**普通块不再有坐标**——见 §4.4 | 无。自由摆放是组件自身的能力，不是块的通用属性 |
-| **（预留）`matrix`** | 二维对照（方案 × 维度） | 不实现 | — |
+| **`flow`** | 默认值。什么都不写就是它。适合「一条推理链」 | 单列 flex column，`gap: 12px`；高度 = 内容自然高度 | 无 |
+| **`row`** | 一批要横着排、放不下就换行的卡 | flex row + wrap，`align-items: flex-start`；直接子 `.sb-card` 分得 `flex: 1 1 220px`，`group` 子块按内容宽度 | `gap` |
+| **`columns`** | 页的内容明显成栏（对比、并列方案） | **grid，行优先填充**：`repeat(cols, minmax(0,1fr))`。`cols` 缺省 2，上限 6；**容器宽 < 720px 时降为 1 列** | `cols`（可选）, `gap` |
+| **`grid`** | 一批同质卡片（风险清单、指标、对照表） | `areas` 给定时按名字落格；否则 `repeat(auto-fill, minmax(minCardWidth,1fr))`。**行按顺序填充；卡高自然，但行轨道高 = 该行最高卡** | `minCardWidth`（默认 **260px**，clamp 120–640）, `cols`（可选）, `areas`（可选）, `gap` |
+| **`masonry`** | 卡片高度差异大，想「把空间填满」（信息流、小红书式） | **瀑布流**：CSS multi-column（`column-count` 或 `column-width`），卡高各随内容，`break-inside: avoid` 保证不被切断。**内容超过一栏高度后按列优先填充** | `cols`（可选，上限 6）或 `minCardWidth`（同 grid 默认与 clamp）, `gap` |
+| **`canvas`** | 逃生舱：只要一个「什么都不安排」的盒子来做分区 | **不安排任何几何**：`position: relative` 的盒子 + `min-height: 120px`，子块按普通块流纵向堆叠并保持 12px 间距。空间留给「本质上就是空间性的」组件（今天只有箭头层）——见 §4.4 | 无 |
+| ~~`tree`~~ | **已删除** | `group` 套 `group` **就是**树；两者并存等于一种东西两种说法 | — |
+| ~~`matrix`~~ | 未实现 | — | — |
 
-**约束：`tree` 与 `grid` 排他。** 同一页同时声明两者会导致几何无解，引擎取 `grid` 并出 warning。
+**约束：`areas` 与 `cols`/`minCardWidth` 互斥**（同时给出是错误，不是「后者忽略前者」），因为它们都在决定列数。
 
 ### 4.2 视觉分组：`region` 还是 `group` 块？
 
@@ -1186,10 +1188,12 @@ gestures yet. Ask the user which part they mean instead of guessing.
 所以「窄窗重排」根本不构成模型层的问题——它只影响渲染。真正需要小心的是**语义**层面的变化（谁和谁在一栏），那才需要 Agent 知道。
 
 **降级 1（自动，渲染层）：**
-容器宽 `< 640px` 时，引擎把 `columns`/`grid` 降级为**单列 `flow`**，块顺序保持读序不变，并**在诊断通道登记一条 `code:'LIMIT'` 的窄窗提示**（`diag` 不参与 revision，见 §2.5）。这条提示会进大纲，于是 Agent 有机会说「这一页现在被挤成一列了，要不要我拆成两页」。
+`columns` 在容器宽 `< 720px` 时降为 **1 列**——这是实现里唯一存在的窄窗降级（`src/client.js` 的 `width < 720 ? 1 : 6`）。`grid` 和 `masonry` 不需要降级：它们本来就是响应式的（`auto-fill` / `column-width` 让浏览器自己决定列数）。
 
 **降级 2（显式，Agent 层）：**
-模板参数支持「窄窗变体」的唯一形式是 `cols` 的**上界**——引擎永远可以选更少的列，不会选更多。Agent 若想要窄窗下不同的**结构**（而不仅是列数），正确做法是**分页**，不是给模板加断点。这条要写进工具描述，否则模型会试图发明响应式参数。
+模板参数支持「窄窗变体」的唯一形式是 `cols` 的**上界**——引擎永远可以选更少的列，不会选更多。Agent 若想要窄窗下不同的**结构**（而不仅是列数），正确做法是**分页**，不是给模板加断点。
+
+> **未实现（曾经写在这里）**：本节原本承诺「容器宽 `< 640px` 时把 `columns`/`grid` 降级为单列 `flow`，并登记一条 `code:'LIMIT'` 诊断」。**这条没有实现**，`src/client.js` 里根本没有 `LIMIT` 这个字符串。真正的窄窗行为只有上面那一条 `720px` 的 `columns` 单列化，且它不产生任何诊断。要么实现它，要么删掉这条承诺——现在记录在此以免继续误导。
 
 **为什么不做真响应式：** 因为 Agent 看不到像素（本设计的中心约束）。一个 Agent 无法感知、无法验证、无法针对其调整的响应式行为，只会制造「模型以为布局是 A、实际是 B」的静默错配。窄窗提示 + 分页把这件事变成 Agent 可以**看见并决定**的。
 
@@ -1201,7 +1205,7 @@ gestures yet. Ask the user which part they mean instead of guessing.
 
 **今天的位置表达只有两种：**
 
-1. **容器声明布局** —— 页或 `group` 上的 `layout.template`（`flow` / `row` / `columns` / `grid` / `canvas`）。这是机制，覆盖绝大多数需求。
+1. **容器声明布局** —— 页或 `group` 上的 `layout.template`（`flow` / `row` / `columns` / `grid` / `masonry` / `canvas`）。这是机制，覆盖绝大多数需求。
 2. **容器声明命名单元格** —— `grid` 模板下的 `params.areas`，用**子块引用**（slug / 旧别名 / id）而不是数字填格子，让「哪一块占哪一片」可读、可校验，且不限制容器只能有 9 个块：
 
    ```
@@ -1224,7 +1228,10 @@ gestures yet. Ask the user which part they mean instead of guessing.
 | 表格里的 | 实现里的 |
 |---|---|
 | `tree` 模板、`region` 可挂模板（`region.layout`） | `tree` 已删除——**组里套组本身就是一棵树**，另设模板是同一件事的两种说法；改为新增 `row`。`region` 退化为**纯标注**（tone + label），不再有 `layout`；`group` 才是排版容器 |
-| `grid` 的 `minCardWidth` 默认 280px、`cols` 默认 4；`hints.bands` | 实现里默认 260px，且 `grid` 未给 `cols` 时用 `repeat(auto-fill, minmax(...))` 自适应；`bands`、`matrix`、`tree` 的 `root` 字段均未实现（`set_layout` 的 `root` 已删除） |
+| `grid` 的 `minCardWidth` 默认 280px、`cols` 默认 4；`hints.bands` | 实现里默认 **260px**，且 `grid` 未给 `cols` 时用 `repeat(auto-fill, minmax(...))` 自适应；`bands`、`matrix` 均未实现（`set_layout` 的 `root`、`direction` 两个死字段已删除） |
+| §4.3「窄窗 `< 640px` 降级为单列 + `LIMIT` 诊断」 | **未实现**。`src/client.js` 里没有 `LIMIT`；唯一的窄窗行为是 `columns` 在 `< 720px` 时变单列，且无诊断 |
+| `columns` 的 `cols` 上限 4 | 现为 **6**（`masonry` 同上限）。两者都是「静默截断」——见 §4.3 的取舍说明 |
+| `grid` + `cols` 会让卡高等高 | **不再如此。** 等高只发生在 `areas`（命名格子是槽位）——`cols` 只决定列数，不改变卡高。这条偏差曾经存在并制造过「短卡变成大空盒」的真实问题 |
 
 
 ---

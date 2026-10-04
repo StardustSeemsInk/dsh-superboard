@@ -69,6 +69,8 @@ export const EDGE_RELS = Object.freeze([
  *   `columns` — a grid of `cols` equal columns.
  *   `grid`    — a grid that fits as many `minCardWidth` cards per row as the width allows, or a
  *               named-cell grid when `params.areas` says which child occupies which cells.
+ *   `masonry` — a waterfall: `cols` columns (or as many as `minCardWidth` allows), each card
+ *               keeping its own height, filled in order down the shortest column.
  *   `canvas`  — no arrangement at all: a plain box, for sectioning rather than for position.
  *
  * **There is no coordinate template.** Free placement was `canvas` plus a per-block `at`, and both
@@ -77,6 +79,16 @@ export const EDGE_RELS = Object.freeze([
  * that can be *declared* — a template and a tree. What remains spatially free is the arrow layer,
  * whose geometry is measured rather than authored.
  *
+ * **`masonry` is the one template whose arrangement is not CSS Grid, and that is deliberate.**
+ * A grid row is as tall as its tallest card, so in a `grid` a one-line card beside a long one
+ * leaves a hole underneath it; `masonry` is what an Agent means when it says "fill the space".
+ * There is no native CSS masonry in the target runtime (probed: Edge 153 lays `grid-template-rows:
+ * masonry` out as an ordinary grid), so this is CSS multi-column — `columns` + `break-inside:
+ * avoid`. The consequence to know about is that a multi-column container is filled **column by
+ * column** once the content exceeds one column's balanced height, so it is a waterfall and not a
+ * row-order grid. Each card still carries `margin-bottom` rather than a `gap`, because `gap` has
+ * no effect in a multi-column container.
+ *
  * The former `tree` template is gone: nesting a `group` inside a `group` *is* a tree, and having
  * both would be two ways to say one thing.
  *
@@ -84,7 +96,7 @@ export const EDGE_RELS = Object.freeze([
  * never reads this comment, so the description string is where a template actually gets explained.
  * The suite checks the two lists agree.
  */
-export const LAYOUT_TEMPLATES = Object.freeze(['flow', 'row', 'columns', 'grid', 'canvas'])
+export const LAYOUT_TEMPLATES = Object.freeze(['flow', 'row', 'columns', 'grid', 'masonry', 'canvas'])
 
 /** Element-id prefixes, one per addressable element kind. */
 export const ID_PREFIX = Object.freeze({
