@@ -1,0 +1,15 @@
+{
+  "name": "dsh-superboard-promo",
+  "private": true,
+  "type": "module",
+  "description": "Announcement video for dsh-superboard: real-render capture, synthesized score, ffmpeg assembly.",
+  "scripts": {
+    "serve": "node tools/serve.mjs --port 8788",
+    "data": "node tools/extract-data.mjs",
+    "score": "node audio/score.mjs",
+    "capture": "node capture/frames.mjs",
+    "determinism": "node tools/determinism.mjs",
+    "build": "node tools/build.mjs",
+    "verify": "node tools/verify.mjs"
+  }
+}

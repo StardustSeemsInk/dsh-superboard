@@ -1,0 +1,503 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <title>S7 · 选择 · 用户把话说回去</title>
+    <link rel="stylesheet" href="/scenes/theme.css" />
+    <style>
+      /*
+       * The board keeps its real 1500px width and its real 100% scale: this scene is
+       * about a gesture, and the selection tray's own 12px chrome is part of what is
+       * being shown. Legibility comes from the crop — the camera parks on q8/q10 and
+       * the cards fill the frame.
+       *
+       * The board's canvas scrolls, so the tray (a real `.sb-selbar` the product
+       * renders below the canvas, outside it) has to end up above the caption scrim.
+       * `BOARD_LIFT` slides the whole board up by exactly that much.
+       */
+      #camera {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1500px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      #mount {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1500px;
+        height: 1080px;
+      }
+
+      #panel {
+        position: absolute;
+        left: 1500px;
+        top: 0;
+        width: 420px;
+        height: 1080px;
+        padding: 22px 20px 176px;
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+        background: var(--surface);
+        border-left: 1px solid var(--line);
+      }
+      #panel h3 {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--ink);
+      }
+      #panel .hint {
+        margin: 0;
+        font-size: 13px;
+        line-height: 19px;
+        color: var(--ink-dim);
+      }
+      #payload {
+        margin: 0;
+        font-family: var(--font-mono);
+        font-size: 11.5px;
+        line-height: 17px;
+        color: var(--ink-dim);
+        white-space: pre-wrap;
+        word-break: break-all;
+      }
+      #payload .k { color: var(--accent); }
+      #payload .s { color: var(--ok); }
+      #payload .q { color: var(--ink); }
+      #payload .note { color: var(--ink-faint); }
+
+      #steps {
+        display: flex;
+        gap: 6px;
+        flex-wrap: wrap;
+      }
+      #steps .pill { font-size: 12px; padding: 4px 10px; }
+
+      #copied {
+        opacity: 0;
+      }
+      #copied .card { padding: 10px 12px; }
+      #copied .title {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-weight: 600;
+        color: var(--ok);
+        margin-bottom: 6px;
+        font-size: 13px;
+      }
+      #copied .body {
+        font-family: var(--font-mono);
+        font-size: 11px;
+        line-height: 16px;
+        color: var(--ink-dim);
+        white-space: pre-wrap;
+      }
+
+      #overlay {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: 10;
+      }
+      #scrim {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 176px;
+        background: linear-gradient(
+          to top,
+          rgba(17, 17, 27, 0.99) 0%,
+          rgba(17, 17, 27, 0.97) 62%,
+          rgba(17, 17, 27, 0) 100%
+        );
+      }
+      #overlay .caption {
+        justify-content: flex-start;
+        gap: 26px;
+      }
+      #hintline {
+        position: absolute;
+        left: 64px;
+        bottom: 196px;
+        max-width: 900px;
+        font-family: var(--font-mono);
+        font-size: 13px;
+        line-height: 20px;
+        color: var(--ink-faint);
+      }
+    </style>
+  </head>
+  <body data-ds-dark-theme="true">
+    <div id="camera"><div id="mount"></div></div>
+    <aside id="panel">
+      <h3>结构化附件 · board-selection.json</h3>
+      <p class="hint">选区变成给 Agent 的附件：块的 slug，以及单独的一个 text 字段。</p>
+      <pre id="payload">等待选区…</pre>
+      <div id="steps"></div>
+      <div id="copied">
+        <div class="card">
+          <div class="title">✓ Ctrl+C 复制到的原文</div>
+          <div class="body" id="copied-body"></div>
+        </div>
+      </div>
+    </aside>
+
+    <div id="overlay">
+      <div id="hintline"></div>
+      <div id="scrim"></div>
+      <div class="caption">
+        <div>
+          <div class="label" id="cap-label"></div>
+          <div class="sub" id="cap-sub"></div>
+        </div>
+        <div class="index">S7</div>
+      </div>
+    </div>
+
+    <script src="/vendor/react.production.min.js"></script>
+    <script src="/vendor/react-dom.production.min.js"></script>
+    <script>window.__ModuleLoader__ = { load: (definition) => { window.__sbDef = definition } }</script>
+    <script src="/repo/src/client.js"></script>
+    <script src="/scenes/harness.js"></script>
+    <script>
+      window.__diag = { stage: 'boot' }
+      window.addEventListener('error', (event) => {
+        window.__diag.error = String(event.message)
+      })
+      window.addEventListener('unhandledrejection', (event) => {
+        window.__diag.error = 'rejection: ' + String(event.reason)
+      })
+
+      /* ---------- real event dispatch ---------- */
+
+      const tick = () => new Promise((done) => setTimeout(done, 190))
+
+      function pointer(target, type, x, y, buttons) {
+        target.dispatchEvent(
+          new PointerEvent(type, {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            clientX: x,
+            clientY: y,
+            button: 0,
+            buttons,
+            pointerId: 1,
+            pointerType: 'mouse',
+            isPrimary: true,
+          }),
+        )
+      }
+
+      /* ---------- camera ---------- */
+
+      /*
+       * The board is slid up so the selection tray — which the product renders below
+       * the canvas, not inside it — clears the caption scrim. One constant, applied as
+       * a transform, so every measurement below stays in the board's own coordinates.
+       */
+      const BOARD_LIFT = -186
+      const SCROLL_TOP = 132
+
+      const ease = (k) => (k <= 0 ? 0 : k >= 1 ? 1 : k * k * (3 - 2 * k))
+
+      /* ---------- beats, on the timeline's accent grid ---------- */
+      /*
+       * The marquee is held OPEN across frames: `pointerdown` and the moves land at one
+       * t, `pointerup` at a later one. That is what makes the real translucent rectangle
+       * visible in captured frames at all — the whole drag inside a single `renderScene`
+       * call would be over before the screenshot. Each step is memoised, so the state at
+       * any t is still a pure function of whether t has crossed that threshold.
+       */
+      const DOWN_AT = 2.2
+      const MOVE_AT = 2.6
+      const UP_AT = 3.8
+      const TEXT_AT = 6.0
+      const COPY_AT = 7.6
+      const ATTACH_AT = 9.4
+
+      const CAPTIONS = [
+        { at: 0, label: '选中，就是把话说回去', sub: '同一个拖拽，起点决定它是框选还是选文字' },
+        { at: DOWN_AT, label: '框选：拖一个矩形', sub: '矩形与卡片相交即选中——高亮就是相交判定的结果，不是装饰' },
+        { at: UP_AT, label: '选完落进托盘', sub: '托盘是看板自己的组件，带块的 chip 和一句说明' },
+        { at: TEXT_AT, label: '起点落在文字上，就是文字选择', sub: '框到的块自动一起选上，允许跨块' },
+        { at: COPY_AT, label: 'Ctrl+C 复制的是原文', sub: '卡片标签是 user-select:none，所以 slug 不会混进正文' },
+        { at: ATTACH_AT, label: '选区变成结构化附件', sub: '块 slug 与单独的 text 字段：整块是答案，还是只有这一句' },
+      ]
+
+      let mounted = null
+
+      const firstText = (element) => {
+        const walker = document.createTreeWalker(element, NodeFilter.SHOW_TEXT)
+        for (let node = walker.nextNode(); node !== null; node = walker.nextNode()) {
+          if (node.data.trim() !== '') return node
+        }
+        return null
+      }
+
+      async function build() {
+        const api = await window.SuperboardHarness.startBoard({ sessionId: 'promo-s7', diag: window.__diag })
+        await api.selectPage('questions')
+        const reader = document.querySelector('aside.sb-reader')
+        if (reader !== null) reader.style.display = 'none'
+        await new Promise((done) => setTimeout(done, 800))
+
+        const canvas = document.querySelector('.sb-canvas')
+        canvas.scrollTop = SCROLL_TOP
+        canvas.scrollLeft = 0
+        // The board must be lifted before anything is measured, or `getBoundingClientRect`
+        // would hand back pre-transform coordinates.
+        document.getElementById('mount').style.transform = `translate(0px, ${BOARD_LIFT}px)`
+        await new Promise((done) => setTimeout(done, 420))
+
+        const base = canvas.getBoundingClientRect()
+        const q8 = api.blockBySlug('q8')
+        const q10 = api.blockBySlug('q10')
+        if (q8 === null || q10 === null) throw new Error('q8 / q10 are not on the questions page')
+
+        const r8 = q8.getBoundingClientRect()
+        const r10 = q10.getBoundingClientRect()
+
+        // The marquee starts on card CHROME. `.sb-cardHead` is deliberately
+        // `user-select:none`, which makes it marquee area by construction — and is the
+        // whole reason a drag from here is a rectangle and not a text selection.
+        const from = { x: base.left + 26, y: r8.top + 11 }
+        const to = { x: base.left + 1140, y: r10.top + r10.height - 14 }
+
+        const origin = api.mod.originAt(from.x, from.y)
+        if (origin.mode === 'text') {
+          throw new Error('the marquee would start on text, so it would be a text selection')
+        }
+
+        const a = firstText(q8)
+        const b = firstText(q10)
+        if (a === null || b === null) throw new Error('no text node to select inside q8 / q10')
+
+        const bar = document.querySelector('[data-superboard-selection]')
+        const state = {
+          api, canvas, base, from, to,
+          textStart: { node: a, offset: 0 },
+          textEnd: { node: b, offset: Math.min(26, b.data.length) },
+          slugs: [],
+          copied: '',
+        }
+        // The tray has NO idle state — the product renders `.sb-selbar` only while
+        // something is selected — so it must be looked up again after the gesture,
+        // never captured once at build time.
+        void bar
+        mounted = state
+
+        window.__diag.stage = 'ready'
+        window.__diag.measured = {
+          originMode: origin.mode,
+          barAtRest: document.querySelector('[data-superboard-selection]') === null ? 'absent (correct)' : 'present',
+          canvas: { w: Math.round(base.width), h: Math.round(base.height), top: Math.round(base.top) },
+          from: { x: Math.round(from.x), y: Math.round(from.y) },
+          to: { x: Math.round(to.x), y: Math.round(to.y) },
+        }
+        return state
+      }
+
+      /* ---------- panel ---------- */
+
+      const steps = document.getElementById('steps')
+      for (const label of ['框选', '托盘', '文字选择', 'Ctrl+C', '附件']) {
+        const pill = document.createElement('span')
+        pill.className = 'pill'
+        pill.textContent = label
+        steps.appendChild(pill)
+      }
+
+      function paintSteps(active) {
+        steps.querySelectorAll('.pill').forEach((pill, index) => {
+          pill.classList.toggle('on', index === active)
+          pill.classList.toggle('done', index < active)
+        })
+      }
+
+      const esc = (value) => String(value).replace(/&/g, '&amp;').replace(/</g, '&lt;')
+
+      /**
+       * The attachment the product would build, rendered in the product's own shape.
+       *
+       * Field names and nesting come from `stageFeedback` in `src/client.js:2934-2944`:
+       * a `blocks` array of `{id, slug, text}` plus a SEPARATE `text` field. That split
+       * is the deliberate part — "the user meant this sentence" and "this whole block is
+       * the answer" are different claims, so the payload never folds one into the other.
+       *
+       * The blocks are read from the live DOM rather than a remembered array, so the
+       * panel can never disagree with what is highlighted on the board.
+       */
+      function paintPayload(text) {
+        const rev = mounted.api.board.model.rev
+        const cards = [...mounted.canvas.querySelectorAll('.sb-cardSel')]
+        const lines = [
+          '{',
+          '  <span class="k">"kind"</span>: <span class="s">"board-selection"</span>,',
+          '  <span class="k">"page"</span>: <span class="s">"questions"</span>,',
+          `  <span class="k">"rev"</span>: <span class="s">"${esc(rev)}"</span>,`,
+          '  <span class="k">"blocks"</span>: [',
+        ]
+        for (const card of cards) {
+          const slug = card.getAttribute('data-block-slug')
+          const id = card.getAttribute('data-block-id')
+          lines.push(`    { <span class="k">"id"</span>: <span class="s">"${esc(id)}"</span>, <span class="k">"slug"</span>: <span class="s">"${esc(slug)}"</span>, … },`)
+        }
+        // `stageFeedback` only sets `payload.text` when there is selected text, so with a
+        // marquee-only selection the key is genuinely absent — not present and empty.
+        if (text.trim() !== '') {
+          const quoted = text.trim().split('\n').slice(0, 2).join(' ').slice(0, 140)
+          lines.push(`  <span class="k">"text"</span>: <span class="q">"${esc(quoted)}${text.length > 140 ? '…' : ''}"</span>`)
+        } else {
+          lines.push('  <span class="note">// 还没有 text 字段——框选只说「这几块」，没有「这句话」</span>')
+        }
+        lines.push('}')
+        document.getElementById('payload').innerHTML = lines.join('\n')
+        return cards.length
+      }
+
+      /* ---------- a pure renderScene(t), returning the pending gesture ---------- */
+
+      /*
+       * Ordering matters here and is easy to get wrong: the gesture is dispatched
+       * asynchronously (React drives the selection state), so a paint that ran
+       * synchronously inside `renderScene` would read the DOM *before* the queued
+       * `pointerup` had been processed — and the panel would show an empty block list
+       * next to a tray that already said "已选 2 个块". So every frame enqueues its
+       * gesture steps AND its paint on the same chain, and `renderScene` returns that
+       * chain for the capture tool to await. The visual state at any t is therefore a
+       * function of t alone; the queue only makes it observable.
+       */
+      let queue = Promise.resolve()
+      const done = { down: false, move: false, up: false, text: false, copy: false }
+
+      function paint(t) {
+        const up = t >= UP_AT
+        const textUp = t >= TEXT_AT
+        const copyUp = t >= COPY_AT
+        const attachUp = t >= ATTACH_AT
+
+        // The tray is real DOM rendered by the product; it exists only while something
+        // is selected, so it cannot be forced on before the gesture has landed.
+        const bar = document.querySelector('[data-superboard-selection]')
+        if (bar !== null) bar.style.visibility = up ? 'visible' : 'hidden'
+
+        document.getElementById('copied').style.opacity = copyUp && !attachUp ? '1' : '0'
+
+        if (!up) document.getElementById('payload').textContent = '等待选区…'
+        else paintPayload(textUp ? mounted.copied : '')
+
+        paintSteps(attachUp ? 4 : copyUp ? 3 : textUp ? 2 : up ? 1 : 0)
+
+        let cap = CAPTIONS[0]
+        for (const candidate of CAPTIONS) if (t >= candidate.at) cap = candidate
+        document.getElementById('cap-label').textContent = cap.label
+        document.getElementById('cap-sub').textContent = cap.sub
+
+        document.getElementById('hintline').textContent =
+          t < DOWN_AT
+            ? 'questions 页 · 真看板、真事件；拖动的起点决定这次拖拽是什么意思'
+            : t < UP_AT
+              ? 'originAt() → marquee：起点落在卡片标签上（标签是 user-select:none）'
+              : t < TEXT_AT
+                ? '矩形 ∩ [data-block-id] 的包围盒 → 选中的块'
+                : t < COPY_AT
+                  ? 'originAt() → text：起点落在已渲染的行盒内 → 浏览器自己的选区'
+                  : 'Range.intersectsNode → 跨块的文字选择自动带上所触及的块'
+
+        window.__diag.t = t
+        window.__diag.slugs = mounted.slugs
+      }
+
+      window.renderScene = function renderScene(t) {
+        if (mounted === null) return
+        // Independent of any gesture, so it can be applied immediately.
+        document.getElementById('mount').style.transform = `translate(0px, ${BOARD_LIFT}px)`
+
+        const steps = []
+
+        if (t >= DOWN_AT && !done.down) {
+          done.down = true
+          steps.push(async () => {
+            pointer(mounted.canvas, 'pointerdown', mounted.from.x, mounted.from.y, 1)
+            await tick()
+          })
+        }
+        if (t >= MOVE_AT && !done.move) {
+          done.move = true
+          steps.push(async () => {
+            for (const step of [0.34, 0.67, 1]) {
+              pointer(
+                mounted.canvas,
+                'pointermove',
+                mounted.from.x + (mounted.to.x - mounted.from.x) * step,
+                mounted.from.y + (mounted.to.y - mounted.from.y) * step,
+                1,
+              )
+              await tick()
+            }
+          })
+        }
+        if (t >= UP_AT && !done.up) {
+          done.up = true
+          steps.push(async () => {
+            pointer(mounted.canvas, 'pointerup', mounted.to.x, mounted.to.y, 0)
+            await tick()
+            await tick()
+            mounted.slugs = [...mounted.canvas.querySelectorAll('.sb-cardSel')].map((element) =>
+              element.getAttribute('data-block-slug'),
+            )
+          })
+        }
+        if (t >= TEXT_AT && !done.text) {
+          done.text = true
+          steps.push(async () => {
+            const range = document.createRange()
+            range.setStart(mounted.textStart.node, mounted.textStart.offset)
+            range.setEnd(mounted.textEnd.node, mounted.textEnd.offset)
+            const selection = document.getSelection()
+            selection.removeAllRanges()
+            selection.addRange(range)
+            await tick()
+            await tick()
+            mounted.slugs = [...mounted.canvas.querySelectorAll('.sb-cardSel')].map((element) =>
+              element.getAttribute('data-block-slug'),
+            )
+          })
+        }
+        if (t >= COPY_AT && !done.copy) {
+          done.copy = true
+          steps.push(async () => {
+            // What a real `Ctrl+C` puts on the clipboard. The board deliberately has NO
+            // copy handler — it leaves the browser owning the selection — so the string a
+            // copy yields is the product's own normaliser applied to that live selection,
+            // which is what this reads.
+            mounted.copied = mounted.api.mod.textSelectionText(document.getSelection())
+            document.getElementById('copied-body').textContent = mounted.copied.slice(0, 220)
+          })
+        }
+
+        queue = queue.then(async () => {
+          for (const step of steps) await step()
+          paint(t)
+        })
+        return queue
+      }
+
+      window.__ready = build().catch((error) => {
+        window.__diag.stage = 'failed'
+        window.__diag.error = String(error && error.message)
+        const pre = document.createElement('pre')
+        pre.style.cssText = 'position:fixed;left:0;top:0;z-index:99;color:#f38ba8;background:#111;font:12px monospace;padding:12px;margin:0;white-space:pre-wrap'
+        pre.textContent = 'S7 failed:\n' + String((error && error.stack) || error)
+        document.body.appendChild(pre)
+      })
+    </script>
+  </body>
+</html>

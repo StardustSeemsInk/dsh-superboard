@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <title>s2 · 真实看板 · 五页</title>
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #11111b; }
+      #mount { position: absolute; inset: 0; }
+      /* The caption band. Kept out of the board's own DOM so it cannot perturb layout. */
+      #caption {
+        position: absolute; left: 0; right: 0; bottom: 0; height: 108px;
+        display: flex; align-items: center; justify-content: space-between;
+        padding: 0 48px; box-sizing: border-box;
+        background: linear-gradient(to top, rgba(17,17,27,.96), rgba(17,17,27,0));
+        opacity: 0; transition: none;
+      }
+      #caption .label { font: 600 30px/1.2 system-ui, "Microsoft YaHei", sans-serif; color: #cdd6f4; }
+      #caption .sub { font: 400 19px/1.3 system-ui, "Microsoft YaHei", sans-serif; color: #7f849c; margin-top: 8px; }
+      #caption .index { font: 700 56px/1 ui-monospace, monospace; color: var(--dsw-alias-brand-primary, #89b4fa); opacity: .55; }
+    </style>
+  </head>
+  <body data-ds-dark-theme="true">
+    <div id="mount"></div>
+    <div id="caption">
+      <div>
+        <div class="label" id="cap-label">真实看板 · 会话即看板</div>
+        <div class="sub" id="cap-sub">看板本身就是对话记录的一次折叠结果</div>
+      </div>
+      <div class="index" id="cap-index">02</div>
+    </div>
+
+    <script src="/vendor/react.production.min.js"></script>
+    <script src="/vendor/react-dom.production.min.js"></script>
+    <script>window.__ModuleLoader__ = { load: (definition) => { window.__sbDef = definition } }</script>
+    <script src="/repo/src/client.js"></script>
+    <script src="/scenes/harness.js"></script>
+    <script>
+      // 8–20s: the real board, whole screen; the page tabs click through all five
+      // pages, one every ~2.2s, with a caption naming what each page is.
+      const PAGES = [
+        ['roadmap', '路线图', '阶段与里程碑'],
+        ['architecture', '架构', '两条通道汇进同一个出口'],
+        ['questions', '待决问题', '每个决定都留下结论'],
+        ['research', '调研', '每条结论都有 file:line 证据'],
+        ['issues', '已知问题', '看清、写清、但先不动'],
+      ]
+      const DURATION = 12
+
+      window.__diag = { stage: 'boot' }
+      window.addEventListener('error', (e) => { window.__diag.error = String(e.message) })
+      window.addEventListener('unhandledrejection', (e) => { window.__diag.error = 'rejection: ' + String(e.reason) })
+
+      let api = null
+      let clicked = new Set()
+
+      async function main() {
+        window.__diag.stage = 'mount'
+        api = await window.SuperboardHarness.startBoard({ sessionId: 'promo-s2' })
+        await api.selectPage('roadmap')
+        window.__diag.stage = 'ready'
+        window.__diag.pages = document.querySelectorAll('.sb-page').length
+        window.__diag.blocks = api.blocks().length
+      }
+
+      window.__ready = main().catch((error) => {
+        window.__diag.stage = 'failed'
+        window.__diag.error = String(error && error.stack || error)
+        const pre = document.createElement('pre')
+        pre.style.cssText = 'position:absolute;inset:0;padding:20px;color:#f38ba8;font:12px monospace;z-index:99;white-space:pre-wrap'
+        pre.textContent = window.__diag.error
+        document.body.appendChild(pre)
+      })
+
+      // Deterministic: the page shown is a pure function of t, so a re-capture at any
+      // frame index lands on the same picture. Clicks are queued through a promise
+      // chain because they are async (they await React's re-render).
+      let queue = Promise.resolve()
+
+      window.renderScene = (t) => {
+        if (api === null) return
+        const step = Math.min(PAGES.length - 1, Math.floor(t / (DURATION / PAGES.length)))
+        const [slug, label, sub] = PAGES[step]
+        if (!clicked.has(slug)) {
+          clicked.add(slug)
+          queue = queue.then(() => api.selectPage(slug)).catch(() => {})
+        }
+        document.getElementById('cap-label').textContent = label
+        document.getElementById('cap-sub').textContent = sub
+        document.getElementById('cap-index').textContent = String(step + 2).padStart(2, '0')
+        // The caption fades in over the first beat of each page.
+        const intoStep = t - step * (DURATION / PAGES.length)
+        document.getElementById('caption').style.opacity = String(Math.min(1, intoStep / 0.45))
+        return queue
+      }
+    </script>
+  </body>
+</html>

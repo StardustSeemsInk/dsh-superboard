@@ -1,0 +1,54 @@
+{
+  "latte": {
+    "--shiki-foreground": "var(--dsw-alias-label-primary)",
+    "--shiki-background": "var(--dsw-alias-markdown-code-block)",
+    "--shiki-token-constant": "#fe640b",
+    "--shiki-token-string": "#40a02b",
+    "--shiki-token-comment": "#7c7f93",
+    "--shiki-token-keyword": "#8839ef",
+    "--shiki-token-parameter": "#e64553",
+    "--shiki-token-function": "#1e66f5",
+    "--shiki-token-string-expression": "#40a02b",
+    "--shiki-token-punctuation": "#7c7f93",
+    "--shiki-token-link": "#1e66f5"
+  },
+  "frappe": {
+    "--shiki-foreground": "var(--dsw-alias-label-primary)",
+    "--shiki-background": "var(--dsw-alias-markdown-code-block)",
+    "--shiki-token-constant": "#ef9f76",
+    "--shiki-token-string": "#a6d189",
+    "--shiki-token-comment": "#949cbb",
+    "--shiki-token-keyword": "#ca9ee6",
+    "--shiki-token-parameter": "#ea999c",
+    "--shiki-token-function": "#8caaee",
+    "--shiki-token-string-expression": "#a6d189",
+    "--shiki-token-punctuation": "#949cbb",
+    "--shiki-token-link": "#8caaee"
+  },
+  "macchiato": {
+    "--shiki-foreground": "var(--dsw-alias-label-primary)",
+    "--shiki-background": "var(--dsw-alias-markdown-code-block)",
+    "--shiki-token-constant": "#f5a97f",
+    "--shiki-token-string": "#a6da95",
+    "--shiki-token-comment": "#939ab7",
+    "--shiki-token-keyword": "#c6a0f6",
+    "--shiki-token-parameter": "#ee99a0",
+    "--shiki-token-function": "#8aadf4",
+    "--shiki-token-string-expression": "#a6da95",
+    "--shiki-token-punctuation": "#939ab7",
+    "--shiki-token-link": "#8aadf4"
+  },
+  "mocha": {
+    "--shiki-foreground": "var(--dsw-alias-label-primary)",
+    "--shiki-background": "var(--dsw-alias-markdown-code-block)",
+    "--shiki-token-constant": "#fab387",
+    "--shiki-token-string": "#a6e3a1",
+    "--shiki-token-comment": "#9399b2",
+    "--shiki-token-keyword": "#cba6f7",
+    "--shiki-token-parameter": "#eba0ac",
+    "--shiki-token-function": "#89b4fa",
+    "--shiki-token-string-expression": "#a6e3a1",
+    "--shiki-token-punctuation": "#9399b2",
+    "--shiki-token-link": "#89b4fa"
+  }
+}

@@ -1,0 +1,312 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <title>s5 · UML + 主题自适应 + 自愈</title>
+    <link rel="stylesheet" href="/scenes/theme.css" />
+    <style>
+      html, body { margin: 0; height: 100%; overflow: hidden; background: #11111b; }
+      #mount { position: absolute; inset: 0; }
+      /* A vignette that dims everything except the card under discussion. */
+      #spot {
+        position: absolute;
+        border: 2px solid var(--accent);
+        border-radius: 12px;
+        box-shadow: 0 0 0 9999px rgba(17, 17, 27, 0.7);
+        opacity: 0;
+        pointer-events: none;
+      }
+      #chips {
+        position: absolute; top: 34px; left: 50%; transform: translateX(-50%);
+        display: flex; gap: 14px;
+      }
+    </style>
+  </head>
+  <body data-ds-dark-theme="true">
+    <div id="mount"></div>
+    <div id="spot"></div>
+    <div id="chips"></div>
+    <div class="caption">
+      <div>
+        <div class="label" id="cap-label">UML 直接画在卡片里</div>
+        <div class="sub" id="cap-sub">mermaid 11.17.2 随插件自带，不依赖网页环境</div>
+      </div>
+      <div class="index" id="cap-index">05</div>
+    </div>
+
+    <script src="/vendor/react.production.min.js"></script>
+    <script src="/vendor/react-dom.production.min.js"></script>
+    <script>window.__ModuleLoader__ = { load: (definition) => { window.__sbDef = definition } }</script>
+    <script src="/repo/src/client.js"></script>
+    <script src="/scenes/harness.js"></script>
+    <script>
+      // 47–60s. Three beats:
+      //   0–3.5   the real architecture page, magnified on the real flowchart
+      //   3.5–8.5 the SAME board switched to the light flavour — the diagram repaints
+      //           from the new tokens, which is the whole point of the theme work
+      //   8.5–13  a diagram that fails: the card keeps its source and names the reason
+      //
+      // **One mount only, and that is forced by the architecture, not a style choice.**
+      // A theme plugin writes its tokens as INLINE custom properties on `<body>`, so a
+      // document has exactly one active flavour: mounting a second board in the light
+      // flavour re-tints the first board's diagrams too. Measured — the dark board came
+      // back wearing the light palette. So the switch is a real `setFlavour` call on the
+      // single board, which is also what a user actually does.
+      //
+      // The two flavour changes are async, so they are memoised and their promise is
+      // returned from `renderScene` (the pattern AUTHORING.md §1 sanctions), which makes
+      // each beat idempotent no matter which instants get screenshotted.
+
+      const T_THEME = 3.5
+      const T_FIX = 8.5
+
+      window.__diag = { stage: 'boot' }
+      window.addEventListener('error', (e) => { window.__diag.error = String(e.message) })
+      window.addEventListener('unhandledrejection', (e) => { window.__diag.error = 'rejection: ' + String(e.reason) })
+
+      // A deliberately broken diagram, kept in the scene rather than in the data files
+      // because it is a demonstration, not a fact about the user's board.
+      function withBrokenDiagram(model) {
+        const page = model.pages.find((p) => p.slug === 'architecture')
+        const template = page.blocks.find((b) => b.slug === 'loop')
+        page.blocks = [...page.blocks, {
+          ...template,
+          id: 'bl_broken',
+          slug: 'broken',
+          source: 'flowchart TD\n  A["Agent 写入 uml 块"] --> B{"mermaid 认得吗"\n',
+        }]
+        return model
+      }
+
+      let api = null
+      let queue = Promise.resolve()
+      const done = new Set()
+
+      /** Run `work` once, in order, and remember the promise so re-entries await it. */
+      function once(key, work) {
+        if (done.has(key)) return queue
+        done.add(key)
+        queue = queue.then(work).catch((error) => {
+          window.__diag.error = String((error && error.stack) || error)
+        })
+        return queue
+      }
+
+      /** Wait for the diagram to actually repaint, rather than guessing a delay. */
+      async function waitForRepaint(previous, label) {
+        const deadline = Date.now() + 15000
+        while (Date.now() < deadline) {
+          const image = document.querySelector('.sb-diagramImage')
+          if (image !== null && image.src !== previous && image.complete && image.naturalWidth > 0) return
+          await new Promise((r) => setTimeout(r, 100))
+        }
+        window.__diag.warnings = [...(window.__diag.warnings ?? []), `repaint timeout: ${label}`]
+      }
+
+      /**
+       * Scroll a block to a fixed offset from the top of the canvas.
+       *
+       * **The rect values are scaled but `scrollTop` is not.** `#mount` carries
+       * `transform: scale(1.85)`, so `canvas.getBoundingClientRect()` reports the
+       * *transformed* box (measured 1548 px for a canvas whose `clientHeight` is 837 —
+       * ratio 1.8499) while `scrollTop` lives in untransformed content pixels. Mixing
+       * the two inflated the delta by 1.85× and the write always clamped at
+       * `maxScroll`, which is why the beat kept landing at the very bottom of the page
+       * instead of on the failing card.
+       *
+       * Recomputed on every call rather than cached, and deliberately so: a flavour
+       * switch re-renders the whole board, and anything measured before it is stale —
+       * measured the hard way, when a cached offset put the beat on an unrelated
+       * diagram because the switch had already reset `scrollTop`. The read is three
+       * `getBoundingClientRect` calls, so caching was never worth it.
+       */
+      function scrollToBlock(slug, offset) {
+        const canvas = document.querySelector('.sb-canvas')
+        const block = document.querySelector(`[data-block-slug="${slug}"]`)
+        if (canvas === null || block === null) return null
+        const scale = canvas.getBoundingClientRect().height / canvas.clientHeight || 1
+        const delta = (block.getBoundingClientRect().top - canvas.getBoundingClientRect().top) / scale
+        const target = Math.max(0, Math.round(delta + canvas.scrollTop - offset))
+        canvas.scrollTop = target
+        return target
+      }
+
+      /**
+       * Wait until the page's asynchronous content has finished loading.
+       *
+       * This matters for correctness, not polish: an image and a PDF page load their
+       * bytes over the network and then change the card's height, so any scroll offset
+       * measured before they settle is stale. The first version measured too early and
+       * the "scroll to the failing card" beat landed on unrelated prose — which looks
+       * like a broken scroll rather than like a race.
+       */
+      async function waitForContent(timeoutMs = 25000) {
+        const deadline = Date.now() + timeoutMs
+        for (;;) {
+          const images = [...document.querySelectorAll('img.sb-media, img.sb-diagramImage')]
+          const pendingImages = images.filter((image) => !(image.complete && image.naturalWidth > 0))
+          // A PDF page renders into a canvas and is `visibility:hidden` until ready; a
+          // failure leaves an `.sb-diagramError` instead.
+          const pdfCards = [...document.querySelectorAll('canvas.sb-pdfPage')]
+          const pendingPdf = pdfCards.filter((canvas) => canvas.classList.contains('sb-pdfPending'))
+          if (pendingImages.length === 0 && pendingPdf.length === 0) return true
+          if (Date.now() > deadline) {
+            window.__diag.warnings = [
+              ...(window.__diag.warnings ?? []),
+              `content did not settle: ${pendingImages.length} image(s), ${pendingPdf.length} pdf card(s)`,
+            ]
+            return false
+          }
+          await new Promise((r) => setTimeout(r, 150))
+        }
+      }
+
+      async function main() {
+        window.__diag.stage = 'mount'
+        api = await window.SuperboardHarness.startBoard({
+          sessionId: 'promo-s5',
+          flavour: 'mocha',
+          mutate: withBrokenDiagram,
+        })
+        await api.selectPage('architecture')
+
+        // Wait for the 3.5 MB mermaid bundle, then for every image and PDF page.
+        window.__diag.stage = 'content'
+        await waitForContent()
+        await new Promise((r) => setTimeout(r, 600))
+
+        // Magnify like a camera rather than with `zoom`, which re-lays-out and would show
+        // *more* board larger instead of *less* board larger.
+        //
+        // **Size the host in unscaled pixels so the SCALED box fills the window exactly.**
+        // Leaving it at 100% and scaling by 1.85 makes the rendered mount 1.85× taller than
+        // the viewport, so the lower 46% of the canvas's own scroll viewport sits below the
+        // captured frame — the container believes it is 1548 px tall inside a 1080 px
+        // window. The practical symptom was that the failure beat scrolled to `maxScroll`
+        // and still showed nothing, because the card was parked 1334 px down a canvas whose
+        // visible region ends at 956. Measured, not guessed.
+        const SCALE = 1.85
+        const mount = document.getElementById('mount')
+        mount.style.transformOrigin = 'top left'
+        mount.style.width = `${Math.round(window.innerWidth / SCALE)}px`
+        mount.style.height = `${Math.round(window.innerHeight / SCALE)}px`
+        mount.style.transform = `scale(${SCALE})`
+
+        window.__diag.stage = 'ready'
+        window.__diag.diagrams = document.querySelectorAll('.sb-diagramImage').length
+        window.__diag.errors = document.querySelectorAll('.sb-diagramError').length
+        window.__diag.canvases = document.querySelectorAll('canvas.sb-pdfPage').length
+        window.__diag.pictures = document.querySelectorAll('img.sb-media').length
+      }
+
+      window.__ready = main().catch((error) => {
+        window.__diag.stage = 'failed'
+        window.__diag.error = String((error && error.stack) || error)
+        const pre = document.createElement('pre')
+        pre.style.cssText = 'position:absolute;inset:0;padding:20px;color:#f38ba8;font:12px monospace;z-index:99;white-space:pre-wrap'
+        pre.textContent = window.__diag.error
+        document.body.appendChild(pre)
+      })
+
+      const CHIPS = [
+        ['mermaid 11.17.2', '自带运行时'],
+        ['theme: base', '唯一尊重完整变量的主题'],
+        ['渲染错误回传', 'Agent 下一步就看见'],
+      ]
+
+      /** Draw the vignette around one card, or hide it. `null` hides it. */
+      function spotOn(card) {
+        const spot = document.getElementById('spot')
+        if (card === null) {
+          spot.style.opacity = '0'
+          return
+        }
+        const box = card.getBoundingClientRect()
+        spot.style.left = `${box.left - 10}px`
+        spot.style.top = `${box.top - 10}px`
+        spot.style.width = `${box.width + 20}px`
+        spot.style.height = `${box.height + 20}px`
+        spot.style.opacity = '1'
+      }
+
+      function setChips(states) {
+        const host = document.getElementById('chips')
+        const key = states.join(',')
+        if (host.dataset.key === key) return
+        host.dataset.key = key
+        host.innerHTML = CHIPS.map(([name, sub], index) =>
+          `<span class="pill${states[index] ? ' on' : ''}">${name}` +
+          `<span style="color:var(--ink-faint)">·</span>${sub}</span>`,
+        ).join('')
+      }
+
+      window.renderScene = (t) => {
+        if (api === null) return window.__ready
+        const inTheme = t >= T_THEME && t < T_FIX
+        const inFix = t >= T_FIX
+
+        // The flavour switch re-renders the board and resets the scroll, so everything
+        // positional for the current beat — the scroll *and* the spotlight rectangle —
+        // is applied after it, inside the same queued step. Doing any of it synchronously
+        // is what previously left the view somewhere unrelated: the switch overwrote it a
+        // tick later, and the spot was measured against a layout that then changed.
+        if (inFix) {
+          once('fix-view', async () => {
+            const before = document.querySelector('.sb-diagramImage')?.src ?? ''
+            await api.setFlavour('mocha')
+            await waitForRepaint(before, 'mocha')
+            // The failing card is the whole point of this beat, and it does not exist
+            // until mermaid has actually tried and thrown — which is asynchronous, and
+            // happens well after the flavour switch settles. Measured: arming the
+            // spotlight before it appeared left the beat with no vignette at all while
+            // the caption promised a highlighted card, and the scroll was computed
+            // against a layout that was still one card shorter.
+            await until(
+              () => document.querySelector('.sb-diagramError') !== null,
+              'the failing diagram card',
+              20000,
+            )
+            scrollToBlock('broken', 150)
+            spotOn(document.querySelector('.sb-diagramError')?.closest('[data-block-slug]') ?? null)
+          })
+        } else if (inTheme) {
+          once('theme-view', async () => {
+            const before = document.querySelector('.sb-diagramImage')?.src ?? ''
+            await api.setFlavour('latte')
+            await waitForRepaint(before, 'latte')
+            scrollToBlock('loop', 40)
+            spotOn(null)
+          })
+        } else {
+          once('open-view', async () => {
+            scrollToBlock('loop', 40)
+            spotOn(null)
+          })
+        }
+
+        // --- copy -------------------------------------------------------------
+        const label = document.getElementById('cap-label')
+        const sub = document.getElementById('cap-sub')
+
+        if (inFix) {
+          label.textContent = '画不出来时，把原因交回 Agent'
+          sub.textContent = '卡片保留源码与失败原因；原因经 render-report 回到宿主，下一轮 board_outline 就能看到'
+          document.getElementById('cap-index').textContent = '06'
+          setChips([false, false, true])
+        } else {
+          if (inTheme) {
+            label.textContent = '图跟随主题，而不是对着主题干'
+            sub.textContent = '同一个块、同一份源码：换主题后重新烘进 SVG，无需重画'
+            setChips([true, true, false])
+          } else {
+            label.textContent = 'UML 直接画在卡片里'
+            sub.textContent = 'mermaid 11.17.2 随插件自带，不依赖网页环境'
+            setChips([true, false, false])
+          }
+          document.getElementById('cap-index').textContent = '05'
+        }
+        return queue
+      }
+    </script>
+  </body>
+</html>

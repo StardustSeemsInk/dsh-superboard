@@ -1,0 +1,135 @@
+/*
+ * The promo's shared visual language.
+ *
+ * Every scene links this file. It exists so nine independently-made scenes read as
+ * one film, and so the palette comes from the *real* theme tokens rather than from
+ * hard-coded hex values that would drift from the product the moment the user
+ * switches flavour.
+ *
+ * Token names below are the real `--dsw-*` ones; the fallbacks are catppuccin mocha,
+ * used only if a scene is opened without the harness applying tokens.
+ */
+
+:root {
+  --ink: var(--dsw-alias-label-primary, #cdd6f4);
+  --ink-dim: var(--dsw-alias-label-secondary, #a6adc8);
+  --ink-faint: var(--dsw-alias-label-tertiary, #7f849c);
+  --surface: var(--dsw-alias-bg-base, #1e1e2e);
+  --raised: var(--dsw-alias-bg-layer-2, #313244);
+  --overlay: var(--dsw-alias-bg-layer-3, #45475a);
+  --line: var(--dsw-alias-border-l2, #45475a);
+  --accent: var(--dsw-alias-brand-primary, #89b4fa);
+  --accent-soft: color-mix(in srgb, var(--accent) 22%, transparent);
+  --ok: var(--dsw-alias-sentiment-positive, #a6e3a1);
+  --warn: var(--dsw-alias-sentiment-warning, #f9e2af);
+  --danger: var(--dsw-alias-sentiment-negative, #f38ba8);
+  --font-ui: system-ui, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--surface);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  /* The board is the subject; never let a scene inherit a browser default that
+     changes metrics relative to the real app. */
+  -webkit-font-smoothing: antialiased;
+}
+
+/*
+ * A full-bleed cinematic frame. Scenes that are not mounting the board use this as
+ * their root so letterboxing/padding is consistent.
+ */
+.stage {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/*
+ * The caption band. Pinned to the bottom, over a gradient, so it never fights the
+ * content behind it and never reflows it.
+ */
+.caption {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 132px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 64px;
+  background: linear-gradient(to top, rgba(17, 17, 27, 0.97), rgba(17, 17, 27, 0));
+  pointer-events: none;
+}
+
+.caption .label {
+  font-size: 34px;
+  font-weight: 600;
+  line-height: 1.2;
+  letter-spacing: 0.01em;
+}
+
+.caption .sub {
+  margin-top: 10px;
+  font-size: 20px;
+  font-weight: 400;
+  color: var(--ink-dim);
+  line-height: 1.35;
+}
+
+.caption .index {
+  font-family: var(--font-mono);
+  font-size: 60px;
+  font-weight: 700;
+  color: var(--accent);
+  opacity: 0.5;
+}
+
+/* A small pill for labelling things (block kinds, template names, statuses). */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--raised);
+  font-size: 17px;
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+
+.pill.on {
+  border-color: var(--accent);
+  color: var(--ink);
+  background: var(--accent-soft);
+}
+
+.pill.done { border-color: var(--ok); }
+.pill.todo { border-color: var(--warn); }
+
+/* A card, matching the board's own card look so overlays feel native. */
+.card {
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 14px 16px;
+}
+
+.mono { font-family: var(--font-mono); }
+
+/*
+ * Text that is about to be revealed. Scenes drive opacity/transform from
+ * `renderScene`, never from CSS animation — the capture tool screenshots arbitrary
+ * instants and CSS animation would land wherever the compositor happened to be.
+ */
+.reveal { opacity: 0; }

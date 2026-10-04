@@ -1,0 +1,417 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <title>S6 · 空间性内容 · PDF 页与图片</title>
+    <link rel="stylesheet" href="/scenes/theme.css" />
+    <style>
+      /*
+       * Composition: the board owns the left 1500px at its *real* width, so the PDF
+       * page and the image render at exactly the size they do in the app. The right
+       * 420px is a promo panel — the same band the reading column would occupy — and
+       * it shows `board_read`'s own text-table format, not an invention.
+       *
+       * The camera is a `transform` on #mount: `translate(...) scale(z)` with
+       * transform-origin 0 0, so a board content point maps deterministically to a
+       * screen point. Scale is what buys readability: at z=1.25 the page's own 13px
+       * glyphs become ~16px without touching the product's typography.
+       */
+      #camera {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1500px;
+        height: 1080px;
+        overflow: hidden;
+      }
+      #mount {
+        position: absolute;
+        left: 0;
+        top: 0;
+        width: 1500px;
+        height: 1080px;
+        transform-origin: 0 0;
+      }
+
+      /* The promo's measurement overlay lives inside the canvas's own scroll box, so
+         it rides the camera and the canvas scroll without a second coordinate system. */
+      .promo-rect {
+        position: absolute;
+        border: 2px solid var(--accent);
+        background: color-mix(in srgb, var(--accent) 20%, transparent);
+        border-radius: 2px;
+        pointer-events: none;
+        box-sizing: border-box;
+      }
+
+      #panel {
+        position: absolute;
+        left: 1500px;
+        top: 0;
+        width: 420px;
+        height: 1080px;
+        padding: 22px 20px 150px;
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+        background: var(--surface);
+        border-left: 1px solid var(--line);
+      }
+      #panel h3 {
+        margin: 0;
+        font-size: 15px;
+        font-weight: 600;
+        color: var(--ink);
+      }
+      #panel .hint {
+        margin: 0;
+        font-size: 13px;
+        line-height: 19px;
+        color: var(--ink-dim);
+      }
+      #table {
+        flex: 1;
+        min-height: 0;
+        overflow: hidden;
+        margin: 0;
+        font-family: var(--font-mono);
+        font-size: 11.5px;
+        line-height: 17px;
+        color: var(--ink-dim);
+        white-space: pre;
+      }
+      #table .row { color: var(--ink-faint); }
+      #table .row.hit { color: var(--ink); }
+
+      #readout {
+        border-top: 1px solid var(--line);
+        padding-top: 12px;
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      #readout .quad {
+        font-family: var(--font-mono);
+        font-size: 16px;
+        color: var(--accent);
+        white-space: nowrap;
+      }
+      #readout .line {
+        font-size: 13px;
+        line-height: 19px;
+        color: var(--ink);
+      }
+
+      #overlay {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        z-index: 10;
+      }
+      /*
+       * The board's PDF page is white, and `theme.css`'s caption gradient fades to
+       * fully transparent at its top edge — so without this the caption's own label
+       * would sit on paper. The scrim is taller than the band (176px vs 132px) so the
+       * darkening reaches full strength before the first line of text.
+       */
+      #scrim {
+        position: absolute;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        height: 176px;
+        background: linear-gradient(
+          to top,
+          rgba(17, 17, 27, 0.99) 0%,
+          rgba(17, 17, 27, 0.97) 62%,
+          rgba(17, 17, 27, 0) 100%
+        );
+      }
+      #overlay .caption {
+        justify-content: flex-start;
+        gap: 26px;
+      }
+      #marks {
+        position: absolute;
+        left: 1500px;
+        top: 22px;
+        width: 420px;
+        padding: 0 20px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+      }
+      #marks .pill {
+        font-size: 12px;
+        padding: 4px 10px;
+      }
+      #note {
+        position: absolute;
+        left: 64px;
+        bottom: 196px;
+        max-width: 820px;
+        font-family: var(--font-mono);
+        font-size: 13px;
+        line-height: 20px;
+        color: var(--ink-faint);
+      }
+    </style>
+  </head>
+  <body data-ds-dark-theme="true">
+    <div id="camera"><div id="mount"></div></div>
+    <aside id="panel">
+      <h3>board_read · pdf1</h3>
+      <p class="hint">宿主侧 pdf.js 解析文本层，把每一行的归一化矩形打印出来给 Agent。</p>
+      <pre id="table"></pre>
+      <div id="readout">
+        <div class="quad" id="quad">—</div>
+        <div class="line" id="line">等待解析…</div>
+      </div>
+    </aside>
+
+    <div id="overlay">
+      <div id="marks"></div>
+      <div id="note"></div>
+      <div id="scrim"></div>
+      <div class="caption">
+        <div>
+          <div class="label" id="cap-label"></div>
+          <div class="sub" id="cap-sub"></div>
+        </div>
+        <div class="index">S6</div>
+      </div>
+    </div>
+
+    <script src="/vendor/react.production.min.js"></script>
+    <script src="/vendor/react-dom.production.min.js"></script>
+    <script>window.__ModuleLoader__ = { load: (definition) => { window.__sbDef = definition } }</script>
+    <script src="/repo/src/client.js"></script>
+    <script src="/scenes/harness.js"></script>
+    <script>
+      window.__diag = { stage: 'boot' }
+      window.addEventListener('error', (event) => {
+        window.__diag.error = String(event.message)
+      })
+      window.addEventListener('unhandledrejection', (event) => {
+        window.__diag.error = 'rejection: ' + String(event.reason)
+      })
+
+      /** Real text-layer line rectangles for pdf-check.pdf page 1.
+       *  Produced by running the repo's own `src/pdf.js` `PdfFacts` + `renderTextTable`
+       *  against the real file — these are the values `board_read` prints, not invented. */
+      const PDF_LINES = [
+        { x: 0.0958, y: 0.0793, w: 0.3888, h: 0.0214, text: '看板 PDF 渲染验证 · 第 1 页' },
+        { x: 0.0958, y: 0.1776, w: 0.2117, h: 0.0166, text: '它同时在验证三件事' },
+        { x: 0.1072, y: 0.2569, w: 0.1848, h: 0.0131, text: '文件路径能不能从宿主' },
+        { x: 0.1072, y: 0.3112, w: 0.1478, h: 0.0131, text: '中文字形正不正确' },
+        { x: 0.1072, y: 0.3433, w: 0.0924, h: 0.0131, text: '页数对不对' },
+      ]
+      const LINE_COUNT = 15
+
+      /* ---------- camera: a pure function of t ---------- */
+
+      /** Board content x that the 1500px window centres at 750. Deliberately left of
+       *  the page centre so the left text column is never clipped by the scale. */
+      const ANCHOR_X = 700
+      const SCREEN_X = 750
+
+      const KEYS = [
+        // t,    z,     scrollTop, ty      — ty pins the anchor row on a chosen screen line
+        // The `shot` card is 1674px tall inside an 851px window, so the image beat cannot
+        // show the whole picture plus its caption; it is framed on the sequence diagram
+        // (the legible half) and the PDF beat then carries the detail.
+        { t: 0.0, z: 1.0, scrollTop: 723, ty: 26 },
+        { t: 1.5, z: 1.12, scrollTop: 723, ty: -26 },
+        { t: 2.0, z: 1.12, scrollTop: 723, ty: -26 },
+        { t: 3.0, z: 1.25, scrollTop: 2409, ty: -127.5 },
+        { t: 6.0, z: 1.27, scrollTop: 2409, ty: -175 },
+        { t: 9.0, z: 1.28, scrollTop: 2409, ty: -178 },
+      ]
+
+      const ease = (k) => (k <= 0 ? 0 : k >= 1 ? 1 : k * k * (3 - 2 * k))
+
+      function cameraAt(t) {
+        let a = KEYS[0]
+        let b = KEYS[KEYS.length - 1]
+        for (let i = 0; i < KEYS.length - 1; i += 1) {
+          if (t >= KEYS[i].t && t <= KEYS[i + 1].t) {
+            a = KEYS[i]
+            b = KEYS[i + 1]
+            break
+          }
+        }
+        if (t < KEYS[0].t) b = KEYS[1]
+        if (t > KEYS[KEYS.length - 1].t) a = KEYS[KEYS.length - 2]
+        const span = b.t - a.t
+        const k = span <= 0 ? 1 : ease((t - a.t) / span)
+        const z = a.z + (b.z - a.z) * k
+        const scrollTop = a.scrollTop + (b.scrollTop - a.scrollTop) * k
+        const ty = a.ty + (b.ty - a.ty) * k
+        return { z, scrollTop, ty, tx: SCREEN_X - z * ANCHOR_X }
+      }
+
+      /* ---------- reveal schedule (on the timeline's accent grid) ---------- */
+
+      const REVEALS = [
+        { at: 3.0, line: 0 },
+        { at: 4.2, line: 1 },
+        { at: 5.4, line: 2 },
+        { at: 6.6, line: 3 },
+        { at: 7.8, line: 4 },
+      ]
+
+      const CAPTIONS = [
+        { at: 0, label: 'PDF 整页与图片，钉在看板上', sub: 'PDF 在浏览器里现栅格化；图片走 DSH 自己的 /api/file' },
+        { at: 2.0, label: 'Agent 看不到像素', sub: '所以坐标必须由宿主读出来给它：pdf.js 6.3.289 解析 PDF 的文本层' },
+        { at: 3.0, label: '每一行的归一化矩形', sub: 'Agent 拿到的是文字 + 它在页面上的位置：四个 0..1 的数就定位一行' },
+        { at: 6.0, label: '文本表就是交付物', sub: '0..1、原点在左上，与渲染 DPI、容器宽度、缩放级别全部无关' },
+      ]
+
+      /* ---------- build ---------- */
+
+      let mounted = null
+
+      async function build() {
+        const api = await window.SuperboardHarness.startBoard({ sessionId: 'promo-s6', diag: window.__diag })
+        await api.selectPage('architecture')
+        // The reading column is not part of this shot; hiding it gives the board the
+        // 1500px it has in the panel layout above, which is what the geometry assumes.
+        const reader = document.querySelector('aside.sb-reader')
+        if (reader !== null) reader.style.display = 'none'
+        await new Promise((done) => setTimeout(done, 600))
+
+        const canvas = document.querySelector('.sb-canvas')
+        canvas.scrollTop = 0
+        canvas.scrollLeft = 0
+        await new Promise((done) => setTimeout(done, 400))
+
+        // Measure BEFORE the camera transform is applied: getBoundingClientRect returns
+        // post-transform values, so a measurement taken later would be in the wrong space.
+        const base = canvas.getBoundingClientRect()
+        const toContent = (element) => {
+          const box = element.getBoundingClientRect()
+          return {
+            x: box.left - base.left + canvas.scrollLeft,
+            y: box.top - base.top + canvas.scrollTop,
+            w: box.width,
+            h: box.height,
+          }
+        }
+
+        const pdfCanvas = document.querySelector('canvas[data-superboard-pdf$="#1"]')
+        const image = document.querySelector('img.sb-media')
+        if (pdfCanvas === null) throw new Error('pdf1 never produced a canvas')
+        if (image === null) throw new Error('the shot image never produced an <img>')
+
+        // Wait for the real bitmap, so the scene never shoots a blank rectangle.
+        await window.SuperboardHarness.until(
+          () => pdfCanvas.width > 0 && document.querySelector('.sb-pdfPending') === null,
+          'the rasterised PDF page',
+        )
+        await window.SuperboardHarness.until(() => image.complete && image.naturalWidth > 0, 'the pinned image')
+
+        const pdf = toContent(pdfCanvas)
+        const shot = toContent(image)
+
+        mounted = {
+          api,
+          canvas,
+          pdf,
+          shot,
+          // One absolutely-positioned box per line, placed in the canvas's own content
+          // coordinates so it scrolls and zooms with the page it annotates.
+          boxes: PDF_LINES.map((item) => {
+            const element = document.createElement('div')
+            element.className = 'promo-rect'
+            element.style.left = pdf.x + item.x * pdf.w + 'px'
+            element.style.top = pdf.y + item.y * pdf.h + 'px'
+            element.style.width = item.w * pdf.w + 'px'
+            element.style.height = Math.max(10, item.h * pdf.h) + 'px'
+            element.style.opacity = '0'
+            canvas.appendChild(element)
+            return element
+          }),
+        }
+
+        window.__diag.stage = 'ready'
+        window.__diag.measured = { pdf, shot, canvas: { w: base.width, h: base.height } }
+        return mounted
+      }
+
+      const marks = document.getElementById('marks')
+      for (const text of ['pdf.js 6.3.289', '/api/file', 'pdf-page', 'image']) {
+        const pill = document.createElement('span')
+        pill.className = 'pill'
+        pill.textContent = text
+        marks.appendChild(pill)
+      }
+
+      const tableBody = PDF_LINES.map(
+        (item, index) =>
+          `<span class="row" data-row="${index}">  (${item.x}, ${item.y}, ${item.w}, ${item.h})  ${item.text}</span>`,
+      ).join('\n')
+
+      function paintTable(active) {
+        document.getElementById('table').innerHTML = `<span class="row">text layer (${LINE_COUNT} line(s), normalized 0..1, origin top-left):</span>\n${tableBody}`
+        const rows = document.querySelectorAll('#table .row[data-row]')
+        if (active >= 0 && active < rows.length) rows[active].classList.add('hit')
+      }
+
+      /* ---------- a pure renderScene(t) ---------- */
+
+      window.renderScene = function renderScene(t) {
+        if (mounted === null) return
+        const cam = cameraAt(t)
+        mounted.canvas.scrollTop = cam.scrollTop
+        document.getElementById('mount').style.transform =
+          `translate(${cam.tx}px, ${cam.ty}px) scale(${cam.z})`
+
+        let shown = 0
+        for (const reveal of REVEALS) {
+          if (reveal.line >= PDF_LINES.length) continue
+          const on = t >= reveal.at
+          mounted.boxes[reveal.line].style.opacity = on ? '1' : '0'
+          if (on) shown += 1
+        }
+
+        const active = shown - 1
+        if (active >= 0) {
+          const item = PDF_LINES[active]
+          document.getElementById('quad').textContent = `(${item.x}, ${item.y}, ${item.w}, ${item.h})`
+          document.getElementById('line').textContent = item.text
+        } else {
+          document.getElementById('quad').textContent = '—'
+          document.getElementById('line').textContent = '等待解析…'
+        }
+        paintTable(active)
+
+        let cap = CAPTIONS[0]
+        for (const candidate of CAPTIONS) if (t >= candidate.at) cap = candidate
+        document.getElementById('cap-label').textContent = cap.label
+        document.getElementById('cap-sub').textContent = cap.sub
+
+        // Each beat reports the box of the thing it is actually showing. The image is an
+        // <img> whose CSS width the column set, so its measured height is the rendered
+        // one; labelling it with the PDF page's raster size would be a false number.
+        const isPdf = t >= 3
+        const box = isPdf ? mounted.pdf : mounted.shot
+        const note = isPdf
+          ? 'pdf1 · docs/assets/pdf-check.pdf · 第 1 页'
+          : 'shot · docs/assets/diagram-render.png · 820×900 原图'
+        document.getElementById('note').textContent =
+          `${note}   ·   在卡片里渲染成 ${Math.round(box.w)}×${Math.round(box.h)}`
+        window.__diag.t = t
+        window.__diag.shown = shown
+      }
+
+      window.__ready = build().catch((error) => {
+        window.__diag.stage = 'failed'
+        window.__diag.error = String(error && error.message)
+        const pre = document.createElement('pre')
+        pre.style.cssText = 'position:fixed;left:0;top:0;z-index:99;color:#f38ba8;background:#111;font:12px monospace;padding:12px;margin:0;white-space:pre-wrap'
+        pre.textContent = 'S6 failed:\n' + String((error && error.stack) || error)
+        document.body.appendChild(pre)
+      })
+    </script>
+  </body>
+</html>

@@ -1,0 +1,592 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <title>s3 · Agent 写入 · 看板是日志折叠出来的</title>
+    <link rel="stylesheet" href="/scenes/theme.css" />
+    <style>
+      /* ---------------------------------------------------------------------
+       * S3 — "the board IS the fold of the Agent's own board_apply calls".
+       *
+       * Left: the real call stream, transcribed from one session's log — the seq
+       * is the event sequence the tool call really carries, expected_revision and
+       * the argument text are the bytes it really sent, the result is the text it
+       * really got back. Right: the REAL renderer, mounted once per batch against
+       * the board model the shipped fold produces at that revision.
+       * ------------------------------------------------------------------- */
+
+      html, body {
+        margin: 0; height: 100%; overflow: hidden; background: var(--surface);
+        /* theme.css already sets this; restated so the scene still names the Chinese faces
+           the brief requires even if the shared sheet is ever changed. */
+        font-family: var(--font-ui), system-ui, "Segoe UI", "Microsoft YaHei", "PingFang SC", sans-serif;
+      }
+
+      #stage { position: absolute; inset: 0; padding: 30px 40px 0; display: flex; flex-direction: column; }
+
+      /* ---- the standing claim ------------------------------------------- */
+      #head { display: flex; align-items: flex-start; gap: 20px; flex: 0 0 auto; height: 84px; }
+      #head .claim { font-size: 31px; font-weight: 600; line-height: 1.2; letter-spacing: .005em; }
+      #head .claim .eq { color: var(--accent); }
+      #head .note { font-size: 16.5px; line-height: 1.5; color: var(--ink-faint); margin-top: 8px; }
+      #head .spacer { flex: 1; }
+      #head .scene { font-family: var(--font-mono); font-size: 34px; font-weight: 700; color: var(--accent); opacity: .5; line-height: 1.2; }
+
+      /* ---- the two panes ------------------------------------------------- */
+      #body { flex: 1; min-height: 0; display: flex; gap: 26px; padding-bottom: 152px; }
+
+      /* The call stream. */
+      #railwrap { flex: 0 0 648px; min-width: 0; display: flex; flex-direction: column; }
+      #railHead {
+        display: flex; align-items: baseline; gap: 10px; flex: 0 0 auto;
+        font-size: 15px; color: var(--ink-dim); padding-bottom: 5px; margin-bottom: 7px;
+        border-bottom: 1px solid var(--line);
+      }
+      #railHead .who { font-weight: 600; color: var(--ink); }
+      #railHead .spacer { flex: 1; }
+      #railHead .frame { font-size: 13px; color: var(--ink-faint); }
+      #rail { flex: 0 0 auto; display: flex; flex-direction: column; gap: 6px; }
+
+      .row {
+        flex: 0 0 auto;
+        border: 1px solid var(--line); border-left: 3px solid var(--overlay);
+        border-radius: 7px; background: var(--raised);
+        padding: 6px 10px 7px;
+        /* Revealed from `t`; nothing here animates on its own. */
+        opacity: 0;
+      }
+      .row .top { display: flex; align-items: baseline; gap: 8px; font-size: 14px; line-height: 17px; }
+      .row .fn { font-weight: 600; color: var(--ink); }
+      .row .ops { font-family: var(--font-mono); font-size: 12.5px; color: var(--ink-dim); }
+      .row .spacer { flex: 1; }
+      .row .exp { font-family: var(--font-mono); font-size: 12px; color: var(--ink-faint); white-space: nowrap; }
+      .row .in {
+        font-family: var(--font-mono); font-size: 12px; line-height: 15px; color: var(--ink-faint); opacity: .85;
+        margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      }
+      .row .out {
+        display: flex; align-items: baseline; gap: 9px; margin-top: 3px;
+        white-space: nowrap; overflow: hidden;
+      }
+      .row .out .res { font-family: var(--font-mono); font-size: 12.5px; line-height: 15px; color: var(--ink-dim); }
+      .row .out .hist {
+        font-family: var(--font-mono); font-size: 12px; line-height: 15px; color: var(--ink-faint);
+        overflow: hidden; text-overflow: ellipsis;
+      }
+      /* My own reading of the line above, not tool output — dimmed and set in UI type. */
+      .row .out .after, .row .tail .after { font-size: 12px; color: var(--ink-faint); opacity: .8; }
+      .row .tail { font-size: 12.5px; line-height: 15px; color: var(--ink-faint); margin-top: 2px; }
+
+      /* A rejected batch keeps its place in the stream — it is in the log. */
+      .row.bad { border-left-color: var(--danger); background: color-mix(in srgb, var(--danger) 9%, var(--raised)); }
+      .row.bad .fn { color: var(--danger); }
+      .row.bad .out { display: block; white-space: normal; overflow: visible; }
+      .row.bad .out .res { color: var(--danger); }
+      .row.now { border-left-color: var(--accent); }
+
+      .gap {
+        flex: 0 0 auto; display: flex; align-items: center; gap: 10px;
+        font-size: 13px; color: var(--ink-faint); padding: 0 4px; opacity: 0;
+      }
+      .gap .line { flex: 1; height: 1px; background: var(--line); }
+
+      /* The board, in a panel so it reads as a window onto the real app. */
+      #panel {
+        flex: 1; min-width: 0; position: relative;
+        border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+        background: var(--surface);
+      }
+      #panel .ring {
+        position: absolute; inset: 0; border-radius: 10px; pointer-events: none;
+        box-shadow: inset 0 0 0 2px var(--accent); opacity: 0; z-index: 5;
+      }
+      .slot { position: absolute; inset: 0; visibility: hidden; }
+      .slot.on { visibility: visible; }
+      /* The panel is already less than full-bleed, so the board's own type is small. §4 of
+         AUTHORING.md allows zooming the mount for a detail shot; this is one. Constant, so the
+         frame is still a pure function of `t`. */
+      .slot > [data-sb-mount] { zoom: 1.26; }
+
+      /* The board renders its conversation column beside the canvas. S3 is about
+         the canvas, so the column is cropped away and the canvas keeps the width. */
+      .slot [data-superboard-reader] { display: none; }
+      .slot .sb-splitter { display: none; }
+      /* The host floats the composer over the view; this panel is not the host. */
+      .slot .sb-main { padding-bottom: 0; }
+
+      #err {
+        position: absolute; inset: 0; z-index: 99; padding: 24px; display: none;
+        background: var(--surface); color: var(--danger);
+        font: 13px/1.5 var(--font-mono); white-space: pre-wrap; overflow: auto;
+      }
+    </style>
+  </head>
+  <body data-ds-dark-theme="true">
+    <div id="stage">
+      <div id="head">
+        <div>
+          <div class="claim">看板 <span class="eq">＝</span> 会话日志里所有成功的 <span style="font-family: var(--font-mono); font-size: 28px">board_apply</span> 折叠出来的</div>
+          <div class="note">
+            没有第二个真源：会话日志是唯一的 ·
+            <span style="font-family: var(--font-mono)">board_apply</span> 是唯一写入口，每次写入都带
+            <span style="font-family: var(--font-mono)">expected_revision</span>
+          </div>
+        </div>
+        <div class="spacer"></div>
+        <div class="scene">03</div>
+      </div>
+
+      <div id="body">
+        <div id="railwrap">
+          <div id="railHead">
+            <span class="who">Agent 侧</span>
+            <span>board_apply 调用流</span>
+            <span class="spacer"></span>
+            <span class="frame">按批抽帧：第 1–8 批连续，再跳到第 28 批</span>
+          </div>
+          <div id="rail"><!-- rows are injected from the log --></div>
+        </div>
+
+        <div id="panel">
+          <div class="ring" id="ring"></div>
+          <div id="host"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="caption">
+      <div>
+        <div class="label" id="cap-label"></div>
+        <div class="sub" id="cap-sub"></div>
+      </div>
+      <div class="index">03</div>
+    </div>
+
+    <pre id="err"></pre>
+
+    <script src="/vendor/react.production.min.js"></script>
+    <script src="/vendor/react-dom.production.min.js"></script>
+    <script>window.__ModuleLoader__ = { load: (definition) => { window.__sbDef = definition } }</script>
+    <script src="/repo/src/client.js"></script>
+    <script src="/scenes/harness.js"></script>
+    <script>
+      /* =====================================================================
+       * The stream.
+       *
+       * Transcribed from the session log of the session that built this plugin.
+       * `seq` is the event sequence the tool call really carries; `exp` is its
+       * verbatim `expected_revision`; `note` and `ops` are slices of the argument
+       * text it really sent (the head of `"ops": [ …`, cut where the row runs out);
+       * `res` and `hist` are its real result, `tail` a real trailing line.
+       *
+       * The chain is contiguous — exp(batch n) is the revision batch n−1 settled
+       * at — except across the rejection, where exp is what the refused batch
+       * named. That is the opening beat.
+       * ===================================================================== */
+      const CALLS = [
+        {
+          seq: 7467, exp: '0', ops: 0, bad: true,
+          note: '{ "expected_revision": "0", "ops": [], "note": "probe for the current revision" }',
+          res: 'Error: stale board revision: expected 0 but the board is now r0-000000000000.',
+          tail: 'Nothing was applied. Call board_outline to see the current state, then re-issue the ops you still want.',
+          after: '整批拒绝，一个 op 都没跑；日志里什么都没留下',
+        },
+        {
+          seq: 7473, exp: 'r0-000000000000', ops: 22,
+          note: 'note: "Roadmap, current phase, and the open design questions for phase 3"',
+          opsText: '"ops": [{"op": "add_page", "page": "roadmap"}, {"op": "add_block", "page": "roadmap", "kind": "heading", "level": 1, "slug": "title", …',
+          res: 'Board updated: 22 op(s) applied.',
+          hist: 'add_page ×2 · add_block ×15 · add_edge ×3 · set_layout ×2',
+        },
+        {
+          seq: 7540, exp: 'r1-097fe8c772d7', ops: 7,
+          note: 'note: "Record the three settled decisions; add the two new questions they opened"',
+          opsText: '"ops": [{"op": "delete_page", "page": "main", "force": true}, {"block": "q6", "markdown": "**Q6 · UML 块的内容形态** —— ✅ 定了：**存源码渲染，同时解析出节点表**。…',
+          res: 'Board updated: 7 op(s) applied.',
+          hist: 'delete_page ×1 · update_block ×3 · add_block ×3',
+        },
+        {
+          seq: 7594, exp: 'r2-b824dfa681e4', ops: 18,
+          note: 'note: "Record the three settled decisions and the framework research that grounds them"',
+          opsText: '"ops": [{"block": "q10", "markdown": "**Q10 · 图表（柱/折/饼）** —— ✅ 定了：**先靠 mermaid 自带**。…',
+          res: 'Board updated: 18 op(s) applied.',
+          hist: 'add_block ×13 · set_layout ×2 · update_block ×2 · add_page ×1',
+        },
+        {
+          seq: 7683, exp: 'r3-65e201f5ce8e', ops: 4,
+          note: 'note: "Record how both mermaid plugins actually load their runtime, and the two decisions it opens"',
+          opsText: '"ops": [{"block": "q15", "markdown": "**Q15 · 两个 mermaid 插件** —— ✅ 查清了。…',
+          res: 'Board updated: 4 op(s) applied.',
+          hist: 'update_block ×2 · add_block ×2',
+        },
+        {
+          seq: 8783, exp: 'r4-bc55914b4d49', ops: 3,
+          note: 'note: "Record the Q14b measurement, the UML milestone, and what is left in phase 3"',
+          opsText: '"ops": [{"block": "q14", "markdown": "**Q14 · mermaid 的体积与裁剪** —— ✅ 定了：**用完整包，不裁**。…',
+          res: 'Board updated: 3 op(s) applied.',
+          hist: 'update_block ×1 · add_block ×2',
+        },
+        {
+          seq: 8790, exp: 'r5-948e8947d97b', ops: 4,
+          note: 'note: "Close Q16/Q17, mark UML delivered on the roadmap"',
+          opsText: '"ops": [{"block": "q16", "markdown": "**Q16 · `uml` 块的渲染归谁** —— ✅ 定了并已实现：**自己带一份运行时**（`6e175e5`）。…',
+          res: 'Board updated: 4 op(s) applied.',
+          hist: 'update_block ×4',
+          after: '一个块都没增删 —— 改的是内容',
+        },
+        {
+          seq: 8815, exp: 'r6-c8d67db9905e', ops: 7,
+          note: 'note: "Add an architecture page, and put the render-failure loop on it as a real diagram"',
+          opsText: '"ops": [{"op": "add_page", "page": "architecture"}, {"op": "add_block", "page": "architecture", "kind": "heading", "level": 2, "slug": "ahead", …',
+          res: 'Board updated: 7 op(s) applied.',
+          hist: 'add_block ×4 · set_layout ×1 · reorder_pages ×1 · add_page ×1',
+        },
+        {
+          seq: 8834, exp: 'r7-97883ebc964b', ops: 5,
+          note: 'note: "Record that UML drew in the real app, and log the edge-routing defect without fixing it"',
+          opsText: '"ops": [{"op": "add_page", "page": "issues"}, {"op": "add_block", "page": "issues", "kind": "heading", "level": 2, "slug": "ihead", …',
+          res: 'Board updated: 5 op(s) applied.',
+          hist: 'add_page ×1 · add_block ×4',
+          after: '第 5 页 issues 同时开出',
+        },
+        {
+          seq: 16399, exp: 'r27-2cb62705203e', ops: 6,
+          note: 'note: "Rename auto-slugged blocks, retire i2-restart, record Q27/Q28 and I5"',
+          opsText: '"ops":[{"block":"prose-22","op":"update_block","slug":"q26"},{"block":"prose-7","op":"update_block","slug":"i4"}, …',
+          res: 'Board updated: 6 op(s) applied.',
+          hist: 'update_block ×3 · add_block ×3',
+        },
+      ]
+      /** Index of the entry that sits below the gap (the jump to the last batch). */
+      const LAST = CALLS.length - 1
+
+      /* =====================================================================
+       * The board states.
+       *
+       * A board is the fold of its successful calls, so state n is "the model
+       * after the first n batches". Mounting the real renderer once per state is
+       * what makes the growth real rather than drawn.
+       *
+       * `bound` is the highest `createdAtRev` sequence a snapshot may keep. It is
+       * measured, not guessed: replaying this log through the shipped fold shows
+       * that an element created by the batch which named `rN` carries
+       * `createdAtRev = rN`, so keeping everything at or below the revision a
+       * batch named reproduces the state that batch left behind. Checked against
+       * a full replay for every state below.
+       * ===================================================================== */
+      const BOARDS = [
+        { rev: 'r0-000000000000', seq: 0, bound: -1, page: 'main', focus: null,
+          label: '先立闸：过期的写入整批拒绝', sub: 'expected_revision 写着 0，对不上任何 rev —— 什么都没应用' },
+        { rev: 'r1-097fe8c772d7', seq: 1, bound: 0, page: 'roadmap', focus: null,
+          label: '第 1 批 · 22 个 op 一次落板', sub: '拒绝信息本身就报出了当前 rev，重发的那一批直接用它' },
+        { rev: 'r2-b824dfa681e4', seq: 2, bound: 1, page: 'questions', focus: 'q10',
+          label: '第 2 批 · 7 个 op', sub: '删掉脚手架页 main，三个待决问题入板' },
+        { rev: 'r3-65e201f5ce8e', seq: 3, bound: 2, page: 'research', focus: null,
+          label: '第 3 批 · 18 个 op', sub: '新开 research 页：10 个块一次成型' },
+        { rev: 'r4-bc55914b4d49', seq: 4, bound: 3, page: 'questions', focus: 'q16',
+          label: '第 4 批 · 4 个 op', sub: 'q16 / q17 落板 —— UML 的渲染归属定了' },
+        { rev: 'r5-948e8947d97b', seq: 5, bound: 4, page: 'questions', focus: 'q18',
+          label: '第 5 批 · 3 个 op', sub: 'q18 / q19 落板：节点表与 PDF 都排上了' },
+        { rev: 'r6-c8d67db9905e', seq: 6, bound: 5, page: 'questions', focus: 'q14',
+          label: '第 6 批 · 4 个 op 全是 update_block', sub: '一个块都没增删 —— 折叠的是内容，不只是追加' },
+        { rev: 'r7-97883ebc964b', seq: 7, bound: 6, page: 'architecture', focus: 'loop',
+          label: '第 7 批 · 7 个 op', sub: '新开 architecture 页，这张图跟着这一批一起落板' },
+        { rev: 'r8-25b3ff2c81e8', seq: 8, bound: 7, page: 'architecture', focus: null,
+          label: '第 8 批 · 5 个 op', sub: '验收结论落进 architecture；第 5 页 issues 同时开出' },
+        { rev: 'r28-c577192f84d9', seq: 28, bound: 27, page: 'roadmap', focus: null,
+          label: '第 28 批 · 6 个 op', sub: '65 个块 · 3 条边 · 5 页 —— 就是这条日志折叠出来的全部' },
+      ]
+
+      const MAIN = {
+        id: 'pg_000000', slug: 'main', alias: [], blocks: [],
+        createdAtRev: 'r0-000000000000', updatedAtRev: 'r0-000000000000',
+      }
+
+      const DURATION = 14
+      /** When each stream entry starts revealing, and which board state it owns. */
+      const REVEAL = [0.30, 2.90, 4.30, 5.60, 6.80, 7.80, 8.80, 9.80, 10.80, 12.10]
+      const GAP_AT = 11.95
+      /** How long a row takes to arrive, and how long the panel flash lasts. */
+      const RISE = 0.38
+      const FLASH = 0.55
+
+      window.__diag = { stage: 'boot' }
+      window.addEventListener('error', (event) => { window.__diag.error = String(event.message) })
+      window.addEventListener('unhandledrejection', (event) => {
+        window.__diag.error = 'rejection: ' + String((event.reason && event.reason.message) || event.reason)
+      })
+
+      const seqOf = (rev) => {
+        const match = /^r(\d+)-/.exec(rev === undefined || rev === null ? '' : String(rev))
+        return match === null ? -1 : Number(match[1])
+      }
+      const clamp = (value, lo, hi) => Math.max(lo, Math.min(hi, value))
+
+      /**
+       * The board model a settled revision left behind, derived from the real wire board.
+       *
+       * Every page, block and edge carries the revision of the batch that created it, so
+       * keeping those at or below `bound` reproduces the fold's state. `main` is dropped: the
+       * fold's zero state carries it and the first batch deletes it, so a snapshot past that
+       * batch must not show it.
+       */
+      function boardAtRev(wire, board) {
+        const bound = board.bound
+        const pages = []
+        for (const page of wire.model.pages) {
+          if (page.slug === 'main') continue
+          if (seqOf(page.createdAtRev) > bound) continue
+          pages.push({ ...page, blocks: page.blocks.filter((block) => seqOf(block.createdAtRev) <= bound) })
+        }
+        if (bound <= 0) pages.unshift(structuredClone(MAIN))
+        return {
+          ...wire.model,
+          pages,
+          regions: wire.model.regions.filter((region) => seqOf(region.createdAtRev) <= bound),
+          edges: wire.model.edges.filter((edge) => seqOf(edge.createdAtRev) <= bound),
+          revSeq: board.seq,
+          revHash: board.rev.split('-')[1],
+          rev: board.rev,
+        }
+      }
+
+      let wire = null
+      const slots = []
+      const rows = []
+      let gapRow = null
+
+      /** Build one stream row. Pure DOM, no timers. */
+      function buildRow(entry) {
+        const row = document.createElement('div')
+        row.className = 'row' + (entry.bad ? ' bad' : '')
+        const top = document.createElement('div')
+        top.className = 'top'
+        const fn = document.createElement('span')
+        fn.className = 'fn'
+        fn.textContent = entry.bad ? 'board_apply 被拒' : 'board_apply'
+        const ops = document.createElement('span')
+        ops.className = 'ops'
+        ops.textContent = entry.ops + ' ops'
+        const spacer = document.createElement('span')
+        spacer.className = 'spacer'
+        const exp = document.createElement('span')
+        exp.className = 'exp'
+        exp.textContent = 'expected_revision: ' + entry.exp
+        top.append(fn, ops, spacer, exp)
+        row.append(top)
+
+        // Prefer the `ops` array — that is what actually lands on the board. The rejected row
+        // has no ops to show, so it falls back to the whole argument.
+        const argument = entry.opsText !== undefined ? entry.opsText : entry.note
+        if (argument !== undefined) {
+          const arg = document.createElement('div')
+          arg.className = 'in'
+          arg.textContent = argument
+          row.append(arg)
+        }
+
+        const out = document.createElement('div')
+        out.className = 'out'
+        const res = document.createElement('span')
+        res.className = 'res'
+        res.textContent = entry.res
+        out.append(res)
+        if (entry.hist !== undefined) {
+          const hist = document.createElement('span')
+          hist.className = 'hist'
+          hist.textContent = entry.hist
+          out.append(hist)
+        }
+        if (entry.after !== undefined && entry.tail === undefined) {
+          const after = document.createElement('span')
+          after.className = 'after'
+          after.textContent = entry.after
+          out.append(after)
+        }
+        row.append(out)
+        if (entry.tail !== undefined) {
+          const tail = document.createElement('div')
+          tail.className = 'tail'
+          tail.textContent = entry.tail
+          row.append(tail)
+        }
+        if (entry.after !== undefined && entry.tail !== undefined) {
+          const after = document.createElement('div')
+          after.className = 'tail'
+          const span = document.createElement('span')
+          span.className = 'after'
+          span.textContent = entry.after
+          after.append(span)
+          row.append(after)
+        }
+        return row
+      }
+
+      /**
+       * Switch a page inside ONE mount.
+       *
+       * `SuperboardHarness.selectPage` looks the tab up with `document.querySelector`, so with
+       * several mounts on the page it clicks the first one's tab and changes the wrong board.
+       * The click is still the harness's own, so React's handlers run.
+       */
+      async function selectInSlot(slot, index, slug) {
+        const tab = [...slot.querySelectorAll('.sb-page')].find((button) => button.textContent.startsWith(slug))
+        if (tab === undefined) throw new Error('no tab for ' + slug + ' in slot ' + index)
+        window.SuperboardHarness.clickElement(tab)
+        await window.SuperboardHarness.until(
+          () => {
+            const on = slot.querySelector('.sb-pageOn')
+            return on !== null && on.textContent.startsWith(slug)
+          },
+          'page ' + slug + ' in slot ' + index,
+        )
+      }
+
+      /** Where this state's canvas should start, measured while its mount is live. */
+      function measureScroll(slot, board) {
+        const canvas = slot.querySelector('.sb-canvas')
+        if (canvas === null) return 0
+        if (board.focus === null) return 0
+        const target = slot.querySelector('[data-block-slug="' + board.focus + '"]')
+        if (target === null) return 0
+        const max = Math.max(0, canvas.scrollHeight - canvas.clientHeight)
+        return clamp(target.offsetTop - 24, 0, max)
+      }
+
+      async function main() {
+        window.__diag.stage = 'data'
+        const started = performance.now()
+        const response = await fetch('/scenes/data/board.json')
+        if (!response.ok) throw new Error('fetch board.json → ' + response.status)
+        wire = await response.json()
+
+        window.__diag.stage = 'rail'
+        const rail = document.getElementById('rail')
+        for (let index = 0; index < CALLS.length; index += 1) {
+          if (index === LAST) continue
+          const row = buildRow(CALLS[index])
+          rail.append(row)
+          rows.push(row)
+        }
+        gapRow = document.createElement('div')
+        gapRow.className = 'gap'
+        const before = document.createElement('span')
+        before.textContent = '⋯'
+        const line = document.createElement('span')
+        line.className = 'line'
+        const after = document.createElement('span')
+        after.textContent = '中间 20 批同样落板 ⋯'
+        gapRow.append(before, line, after)
+        rail.append(gapRow)
+        const last = buildRow(CALLS[LAST])
+        rail.append(last)
+        rows.push(last)
+        window.__diag.rows = rows.length
+
+        window.__diag.stage = 'mount'
+        const host = document.getElementById('host')
+        for (let index = 0; index < BOARDS.length; index += 1) {
+          const board = BOARDS[index]
+          const slot = document.createElement('div')
+          slot.className = 'slot'
+          slot.dataset.state = String(index)
+          host.append(slot)
+          const mount = document.createElement('div')
+          mount.id = 'mount'
+          mount.dataset.sbMount = ''
+          slot.append(mount)
+          // `startBoard` resolves its mount by id, so exactly one element may carry it at a time.
+          await window.SuperboardHarness.startBoard({
+            sessionId: 'promo-s3',
+            mutate: () => boardAtRev(wire, board),
+          })
+          mount.removeAttribute('id')
+          // `startBoard`'s own wait is document-wide, so with several mounts it can return
+          // before THIS one has committed. Wait for this slot specifically.
+          await window.SuperboardHarness.until(
+            () => slot.querySelector('[data-superboard-canvas]') !== null,
+            'canvas in slot ' + index,
+          )
+          if (board.page !== 'main') {
+            try {
+              await selectInSlot(slot, index, board.page)
+            } catch (error) {
+              window.__diag['pageError' + index] = String((error && error.message) || error)
+            }
+          }
+          const canvas = slot.querySelector('.sb-canvas')
+          slot.__scrollTop = measureScroll(slot, board)
+          if (canvas !== null) canvas.scrollTop = slot.__scrollTop
+          slots.push(slot)
+          window.__diag['blocks' + index] = slot.querySelectorAll('[data-block-id]').length
+        }
+        for (const slot of slots) slot.classList.remove('on')
+        window.__diag.mountMs = Math.round(performance.now() - started)
+        window.__diag.stage = 'ready'
+      }
+
+      const errorBox = document.getElementById('err')
+      window.__ready = main().catch((error) => {
+        window.__diag.stage = 'failed'
+        window.__diag.error = String((error && error.stack) || error)
+        errorBox.style.display = 'block'
+        errorBox.textContent = window.__diag.error
+      })
+
+      const capLabel = document.getElementById('cap-label')
+      const capSub = document.getElementById('cap-sub')
+      const ring = document.getElementById('ring')
+
+      /** Everything visual is a pure function of `t`. */
+      function applyFrame(t) {
+        // Which batch owns this instant.
+        let state = 0
+        for (let index = 0; index < REVEAL.length; index += 1) if (t >= REVEAL[index]) state = index
+        const board = BOARDS[state]
+
+        // --- the stream -------------------------------------------------
+        for (let index = 0; index < rows.length; index += 1) {
+          const row = rows[index]
+          const progress = clamp((t - REVEAL[index]) / RISE, 0, 1)
+          // A settled batch dims, so the newest one reads as current.
+          row.style.opacity = String(progress * (index < state ? 0.48 : 1))
+          row.style.transform = 'translateY(' + (1 - progress) * 9 + 'px)'
+          const now = index === state && !CALLS[index].bad
+          if (row.classList.contains('now') !== now) row.classList.toggle('now', now)
+        }
+        const gapProgress = clamp((t - GAP_AT) / RISE, 0, 1)
+        gapRow.style.opacity = String(gapProgress * 0.85)
+        gapRow.style.transform = 'translateY(' + (1 - gapProgress) * 8 + 'px)'
+
+        // --- the board --------------------------------------------------
+        for (let index = 0; index < slots.length; index += 1) {
+          const slot = slots[index]
+          const active = index === state
+          if (slot.classList.contains('on') !== active) slot.classList.toggle('on', active)
+        }
+        // A short accent flash marks the batch landing, computed from `t`.
+        const into = t - REVEAL[state]
+        ring.style.opacity = String(state === 0 ? 0 : 0.8 * clamp(1 - into / FLASH, 0, 1))
+
+        // --- captions ---------------------------------------------------
+        capLabel.textContent = board.label
+        capSub.textContent = board.sub
+      }
+
+      let painted = false
+      window.renderScene = (t) => {
+        const value = clamp(Number(t) || 0, 0, DURATION)
+        if (painted) {
+          applyFrame(value)
+          return undefined
+        }
+        // The first frame waits for the mounts, the way s2-pages.html waits for its clicks:
+        // memoised, idempotent, and settled exactly once.
+        return window.__ready.then(() => {
+          painted = true
+          applyFrame(value)
+        })
+      }
+    </script>
+  </body>
+</html>

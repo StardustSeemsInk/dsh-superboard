@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <title>s9 · 结尾</title>
+    <link rel="stylesheet" href="/scenes/theme.css" />
+    <style>
+      html, body { background: #0a0a10; }
+
+      /*
+       * The board stays behind the card, already framed 1:1 — the same framing S2 used
+       * and S1 ended on. It is dimmed and ever so slightly softened so the last frame
+       * reads as one quiet card rather than as two competing layers.
+       */
+      #mount { position: absolute; inset: 0; filter: saturate(0.85); }
+
+      /*
+       * The same band as the title card, so the two cards bookend the film rather than
+       * looking like two different films. It sits a touch heavier here: the address is
+       * the last thing on screen and has to survive a phone-sized thumbnail.
+       */
+      #veil {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background: linear-gradient(
+          to bottom,
+          rgba(9, 9, 15, 0.34) 0%,
+          rgba(9, 9, 15, 0.52) 18%,
+          rgba(9, 9, 15, 0.95) 34%,
+          rgba(9, 9, 15, 0.96) 68%,
+          rgba(9, 9, 15, 0.56) 84%,
+          rgba(9, 9, 15, 0.28) 100%
+        );
+      }
+
+      #outro {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 51%;
+        transform: translateY(-50%);
+        text-align: center;
+        pointer-events: none;
+      }
+
+      #repo {
+        font-family: var(--font-mono);
+        font-size: 54px;
+        font-weight: 600;
+        line-height: 1.15;
+        letter-spacing: 0.005em;
+        color: var(--ink);
+        text-shadow: 0 3px 30px rgba(0, 0, 0, 0.9);
+      }
+
+      /* A hairline that draws itself under the address, then stops. Nothing else moves. */
+      #repo-rule {
+        width: 0;
+        height: 2px;
+        margin: 22px auto 0;
+        border-radius: 2px;
+        background: var(--accent);
+        opacity: 0.75;
+      }
+
+      #closing {
+        margin-top: 30px;
+        font-size: 41px;
+        font-weight: 600;
+        line-height: 1.25;
+        letter-spacing: 0.02em;
+        color: var(--accent);
+        text-shadow: 0 2px 26px rgba(0, 0, 0, 0.9);
+      }
+
+      #footnote {
+        margin-top: 26px;
+        font-family: var(--font-mono);
+        font-size: 19px;
+        line-height: 1.4;
+        letter-spacing: 0.03em;
+        color: var(--ink-faint);
+        text-shadow: 0 2px 18px rgba(0, 0, 0, 0.9);
+      }
+    </style>
+  </head>
+  <body data-ds-dark-theme="true">
+    <div id="mount"></div>
+    <div id="veil"></div>
+
+    <div id="outro">
+      <div id="repo" class="mono reveal">github.com/StardustSeemsInk/dsh-superboard</div>
+      <div id="repo-rule"></div>
+      <div id="closing" class="reveal">看板，是 Agent 的工作台</div>
+      <div id="footnote" class="mono reveal">4 个工具 · 8 种块 · 6 种排版模板 · 397 个测试</div>
+    </div>
+
+    <script src="/vendor/react.production.min.js"></script>
+    <script src="/vendor/react-dom.production.min.js"></script>
+    <script>window.__ModuleLoader__ = { load: (definition) => { window.__sbDef = definition } }</script>
+    <script src="/repo/src/client.js"></script>
+    <script src="/scenes/harness.js"></script>
+    <script>
+      // 89–95s: the close. The repo address, one line of why, and the numbers. It comes
+      // to rest by ~2.3s and then holds — the last frame of the film is a still frame.
+      window.__diag = { stage: 'boot' }
+      window.addEventListener('error', (e) => { window.__diag.error = String(e.message) })
+      window.addEventListener('unhandledrejection', (e) => { window.__diag.error = 'rejection: ' + String(e.reason) })
+
+      let api = null
+
+      async function main() {
+        window.__diag.stage = 'mount'
+        api = await window.SuperboardHarness.startBoard({ sessionId: 'promo-s9' })
+        await api.selectPage('roadmap')
+        window.__diag.stage = 'ready'
+        window.__diag.blocks = api.blocks().length
+        window.__diag.activePage = api.activePage()
+      }
+
+      window.__ready = main().catch((error) => {
+        window.__diag.stage = 'failed'
+        window.__diag.error = String((error && error.stack) || error)
+        const pre = document.createElement('pre')
+        pre.style.cssText =
+          'position:absolute;inset:0;padding:20px;color:#f38ba8;font:12px monospace;z-index:99;white-space:pre-wrap'
+        pre.textContent = window.__diag.error
+        document.body.appendChild(pre)
+      })
+
+      const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x)
+      const easeOut = (x) => 1 - Math.pow(1 - x, 3)
+      const ramp = (t, from, to) => easeOut(clamp01((t - from) / (to - from)))
+
+      window.renderScene = (t) => {
+        if (api === null) return window.__ready
+
+        // The board recedes behind the card over the first two and a half seconds, then
+        // stops. No camera movement: this shot is a settling, not a drift. It settles at
+        // 0.42 rather than near-zero — the last frame should still be the product, just
+        // out of focus behind the address.
+        document.getElementById('mount').style.opacity = String(0.72 - 0.3 * ramp(t, 0, 2.5))
+
+        const repo = document.getElementById('repo')
+        const rp = ramp(t, 0.45, 1.25)
+        repo.style.opacity = String(rp)
+        repo.style.transform = `translateY(${((1 - rp) * 20).toFixed(2)}px)`
+
+        document.getElementById('repo-rule').style.width = `${(560 * ramp(t, 0.7, 1.6)).toFixed(1)}px`
+
+        const closing = document.getElementById('closing')
+        const cp = ramp(t, 0.9, 1.75)
+        closing.style.opacity = String(cp)
+        closing.style.transform = `translateY(${((1 - cp) * 16).toFixed(2)}px)`
+
+        const footnote = document.getElementById('footnote')
+        const fp = ramp(t, 1.35, 2.1)
+        footnote.style.opacity = String(fp)
+        footnote.style.transform = `translateY(${((1 - fp) * 12).toFixed(2)}px)`
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,375 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <title>s8 · 三个 Agent 预设</title>
+    <!-- The film's shared visual language. .card / .pill / .pill.done / .pill.todo /
+         .caption / .mono all come from here and are reused, not re-declared. -->
+    <link rel="stylesheet" href="/scenes/theme.css" />
+    <style>
+      /* Scene-local CSS is LAYOUT ONLY. Colours, fonts and component looks stay in
+         theme.css so this shot matches the other eight. */
+
+      #stage { padding-bottom: 136px; }
+
+      /* A static wash so frame 0 is a lit frame rather than a black one; it never
+         animates, so it costs the pure-function contract nothing. */
+      #bg {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background:
+          radial-gradient(1180px 700px at 26% 24%, color-mix(in srgb, var(--accent) 9%, transparent), transparent 70%),
+          radial-gradient(1000px 620px at 80% 70%, color-mix(in srgb, var(--accent) 6%, transparent), transparent 72%);
+      }
+
+      #stack {
+        width: 100%;
+        max-width: 1800px;
+        margin: 0 auto;
+        padding: 0 60px;
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+      }
+
+      /* ── eyebrow ─────────────────────────────────────────────────────────── */
+      #eyebrow { display: flex; align-items: center; gap: 16px; }
+      #eyebrow .meta { font-size: 19px; color: var(--ink-faint); }
+
+      /* ── the two shipped presets ─────────────────────────────────────────── */
+      #row { display: flex; align-items: stretch; gap: 28px; }
+
+      .preset {
+        position: relative;
+        flex: 1 1 0;
+        padding: 26px 30px 20px;
+        display: flex;
+        flex-direction: column;
+        gap: 13px;
+      }
+
+      /* The spotlight. A ring drawn over the card border, faded from `renderScene`,
+         instead of a CSS transition — the capture tool screenshots arbitrary instants. */
+      .preset .glow {
+        position: absolute;
+        inset: -1px;
+        border-radius: 11px;
+        pointer-events: none;
+        opacity: 0;
+        box-shadow: 0 0 0 1px var(--accent), 0 0 40px -8px var(--accent-soft);
+      }
+
+      .preset .head { display: flex; align-items: center; gap: 14px; }
+      .preset h2 { margin: 0; font-size: 40px; font-weight: 700; letter-spacing: 0.01em; }
+
+      .preset .meta-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      .chip {
+        font-family: var(--font-mono);
+        font-size: 15px;
+        color: var(--ink-faint);
+        border: 1px solid var(--line);
+        border-radius: 6px;
+        padding: 3px 9px;
+        background: var(--surface);
+        white-space: nowrap;
+      }
+      .preset .meta-row .meta { font-size: 17px; color: var(--ink-dim); }
+
+      .preset .desc { margin: 0; font-size: 21px; line-height: 1.5; color: var(--ink); }
+
+      .facts { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 10px; }
+      .facts li { position: relative; padding-left: 22px; font-size: 19px; line-height: 1.45; color: var(--ink-dim); }
+      .facts li::before {
+        content: "";
+        position: absolute;
+        left: 4px;
+        top: 10px;
+        width: 7px;
+        height: 7px;
+        border-radius: 2px;
+        background: var(--accent);
+      }
+      .facts b { color: var(--ink); font-weight: 600; }
+
+      .preset .foot {
+        margin-top: auto;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        border-top: 1px solid var(--line);
+        padding-top: 12px;
+      }
+      .preset .foot .meta { font-size: 16px; color: var(--ink-faint); }
+
+      /* ── the shipped Agent-facing skill ──────────────────────────────────── */
+      #skill {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 12px 20px;
+        border: 1px dashed color-mix(in srgb, var(--accent) 52%, var(--line));
+        border-radius: 10px;
+        background: color-mix(in srgb, var(--accent) 7%, transparent);
+      }
+      #skill .name { font-family: var(--font-mono); font-size: 22px; color: var(--ink); }
+      #skill .meta { font-size: 18px; color: var(--ink-dim); }
+
+      /* ── the unfinished preset ───────────────────────────────────────────── */
+      /* De-emphasised but legible: dashed amber, muted copy, no full panel. */
+      #teacher {
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        padding: 18px 24px;
+        border: 1px dashed color-mix(in srgb, var(--warn) 55%, var(--line));
+        border-radius: 10px;
+        background: color-mix(in srgb, var(--warn) 6%, transparent);
+      }
+      #teacher h3 { margin: 0; font-size: 28px; font-weight: 600; color: var(--ink-dim); }
+      #teacher .meta { font-size: 19px; color: var(--ink-dim); }
+
+      /* The caption's text block dissolves on each beat; the index stays put. */
+      #cap-text { opacity: 0; }
+    </style>
+  </head>
+  <body data-ds-dark-theme="true">
+    <div class="stage" id="stage">
+      <div id="bg"></div>
+
+      <div id="stack">
+        <div id="eyebrow">
+          <span class="pill on">开箱即用</span>
+          <span class="meta">预设 = persona + 角色提示词段 + 策略 + 工具范围 —— 装上即刻可用，不是换皮主题</span>
+        </div>
+
+        <div id="row">
+          <!-- ── 工程师 ── cordis.patch.yml:41–248 ────────────────────────── -->
+          <section class="card preset" id="preset-engineer">
+            <span class="glow"></span>
+            <div class="head">
+              <h2>工程师</h2>
+              <span class="pill done">已就绪</span>
+            </div>
+            <div class="meta-row">
+              <span class="chip">preset-engineer</span>
+              <span class="meta">基于官方 <b class="mono">standard</b> 模式</span>
+            </div>
+            <p class="desc">以看板为工作台构建软件。记忆、上下文压缩与看板都在职责范围内；开放式设计问题会被追问清楚，而不是靠猜。</p>
+            <ul class="facts">
+              <li><b>回复前检查</b>：正式回复前重读整块看板，核对命名了版本 / 路径 / 计数 / <span class="mono">file:line</span> / commit 的声明是否已经过期。</li>
+              <li><b>追问而不是猜</b>：需求不明确时走 <span class="mono">grilling</span> 技能，按设计树分轮访谈收敛方案。</li>
+            </ul>
+            <div class="foot">
+              <span class="chip">board-guidance</span>
+              <span class="meta">随预设挂载的角色提示词段，只对本预设的 Agent 可见</span>
+            </div>
+          </section>
+
+          <!-- ── 研究员 ── cordis.patch.yml:359–546 ───────────────────────── -->
+          <section class="card preset" id="preset-researcher">
+            <span class="glow"></span>
+            <div class="head">
+              <h2>研究员</h2>
+              <span class="pill done">已就绪</span>
+            </div>
+            <div class="meta-row">
+              <span class="chip">preset-researcher</span>
+              <span class="meta">基于官方 <b class="mono">ptc</b> 模式</span>
+            </div>
+            <p class="desc">调研、处理数据、检索网络，然后把发现与结论写在看板上，而不是留在对话里。</p>
+            <ul class="facts">
+              <li><b>唯一开启 PTC</b>：展示工具 <span class="mono">dsh-agent-tool-presentation</span> 以 <span class="mono">mode: ptc</span> 挂载，工程师与教师都是默认模式。</li>
+              <li><b>报告前检查</b>：正式回复前重读整块看板 —— 数字是否过期、后到的发现是否推翻了先前的结论、置信度标注是否还准确。</li>
+            </ul>
+            <div class="foot">
+              <span class="chip">board-guidance</span>
+              <span class="meta">结论在上、证据在下：数字配 <span class="mono">code</span> 块或表格，来源配 <span class="mono">pdf-page</span> 块</span>
+            </div>
+          </section>
+        </div>
+
+        <!-- ── the Agent-facing skill ── skills/board-layout/SKILL.md ─────── -->
+        <div id="skill">
+          <span class="pill">技能</span>
+          <span class="name">board-layout</span>
+          <span class="meta">随插件附带：新 Agent 也知道看板该怎么排（正文按需拉取，不占每个请求）</span>
+        </div>
+
+        <!-- ── 教师 · 未完成 ─────────────────────────────────────────────── -->
+        <div id="teacher">
+          <h3>教师</h3>
+          <span class="pill todo">未完成</span>
+          <span class="chip">preset-teacher</span>
+          <span class="meta">教师预设仍在设计中：互动式讲解已配置，自动朗读（TTS）留待后续</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="caption">
+      <div id="cap-text">
+        <div class="label" id="cap-label">工程师 · 以看板为工作台构建软件</div>
+        <div class="sub" id="cap-sub">基于官方 standard 模式；正式回复前重读整块看板，核对过期声明</div>
+      </div>
+      <div class="index">08</div>
+    </div>
+
+    <script>
+      // 81–89s. Three presets, three beats. The two that ship are lit in turn; the
+      // third is flagged, dimmed and deliberately not sold. Every sentence on
+      // screen is a restatement of cordis.patch.yml (line numbers in the comments
+      // above each element), except the two facts that live elsewhere in the repo
+      // and are marked as such: the board-layout skill and Q24 (teacher TTS).
+
+      const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x)
+      const smooth = (x) => {
+        const p = clamp01(x)
+        return p * p * (3 - 2 * p)
+      }
+
+      /**
+       * Piecewise smoothstep through [t, value] keys. All scene state is evaluated
+       * from t alone, so re-capturing any frame index reproduces the same picture
+       * and jumping backwards in t is safe (AUTHORING.md §1).
+       */
+      function track(t, keys) {
+        const first = keys[0]
+        if (t <= first[0]) return first[1]
+        for (let i = 1; i < keys.length; i += 1) {
+          const [t1, v1] = keys[i]
+          if (t <= t1) {
+            const [t0, v0] = keys[i - 1]
+            const span = t1 - t0
+            return v0 + (v1 - v0) * smooth(span === 0 ? 1 : (t - t0) / span)
+          }
+        }
+        return keys[keys.length - 1][1]
+      }
+
+      // Beat boundaries land on the score's accents at 81s + 2.7 and 81s + 5.3.
+      const BEATS = [0, 2.7, 5.3]
+
+      const BEAT_LABEL = [
+        '工程师 · 以看板为工作台构建软件',
+        '研究员 · 结论写在看板上，而不是留在对话里',
+        '教师 · 仍在设计中，未完成',
+      ]
+      const BEAT_SUB = [
+        '基于官方 standard 模式；正式回复前重读整块看板，核对过期声明',
+        '基于官方 ptc 模式；唯一把展示工具挂成 PTC 模式的预设',
+        '互动式讲解已配置；自动朗读（TTS）留待后续',
+      ]
+
+      // enter* is the one-way reveal (drives the slide); att* is the spotlight
+      // multiplier (drives opacity and the ring). Keeping them apart means the
+      // spotlight can dim a card without also making it drift downwards.
+      //
+      // Both reveals are already in flight at t=0: the scene is a cut at 81s, and
+      // opening on a black frame wastes a beat the presets cannot spare.
+      //
+      // The handoff between the two ready presets is a crisp ~0.24s crossfade
+      // centred on the beat at 2.7s rather than a long dissolve — a slow one leaves
+      // both cards half-lit for most of a beat and neither reads as the subject.
+      const K = {
+        eyebrow: [[0.0, 0.9], [0.22, 1]],
+        enterEng: [[0.0, 0.5], [0.34, 1]],
+        enterRes: [[0.0, 0.18], [0.5, 1]],
+        attEng: [[0.0, 1], [2.58, 1], [2.82, 0.5], [4.98, 0.5], [5.24, 0.78]],
+        attRes: [[0.0, 0.5], [2.58, 0.5], [2.82, 1], [4.94, 1], [5.18, 0.5], [5.44, 0.78]],
+        skill: [[1.04, 0], [1.5, 1]],
+        teacher: [[5.32, 0], [5.86, 1]],
+      }
+
+      const ring = (att) => Math.pow(clamp01((att - 0.6) / 0.4), 1.4)
+
+      window.__diag = { stage: 'boot', scene: 's8-presets' }
+      window.addEventListener('error', (e) => {
+        window.__diag.error = String(e.message)
+      })
+      window.addEventListener('unhandledrejection', (e) => {
+        window.__diag.error = 'rejection: ' + String(e.reason)
+      })
+
+      const el = {}
+      let ready = false
+
+      function main() {
+        window.__diag.stage = 'dom'
+        el.eyebrow = document.getElementById('eyebrow')
+        el.skill = document.getElementById('skill')
+        el.teacher = document.getElementById('teacher')
+        el.capText = document.getElementById('cap-text')
+        el.capLabel = document.getElementById('cap-label')
+        el.capSub = document.getElementById('cap-sub')
+        el.engineer = {
+          card: document.getElementById('preset-engineer'),
+          glow: document.querySelector('#preset-engineer .glow'),
+        }
+        el.researcher = {
+          card: document.getElementById('preset-researcher'),
+          glow: document.querySelector('#preset-researcher .glow'),
+        }
+        const missing = Object.entries(el)
+          .filter(([, value]) => value === null || value === undefined)
+          .map(([name]) => name)
+        if (missing.length > 0) throw new Error('missing DOM: ' + missing.join(', '))
+        ready = true
+        window.__diag.stage = 'ready'
+        window.__diag.beats = BEATS
+        window.__diag.labels = BEAT_LABEL
+      }
+
+      // `main` is synchronous here (no board to mount), so it must be wrapped in a
+      // promise before `.catch` — otherwise the TypeError it raises at top level
+      // aborts this script and `renderScene` never gets defined.
+      window.__ready = Promise.resolve().then(main).catch((error) => {
+        window.__diag.stage = 'failed'
+        window.__diag.error = String((error && error.stack) || error)
+        const pre = document.createElement('pre')
+        pre.style.cssText =
+          'position:absolute;inset:0;z-index:99;padding:20px;color:#f38ba8;font:12px monospace;white-space:pre-wrap'
+        pre.textContent = window.__diag.error
+        document.body.appendChild(pre)
+      })
+
+      window.renderScene = (t) => {
+        if (!ready) return
+
+        const enterEng = track(t, K.enterEng)
+        const attEng = track(t, K.attEng)
+        el.engineer.card.style.opacity = String(enterEng * attEng)
+        el.engineer.card.style.transform =
+          'translateY(' + (1 - enterEng) * 26 + 'px) scale(' + (1 + 0.01 * ring(attEng)) + ')'
+        el.engineer.glow.style.opacity = String(ring(attEng) * enterEng)
+
+        const enterRes = track(t, K.enterRes)
+        const attRes = track(t, K.attRes)
+        el.researcher.card.style.opacity = String(enterRes * attRes)
+        el.researcher.card.style.transform =
+          'translateY(' + (1 - enterRes) * 26 + 'px) scale(' + (1 + 0.01 * ring(attRes)) + ')'
+        el.researcher.glow.style.opacity = String(ring(attRes) * enterRes)
+
+        const eyebrow = track(t, K.eyebrow)
+        el.eyebrow.style.opacity = String(eyebrow)
+        el.eyebrow.style.transform = 'translateY(' + (1 - eyebrow) * 14 + 'px)'
+
+        const skill = track(t, K.skill)
+        el.skill.style.opacity = String(skill * 0.96)
+        el.skill.style.transform = 'translateY(' + (1 - skill) * 16 + 'px)'
+
+        const teacher = track(t, K.teacher)
+        el.teacher.style.opacity = String(teacher * 0.94)
+        el.teacher.style.transform = 'translateY(' + (1 - teacher) * 16 + 'px)'
+
+        // Caption: the text block dissolves in on each beat, the index stays put.
+        // Beat 0 opens already legible (this scene is a cut, 8s total); later beats
+        // re-dissolve so the swap reads as an event rather than a silent edit.
+        const beat = t < BEATS[1] ? 0 : t < BEATS[2] ? 1 : 2
+        if (el.capLabel.textContent !== BEAT_LABEL[beat]) el.capLabel.textContent = BEAT_LABEL[beat]
+        if (el.capSub.textContent !== BEAT_SUB[beat]) el.capSub.textContent = BEAT_SUB[beat]
+        const capIn = beat === 0 ? 1 : smooth((t - BEATS[beat]) / 0.28)
+        el.capText.style.opacity = String(capIn * 0.98)
+      }
+    </script>
+  </body>
+</html>

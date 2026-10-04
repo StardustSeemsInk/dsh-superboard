@@ -1,0 +1,95 @@
+{
+  "fps": 30,
+  "width": 1920,
+  "height": 1080,
+  "scale": 2,
+  "note": "Authoritative shot list. `start`/`end` are seconds; a scene owns [start, end). Every scene file must expose window.renderScene(t) with t in SECONDS SINCE THE SCENE STARTED (0-based), so scenes stay independent of their position in the cut.",
+  "scenes": [
+    {
+      "id": "s1",
+      "start": 0,
+      "end": 8,
+      "file": "scenes/s1-title.html",
+      "kind": "motion",
+      "title": "标题",
+      "beat": "低频铺底；4s 处一个软脉冲"
+    },
+    {
+      "id": "s2",
+      "start": 8,
+      "end": 20,
+      "file": "scenes/s2-pages.html",
+      "kind": "real",
+      "title": "真实看板 · 五页",
+      "beat": "节拍进入；第 9s 起每 ~2.2s 切一页"
+    },
+    {
+      "id": "s3",
+      "start": 20,
+      "end": 34,
+      "file": "scenes/s3-apply.html",
+      "kind": "motion",
+      "title": "Agent 写入",
+      "beat": "每落一块一次轻击"
+    },
+    {
+      "id": "s4",
+      "start": 34,
+      "end": 47,
+      "file": "scenes/s4-blocks.html",
+      "kind": "motion",
+      "title": "块类型与模板",
+      "beat": "六拍，每拍一个模板"
+    },
+    {
+      "id": "s5",
+      "start": 47,
+      "end": 60,
+      "file": "scenes/s5-diagram.html",
+      "kind": "real",
+      "title": "UML + 主题自适应 + 自愈",
+      "beat": "50.5s 主题切换；55s 修复事件"
+    },
+    {
+      "id": "s6",
+      "start": 60,
+      "end": 69,
+      "file": "scenes/s6-spatial.html",
+      "kind": "real",
+      "title": "PDF 与图片",
+      "beat": "每 1.5s 一个箭头落点"
+    },
+    {
+      "id": "s7",
+      "start": 69,
+      "end": 81,
+      "file": "scenes/s7-selection.html",
+      "kind": "real",
+      "title": "框选与选中文字",
+      "beat": "72s 框选；76s 文字选择；79s 附件落袋"
+    },
+    {
+      "id": "s8",
+      "start": 81,
+      "end": 89,
+      "file": "scenes/s8-presets.html",
+      "kind": "motion",
+      "title": "预设",
+      "beat": "三个和弦，第三个弱化并标注未完成"
+    },
+    {
+      "id": "s9",
+      "start": 89,
+      "end": 95,
+      "file": "scenes/s9-outro.html",
+      "kind": "motion",
+      "title": "结尾",
+      "beat": "收束和弦 + 尾音"
+    }
+  ],
+  "beatGrid": {
+    "note": "Musical events the score should hit. `cut` entries land on scene starts.",
+    "cuts": [8, 20, 34, 47, 60, 69, 81, 89],
+    "accents": [4, 8, 20, 22.2, 24.4, 26.6, 28.8, 34, 36.2, 38.4, 40.6, 42.8, 45, 47, 50.5, 55, 60, 61.5, 63, 64.5, 66, 67.5, 69, 72, 76, 79, 81, 83.7, 86.3, 89, 95]
+  }
+}

@@ -1,0 +1,1205 @@
+{
+  "modelVersion": 5,
+  "model": {
+    "title": "Board",
+    "pages": [
+      {
+        "id": "pg_601aa2",
+        "slug": "roadmap",
+        "alias": [],
+        "blocks": [
+          {
+            "id": "bl_16a851",
+            "kind": "heading",
+            "slug": "title",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r0-000000000000",
+            "updatedAtRev": "r0-000000000000",
+            "level": 1,
+            "text": "dsh-superboard 路线图"
+          },
+          {
+            "id": "bl_1e46f7",
+            "kind": "prose",
+            "slug": "status",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r0-000000000000",
+            "updatedAtRev": "r28-c577192f84d9",
+            "markdown": "一块 Agent 可编辑的看板：Agent 用工具写入，用户框选提问。\n\n**阶段一、二、三全部完成**（4 个工具 · **8 种块类型** · 6 种排版模板）• **阶段四的三个预设已完成** • **Agent 面向的 `board-layout` 技能已就位**。\n\n**I2（吞掉十批写入的 revision 闸 bug）已修复并已重启验证（`6910f21` + `e0b6ae2`）。**\n\n**已交付**：图（mermaid）跟随主题（`5dc8bdd`）· 画布上可选中文字并 `Ctrl+C`（`de4d807`）· 预设中文化（`de4d807`）· 失败的图不再把报错画到整个看板上（`725e3b4`，I6）。\n\n> ⚠️ **本条曾写「8 种块类型」，是错的。** 真实数量是 **8**：`src/model.js:43-52` 的 `BLOCK_KINDS` 恰好是 `heading / prose / list / code / uml / image / pdf-page / group`，`README.md:27` 也写「八种块」。这个数字是在做宣传片时被一个子代理当场查出来的——它拒绝按简报里的 13 画图，而是回源码里数了一遍。"
+          },
+          {
+            "id": "bl_886252",
+            "kind": "list",
+            "slug": "p1",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r0-000000000000",
+            "updatedAtRev": "r0-000000000000",
+            "ordered": false,
+            "items": [
+              {
+                "id": "li_e9e4ca",
+                "text": "场景模型 + 日志原生折叠：看板 = 自己的 board_apply 调用序列的折叠结果",
+                "depth": 0
+              },
+              {
+                "id": "li_c984dc",
+                "text": "四个工具：board_outline / board_read / board_apply / board_query，board_apply 是唯一写入口并带 revision 闸",
+                "depth": 0
+              },
+              {
+                "id": "li_a74583",
+                "text": "渲染层：块树、五种排版模板、九种锚点的有向箭头",
+                "depth": 0
+              },
+              {
+                "id": "li_10d95d",
+                "text": "框选 → 选区浮条 → 追加到输入框（可读摘要 + JSON 附件）",
+                "depth": 0
+              },
+              {
+                "id": "li_1a4781",
+                "text": "常驻大纲：每步注入一小段，细节按需拉取",
+                "depth": 0
+              }
+            ]
+          },
+          {
+            "id": "bl_c1faa1",
+            "kind": "group",
+            "slug": "g1",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r0-000000000000",
+            "updatedAtRev": "r0-000000000000",
+            "title": "阶段一 · 基础",
+            "children": [
+              "bl_886252"
+            ],
+            "layout": {
+              "template": "flow"
+            }
+          },
+          {
+            "id": "bl_5215e8",
+            "kind": "list",
+            "slug": "p2",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r0-000000000000",
+            "updatedAtRev": "r0-000000000000",
+            "ordered": false,
+            "items": [
+              {
+                "id": "li_b78e61",
+                "text": "阅读栏：与看板同屏、可拖宽、只显示对话、自带 markdown、能加载更早",
+                "depth": 0
+              },
+              {
+                "id": "li_8b5fea",
+                "text": "表格与卡片 markdown、整页滚动、拖拽把手三处修复",
+                "depth": 0
+              },
+              {
+                "id": "li_c2ce7e",
+                "text": "areas：grid 容器给子块命名格子，可表达跨行跨列",
+                "depth": 0
+              },
+              {
+                "id": "li_3aa3af",
+                "text": "删除块级坐标 at —— 坐标只属于空间性组件",
+                "depth": 0
+              },
+              {
+                "id": "li_972808",
+                "text": "修掉锚点 kind 被静默吞掉的 bug：箭头重锚不改变 rev，且会让整块看板白屏",
+                "depth": 0
+              },
+              {
+                "id": "li_298342",
+                "text": "工具说明审计：模板含义、九种锚点、region 与 group 的区别",
+                "depth": 0
+              }
+            ]
+          },
+          {
+            "id": "bl_f6f4f3",
+            "kind": "group",
+            "slug": "g2",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r0-000000000000",
+            "updatedAtRev": "r0-000000000000",
+            "title": "阶段二 · 可读性与排版",
+            "children": [
+              "bl_5215e8"
+            ],
+            "layout": {
+              "template": "flow"
+            }
+          },
+          {
+            "id": "bl_c872b0",
+            "kind": "list",
+            "slug": "p3",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r0-000000000000",
+            "updatedAtRev": "r18-80338ed5c9fa",
+            "ordered": false,
+            "items": [
+              {
+                "id": "li_ca35e0",
+                "text": "✅ UML 渲染，且渲染错误要能回传给 Agent（U4）—— `6e175e5`",
+                "depth": 0
+              },
+              {
+                "id": "li_41b317",
+                "text": "✅ UML 节点表（Q18 前半）—— `d941af7`",
+                "depth": 0
+              },
+              {
+                "id": "li_1c292d",
+                "text": "✅ PDF 页栅格化 + 图片钉住（U5）—— `45b8796`，图片已验收",
+                "depth": 0
+              },
+              {
+                "id": "li_e38918",
+                "text": "✅ PDF 文本层解析（Q22）—— `7fe6a18`",
+                "depth": 0
+              },
+              {
+                "id": "li_f5e34a",
+                "text": "❌ 扫描件/图片的页内锚定 —— 不做（不引入重 OCR）",
+                "depth": 0
+              },
+              {
+                "id": "li_98ad86",
+                "text": "❌ **Agent 主动发起的位图查询 —— 评估后不做**（Q23：`read_image` 已在三个预设里，且 agent 有 shell 逃生出口）",
+                "depth": 0
+              },
+              {
+                "id": "li_0c3336",
+                "text": "⬜ UML 节点几何（Q18 后半）：箭头末端落到图内的方框上 —— 阶段四候选",
+                "depth": 0
+              }
+            ]
+          },
+          {
+            "id": "bl_d8a0e4",
+            "kind": "group",
+            "slug": "g3",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r0-000000000000",
+            "updatedAtRev": "r18-80338ed5c9fa",
+            "title": "阶段三 · 空间性组件 ✅ 已完成",
+            "children": [
+              "bl_c872b0"
+            ],
+            "layout": {
+              "template": "flow"
+            }
+          },
+          {
+            "id": "bl_535528",
+            "kind": "list",
+            "slug": "p4",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r0-000000000000",
+            "updatedAtRev": "r25-2230f166a3e1",
+            "ordered": false,
+            "items": [
+              {
+                "id": "li_6caa0c",
+                "text": "✅ **三个预设**：工程师 / 教师 / 研究员——`f9e2310`",
+                "depth": 0
+              },
+              {
+                "id": "li_ba1f5e",
+                "text": "✅ **Agent 面向的 `board-layout` 技能**——`1020f12`",
+                "depth": 0
+              },
+              {
+                "id": "li_090778",
+                "text": "✅ **瀑布流 `masonry` 模板**——`1020f12`",
+                "depth": 0
+              },
+              {
+                "id": "li_d7c4d3",
+                "text": "⬜ TTS 自动朗读（Q24）：看板讲解能自动念出来",
+                "depth": 0
+              },
+              {
+                "id": "li_2271d5",
+                "text": "⬜ UML 节点几何（Q18 后半）：箭头末端落到图内的方框上",
+                "depth": 0
+              },
+              {
+                "id": "li_24e1b9",
+                "text": "⬜ `.dsh-superboard/` 只读镜像，便于 git diff",
+                "depth": 0
+              },
+              {
+                "id": "li_805589",
+                "text": "⬜ 跨对话引用块（Q-J 记录的形态：引用而不是拷贝）",
+                "depth": 0
+              }
+            ]
+          },
+          {
+            "id": "bl_b26eb7",
+            "kind": "group",
+            "slug": "g4",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r0-000000000000",
+            "updatedAtRev": "r25-2230f166a3e1",
+            "title": "阶段四 · 预设与后续",
+            "children": [
+              "bl_535528"
+            ],
+            "layout": {
+              "template": "flow",
+              "params": {
+                "minCardWidth": 300
+              }
+            }
+          }
+        ],
+        "createdAtRev": "r0-000000000000",
+        "layout": {
+          "template": "grid"
+        }
+      },
+      {
+        "id": "pg_da1d28",
+        "slug": "architecture",
+        "alias": [],
+        "blocks": [
+          {
+            "id": "bl_426b67",
+            "kind": "heading",
+            "slug": "ahead",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r6-c8d67db9905e",
+            "updatedAtRev": "r6-c8d67db9905e",
+            "level": 2,
+            "text": "阶段三 · 架构"
+          },
+          {
+            "id": "bl_8c282e",
+            "kind": "prose",
+            "slug": "anote",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r6-c8d67db9905e",
+            "updatedAtRev": "r6-c8d67db9905e",
+            "markdown": "这一页自己就是验收：下面那张图是看板的 `uml` 块渲染出来的。如果它显示成源码，说明实现没到位——而那就是这个功能本身要解决的问题。"
+          },
+          {
+            "id": "bl_ccd8b5",
+            "kind": "uml",
+            "slug": "loop",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r6-c8d67db9905e",
+            "updatedAtRev": "r6-c8d67db9905e",
+            "engine": "mermaid",
+            "diagram": "flowchart",
+            "source": "flowchart TD\n  A[\"Agent 写入 uml 块\"] --> B{\"mermaid 认得吗\"}\n  B -- 认得 --> C[\"卡片里画出 SVG\"]\n  B -- 不认得 --> D[\"卡片保留源码 + 原因\"]\n  D --> E[\"POST render-report\"]\n  E --> F[\"宿主按 session 记下\"]\n  A -. \"宿主侧便宜校验\" .-> G[\"diag 进投影\"]\n  F --> H[\"board_outline 的 render failures\"]\n  G --> H\n  H --> I[\"Agent 下一步就看见\"]",
+            "nodeHints": [
+              {
+                "key": "A",
+                "label": "Agent 写入 uml 块"
+              },
+              {
+                "key": "B",
+                "label": "mermaid 认得吗"
+              },
+              {
+                "key": "C",
+                "label": "卡片里画出 SVG"
+              },
+              {
+                "key": "D",
+                "label": "卡片保留源码 + 原因"
+              },
+              {
+                "key": "E",
+                "label": "POST render-report"
+              },
+              {
+                "key": "F",
+                "label": "宿主按 session 记下"
+              },
+              {
+                "key": "G",
+                "label": "diag 进投影"
+              },
+              {
+                "key": "H",
+                "label": "board_outline 的 render failures"
+              },
+              {
+                "key": "I",
+                "label": "Agent 下一步就看见"
+              }
+            ]
+          },
+          {
+            "id": "bl_c745b0",
+            "kind": "image",
+            "slug": "shot",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r9-5144a440db4d",
+            "updatedAtRev": "r9-5144a440db4d",
+            "src": "E:\\Dev\\dsh-superboard\\docs\\assets\\diagram-render.png",
+            "alt": "无头浏览器里渲染出的 sequence 与 pie 图",
+            "caption": "上面两张图是无头 Edge 里渲染出来的原图，不是看板画的。这张能被看到，就说明 `/api/file` 这条路通了。"
+          },
+          {
+            "id": "bl_8d7017",
+            "kind": "pdf-page",
+            "slug": "pdf1",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r10-8b7d3add782d",
+            "updatedAtRev": "r10-8b7d3add782d",
+            "src": "E:\\Dev\\dsh-superboard\\docs\\assets\\pdf-check.pdf",
+            "page": 1,
+            "caption": "第 1 页说的是这张卡片在验证什么。能看见这页字，就说明路径、中文字形、栅格化三件事都通了。"
+          },
+          {
+            "id": "bl_c3a6c9",
+            "kind": "pdf-page",
+            "slug": "pdf3",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r10-8b7d3add782d",
+            "updatedAtRev": "r10-8b7d3add782d",
+            "src": "E:\\Dev\\dsh-superboard\\docs\\assets\\pdf-check.pdf",
+            "page": 3,
+            "caption": "第 3 页。两份块共用一次下载和一次解析——文档缓存按路径去重。"
+          },
+          {
+            "id": "bl_68cbd6",
+            "kind": "prose",
+            "slug": "awhy",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r6-c8d67db9905e",
+            "updatedAtRev": "r6-c8d67db9905e",
+            "markdown": "两条通道汇进同一个出口，因为它们对 Agent 是一件事：**这张图不在看板上，原因如下**。\n\n宿主侧那条存在的理由：看板是一个页签，所以存在一个窗口——Agent 写了一张坏图，用户没在看，而 Agent 没有理由去重读一个它相信自己刚写对的看板。"
+          },
+          {
+            "id": "bl_d086f2",
+            "kind": "prose",
+            "slug": "aok",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r7-97883ebc964b",
+            "updatedAtRev": "r14-9926826fbf78",
+            "markdown": "✅ **验收通过（2026-10-04）**\n\n- **图**：`uml` 块在真实应用里画出来了——自带运行时 → 宿主 ETag 路由 → 客户端 `<script>` 加载 → `<img>` data URL，整条链路第一次跑就通。\n- **图片**：用户确认「所有的图片都没有问题」，`/api/file` → `<img>` 这条路稳了。"
+          },
+          {
+            "id": "bl_5845ea",
+            "kind": "uml",
+            "slug": "pdfparse",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r16-bc3c32e31804",
+            "updatedAtRev": "r16-bc3c32e31804",
+            "engine": "mermaid",
+            "diagram": "flowchart",
+            "source": "flowchart TD\n  A[\"Agent 写 pdf-page 块（路径 + 页号）\"] --> B{\"折叠能解析吗\"}\n  B -- \"不能：apply 是同步的\" --> C[\"PdfFacts 易失存储\"]\n  C --> D[\"宿主自带 pdf.js 解析文本层\"]\n  D --> E{\"拿到了吗\"}\n  E -- 拿到 --> F[\"按视觉行归并\"]\n  F --> G[\"board_read 打印每行的归一化矩形\"]\n  G --> H[\"Agent 抄四个数写 rect 锚点\"]\n  E -- \"文件不存在 / 不是 PDF / 页号越界\" --> I[\"board_outline 的 diag\"]\n  I --> J[\"Agent 下一步就看见\"]",
+            "nodeHints": [
+              {
+                "key": "A",
+                "label": "Agent 写 pdf-page 块（路径 + 页号）"
+              },
+              {
+                "key": "B",
+                "label": "折叠能解析吗"
+              },
+              {
+                "key": "apply",
+                "label": "apply"
+              },
+              {
+                "key": "C",
+                "label": "PdfFacts 易失存储"
+              },
+              {
+                "key": "D",
+                "label": "宿主自带 pdf.js 解析文本层"
+              },
+              {
+                "key": "E",
+                "label": "拿到了吗"
+              },
+              {
+                "key": "F",
+                "label": "按视觉行归并"
+              },
+              {
+                "key": "G",
+                "label": "board_read 打印每行的归一化矩形"
+              },
+              {
+                "key": "H",
+                "label": "Agent 抄四个数写 rect 锚点"
+              },
+              {
+                "key": "PDF",
+                "label": "PDF"
+              },
+              {
+                "key": "I",
+                "label": "board_outline 的 diag"
+              },
+              {
+                "key": "J",
+                "label": "Agent 下一步就看见"
+              }
+            ]
+          },
+          {
+            "id": "bl_af42f5",
+            "kind": "prose",
+            "slug": "pdfwhy",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r16-bc3c32e31804",
+            "updatedAtRev": "r16-bc3c32e31804",
+            "markdown": "上半条是「坐标从哪来」：**Agent 看不到像素，所以矩形必须由宿主读出来给它**。下半条是它在读不到时怎么办——走的是和图、图片完全同一条上报通道。\n\n下面这个块就是验收：`board_read pdf1` 会返回它的文本表，第一行应当是 `(0.0958, 0.0793, 0.3888, 0.0214)  看板 PDF 渲染验证 · 第 1 页`。"
+          },
+          {
+            "id": "bl_004e2f",
+            "kind": "prose",
+            "slug": "i2warn",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r22-423594a7abd5",
+            "updatedAtRev": "r26-2e62ba1bc6fc",
+            "markdown": "✅ **重启已完成，内容全部回来。** 修复分两层（`6910f21` 只比 `revSeq`；`e0b6ae2` 让重折不再重新裁定已提交的批次），完整根因见 `issues` 页的 I2。\n\n上面这张图（`pdfparse`）和 `pdfwhy` 都是从「丢掉的十批」里回来的，所以它们本身就是验收证据。"
+          }
+        ],
+        "createdAtRev": "r6-c8d67db9905e",
+        "layout": {
+          "template": "flow"
+        }
+      },
+      {
+        "id": "pg_3de55a",
+        "slug": "questions",
+        "alias": [],
+        "blocks": [
+          {
+            "id": "bl_66d85b",
+            "kind": "heading",
+            "slug": "qhead",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r0-000000000000",
+            "updatedAtRev": "r0-000000000000",
+            "level": 2,
+            "text": "阶段三 · 待决问题"
+          },
+          {
+            "id": "bl_7125ee",
+            "kind": "prose",
+            "slug": "qnote",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r0-000000000000",
+            "updatedAtRev": "r0-000000000000",
+            "markdown": "访谈进行中。每定下一条，这里就改成结论，并把「问题 → 决定 → 实现」的边补上。"
+          },
+          {
+            "id": "bl_65cd4e",
+            "kind": "prose",
+            "slug": "q6",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r0-000000000000",
+            "updatedAtRev": "r1-097fe8c772d7",
+            "markdown": "**Q6 · UML 块的内容形态** —— ✅ 定了：**存源码渲染，同时解析出节点表**。\n\n文档里只留 Agent 写的那段源码；节点表作为派生数据进投影，和 `areas` 的格子走同一条路。渲染归引擎，结构归看板：`board_read` 能列出节点，箭头能锚到具体节点（`{kind:'node', key}`），图不再是黑盒。"
+          },
+          {
+            "id": "bl_920b9f",
+            "kind": "prose",
+            "slug": "q7",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r0-000000000000",
+            "updatedAtRev": "r1-097fe8c772d7",
+            "markdown": "**Q7 · PDF 与图片的入口** —— ✅ 定了：**路径为主，一页一块，只加点名的页**。\n\nAgent 本来就有文件系统权限，用户想钉什么就把路径告诉它。箭头锚点要挂在具体某一页上（`pdfPage` 已是块字段），所以一页一块；整本 40 页不默认铺开，「整本」用一个 group 框起来。"
+          },
+          {
+            "id": "bl_b20f61",
+            "kind": "prose",
+            "slug": "q8",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r0-000000000000",
+            "updatedAtRev": "r1-097fe8c772d7",
+            "markdown": "**Q8 · 页内锚点** —— ✅ 定了：**现在不做**（U5 降级）。\n\n降级为「贴上来 + 箭头连整块」。理由：精确到页内坐标需要先有分块识别（deepseek-ocr-2 这类专用解析模型），目前不引入。\n\n模型里的 `{kind:'rect',x,y,w,h}` 与 `{kind:'point',x,y}` **保留不动**——将来接上 OCR 就能启用，不需要改模型。"
+          },
+          {
+            "id": "bl_a7a2ce",
+            "kind": "prose",
+            "slug": "q10",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r1-097fe8c772d7",
+            "updatedAtRev": "r2-b824dfa681e4",
+            "markdown": "**Q10 · 图表（柱/折/饼）** —— ✅ 定了：**先靠 mermaid 自带**。\n\n`pie` / `xychart-beta`（柱/折线）/ `quadrantChart` / `gantt` / `timeline`。UML 已定优先，管道只修一次，图表几乎是白送的；代价是控制力有限（没有精细多系列/双轴/图例布局）。\n\n背景事实：**整个 DSH 安装里没有任何图表库**（echarts / chart.js / recharts / d3 / vega / plotly / apexcharts / victory 逐个查过，全无），DSH 自己对图表的态度是 detect-and-decline——表格预览的 README 原文写着 charts \"**are not displayed**\"。所以「不做」才是原状态。"
+          },
+          {
+            "id": "bl_115180",
+            "kind": "prose",
+            "slug": "q11",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r1-097fe8c772d7",
+            "updatedAtRev": "r2-b824dfa681e4",
+            "markdown": "**Q11 · 数学公式** —— ✅ 调研结论：**几乎白送**。\n\nDSH 的 markdown 层已经**常开** KaTeX 0.16.47，认 `$…$` / `$$…$$` / `\\(…\\)` / `\\[…\\]` 四种分隔符，外加一个 ` ```math ` 围栏。\n\n而且它的 CSS（29KB、393 条规则）与字体（59 个文件、1.05MB）由 `index.html` **无条件加载**——插件写 KaTeX 的 HTML 出去，样式和字体直接就有，只差那一个 JS 文件。\n\n不算白送的部分：DSH 自己的两种语法（流式不用数学，避免半截 TeX 闪错；落定才解析）得照抄，否则流式输出会满屏报错。\n\n**我们现在是零**：看板渲染器不认任何数学标记，工具说明里也一个字没提。"
+          },
+          {
+            "id": "bl_29dff2",
+            "kind": "prose",
+            "slug": "q12",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r1-097fe8c772d7",
+            "updatedAtRev": "r1-097fe8c772d7",
+            "markdown": "**Q12 · 图表侧的前提** —— UML 优先这条已定，于是 mermaid 的可行性同时卡住 UML、图表、以及可能的数学（KaTeX）三件事。**这三个不能分三次做，管道只修一次。**"
+          },
+          {
+            "id": "bl_852acd",
+            "kind": "prose",
+            "slug": "q13",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r2-b824dfa681e4",
+            "updatedAtRev": "r2-b824dfa681e4",
+            "markdown": "**Q13 · 渲染错误怎么回到 Agent** —— ✅ 定了：**两者都要**。\n\n客户端渲染失败 → 插件自己的 HTTP 路由（`ctx.webServer.register`，官方 open-in-app 就是模板）→ 宿主记进投影 `diag` → **常驻大纲下一步就推给 Agent**，不需要它主动查。\n\n再加一道宿主侧的**便宜**校验（图类型拼写、括号/引号配平、空源码），覆盖「用户根本没打开看板」那个漏洞。宿主侧**不跑 mermaid**——它的解析器要 DOM，在 Node 里跑等于把引擎装两遍，而且只能抓语法错。"
+          },
+          {
+            "id": "bl_e5ad76",
+            "kind": "prose",
+            "slug": "q14",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r2-b824dfa681e4",
+            "updatedAtRev": "r4-bc55914b4d49",
+            "markdown": "**Q14 · mermaid 的体积与裁剪** —— ✅ 定了：**用完整包，不裁**。\n\n实测（本机、本地文件）：\n\n| 项 | 耗时 |\n| --- | --- |\n| 解析并执行整包（3,572,661 B） | **96.9 ms** |\n| `initialize` | 2.5 ms |\n| 首次 flowchart / pie / sequence / class / gantt | 49.5 / 40.2 / 17.5 / 23.4 / 9.6 ms |\n| 同类型第二次 | 14.9 / 4.0 / 6.2 / 12.0 / 5.5 ms |\n| 五种图型共渲染 10 次 | **284.8 ms** |\n\n裁图型能省下的只是那 97 ms 里的一部分，而它是**一次性**的（ETag 重用 + 浏览器自己的缓存）。用一份没有基线的构建配置去换这个，不值。"
+          },
+          {
+            "id": "bl_f1f951",
+            "kind": "prose",
+            "slug": "q15",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r2-b824dfa681e4",
+            "updatedAtRev": "r3-65e201f5ce8e",
+            "markdown": "**Q15 · 两个 mermaid 插件** —— ✅ 查清了。\n\n**`dsh-mermaid` 0.4.1**：宿主注册精确路由 `/dsh-mermaid/mermaid-runtime.js` 下发一个 3.4MB 的预构建 mermaid 11.17 ESM 包（`public, max-age=31536000, immutable`）；客户端半用 **`import(url)`** 动态加载，然后用 MutationObserver 扫 `document.body`，把所有 `<code class=\"language-mermaid\">` 换成渲染结果——还带缩放查看器、主题联动、下载 SVG。\n\n**`dsh-better-sidebar` 0.24.1**：同样自己开宿主路由（`/sidebar/bundle/<name>.js`），chunk 里塞 7.0MB 的 mermaid；客户端注入 `<script>`，工厂挂到**插件自己的全局注册表** `globalThis.__dshChunks__`。\n\n**两个都没用官方的 `require.async(\"./client.*.js\")` chunk 通道。** better-sidebar 的 `chunk-loader.d.ts` 写了为什么：模块加载器的 `import()` 只解析 seed、shell 自有模块、已注册工厂和 boot 图行，**chunk id 一个都不是**，所以「解析行为依赖版本」；它还指出官方 `/plugins/<id>/` 路由**服务不了任意文件名**。\n\n→ **这修正了上一轮的推荐**：带大库就该自己开宿主路由。附带好处：运行时的 HTTP 缓存不再绑在 `src/client.js` 的 rev 上，开发期改 UI 不会重下 3MB。"
+          },
+          {
+            "id": "bl_0ffb74",
+            "kind": "prose",
+            "slug": "q16",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r3-65e201f5ce8e",
+            "updatedAtRev": "r5-948e8947d97b",
+            "markdown": "**Q16 · `uml` 块的渲染归谁** —— ✅ 定了并已实现：**自己带一份运行时**（`6e175e5`）。\n\n宿主自己注册路由下发一份自带的 mermaid，客户端用 `<script>` 加载。抄 `dsh-mermaid` 的做法，但有一处**故意不同**：它的响应头是 `immutable`，我们用 `no-cache` + ETag——因为我们的包会在同一个路径下重新 vendor，而「永远缓存」是这个仓承诺不了的。\n\n理由：U4 要的不是「画出来」，是「**画不出来时要让 Agent 知道**」，而那要求 render 调用在我们手里。借别人的路由做不到（拿不到失败），完全委托给已装插件也做不到。"
+          },
+          {
+            "id": "bl_41359b",
+            "kind": "prose",
+            "slug": "q17",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r3-65e201f5ce8e",
+            "updatedAtRev": "r5-948e8947d97b",
+            "markdown": "**Q17 · code 块的 `language-<lang>`** —— ✅ 已实现（`6e175e5`）。\n\n两条路径都补上了：块级 `code` 与 prose 里的围栏。后者以前**一个 class 都没有**，所以装了渲染插件的用户在看板里看不到任何图。"
+          },
+          {
+            "id": "bl_53e5d3",
+            "kind": "prose",
+            "slug": "q18",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r4-bc55914b4d49",
+            "updatedAtRev": "r8-25b3ff2c81e8",
+            "markdown": "**Q18 · `uml` 块的节点表** —— ✅ 已完成（`d941af7`）。\n\n宿主解析 mermaid 源码，把「这张图里有哪些部件」写回块上。五个族：flowchart / sequence / class / state / er；`pie`、`gantt`、`mindmap`、`timeline` **不给表**——「这个族不命名部件」和「这个族没有部件」是两个不同的答案。\n\n它是**派生数据**，和 `areas` 解析出来的格子同一类：不进文档、不动 revision、每次提交重算。`src/model.js` 早就把它排除在内容哈希之外（`renderedHash` 与 `nodeHints` 同一条注释），而这条排除正是「以后改进解析器不会改写历史」的依据。\n\n探针抓出四个拖下去会害人的坑：sequence 的捕获组下标写错（第一个之后的 participant 全被默默丢掉）、行内边标签的前瞻没锚定（`A -- yes --> B` 会多出一个叫 `yes` 的节点）、`;` 不是语句分隔符（`flowchart TD; A-->B` 整行当成关键字，结果什么都没有）、以及点线连接符 `-.` 认不出来（扫描器一个字符一个字符地跨过连接符，把边标签读成了节点）。\n\n**没做的那一半**：几何。箭头末端仍然落在整块上，不落到图里那个方框。`{kind:'node', key}` 现在是**可用的**（有名字可写、工具说明也告诉它去哪里找），但还不产生画面上的差别。"
+          },
+          {
+            "id": "bl_84d043",
+            "kind": "prose",
+            "slug": "q19",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r4-bc55914b4d49",
+            "updatedAtRev": "r11-513c602416f3",
+            "markdown": "**Q19 · PDF 与图片（U5）** —— ✅ 已完成并推送（`45b8796`）。\n\n已落地的几件：路径为主（块存路径不存字节，看板是文件系统的一个视图）；一页一块；页内锚定不做。\n\n字节走 DSH 自己的 `GET /api/file?path=<绝对路径>`，所以图片就是一个 `<img>`，没有新传输层。PDF 则在浏览器里栅格化，用的是自带的一份 pdf.js（190 个文件、4.1MB，宿主自己的路由下发），和 mermaid 同一种做法。\n\n**页内锚定的最终结论（用户 2026-10-04）**：**不引入较重的 OCR 方案，只用普通 PDF 解析器；扫描型 / 图片型 PDF 以及图片，不提供页内锚定。**\n\n所以 `rect` / `point` 两个锚点**从「等 OCR」变成了「不做」**。它们留在模型里是因为删掉要写迁移，而它们已经不可能被误解——工具说明里从未提过它们。`crop` 字段同理。"
+          },
+          {
+            "id": "bl_ea9d80",
+            "kind": "prose",
+            "slug": "q20",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r11-513c602416f3",
+            "updatedAtRev": "r20-4cce45a50bb3",
+            "markdown": "**Q20 · 三个预设（preset）** —— ✅ 已完成并推送（`f9e2310`）。**需要重启 DSH 才能生效**（bundle patch 在启动期读）。\n\n### 已定并已落地\n\n- **一个 bundle、三行新 preset**：`preset-engineer` / `preset-teacher` / `preset-researcher`，都在 `cordis.patch.yml` 里。\n- **新插行，不覆盖官方预设**（用户选定）。覆盖会替换整个 `config`，而这个仓已经为此付过账——本 profile 自己那份 billion-context 覆盖的注释就写着「DSH upgrades that change those presets will NOT merge into these overrides」。\n- **角色提示词走 `dsh-superboard/preset` 子路径导出**，在预设**内部**调 `ctx.systemPrompt.section()`。因为是 scope 绑定的，那段话**只对本预设的 agent 可见**。用 `section` 而不是 `context`：后者每步重算并以 user 快照追加在历史末尾，而「这个角色怎么工作」是静态的，属于系统前缀。\n\n### 实测出来的两条硬约束\n\n- **`insert` 塞不进官方预设的 `plugins` 列表**——预设行不是 `group: true` 行，Loader 会回 `patch insert: entry \"preset-standard\" is not a group`。在 scratch profile 里实探过，不是猜的。所以每个预设都得把所依据的官方插件表**重述一遍**。\n- **没有预设继承机制**（grep 注册表只有 `PresetTree extends EntryTree` 与 scope-parent 管线）。所以「基于官方模式」只能靠重述。\n- **好消息**：YAML **锚点**能穿过 Loader 的解析、patch 组合与 `--dump-config` 展开（也是实探的）。所以 `persona` / `planning` / `delegation` 三块只写一次。\n\n### ⚠️ 一个必须知道的副作用\n\n**三个预设都不带 `compaction` 组。** 本 profile 用 billion-context 取代官方压缩，而它够不到自己没有声明的预设行——这正是 profile 自己也重述那两个预设的原因。\n\n→ **在没有 billion-context 的 profile 里，这三个预设的 agent 会完全没有压缩。** 换 profile 时要把 `compaction` 组从上游预设里抄回来。已写进 README。\n\n### 三个角色的实际内容\n\n1. **工程师**（基于 `standard`）：四个工具怎么用、排版只能声明不能定位、**按名字引导使用 `grilling` 技能**（用户指定）；可选能力一律写成条件句（「有记忆工具就用，没有就继续」）。\n2. **教师**（基于 `standard`）：用户选定的**互动式**形态——先弄清学习者在哪里 → 把主题地图放上看板 → 一次展开一个想法 → 每块留一道检查题然后**停下等答** → 根据回答决定补讲还是前进。\n3. **研究员**（基于 `ptc`）：在**看板上**给结论而不是在对话里；区分「测到的 / 推出来的 / 假设的」，并明说没查实的东西。\n\n三个都**一个字不提 billion-context**（用户明确要求：它自己已有一套完整提示词）。\n\n### 验证\n\n`test/preset.test.js` 15 个测试，用 **Loader 自己的 YAML 方言**（`JSON_SCHEMA.extend(JsExpr)`）解析真实 patch——普通的 `yaml.load` 会在每个 `disabled: !!js` 行抛错，而把标记剥掉的测试会对「标记丢了」完全盲。变异测试验过：抹掉一个 `!!js` 标记会让 shell 行那条失败，删掉 grilling 引导会让 grilling 那条失败。"
+          },
+          {
+            "id": "bl_6c67f7",
+            "kind": "prose",
+            "slug": "q21",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r11-513c602416f3",
+            "updatedAtRev": "r17-0103176122cd",
+            "markdown": "**Q21 · 「看板主体完成」这个节点划在哪** —— ✅ 已转化为 Q23。\n\n用户没有直接划边界，而是把问题**改成了一道评估题**：\n\n> 先评估一下位图查询在我希望的两个特殊场景（教师和研究员）下是否是非常必要的（假设用户上传的PDF都是可解析的非图片型）。\n\n这个反问本身就是边界：**如果位图查询在这两个场景下不是刚需，那主体就算完成了**，预设可以开始写。"
+          },
+          {
+            "id": "bl_27ad77",
+            "kind": "prose",
+            "slug": "q22",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r14-9926826fbf78",
+            "updatedAtRev": "r16-bc3c32e31804",
+            "markdown": "**Q22 · PDF 解析** —— ✅ 已完成并推送（`7fe6a18`）。\n\n**用户的框定**（2026-10-04，逐字）：\n\n> PDF 内容解析（用于给 Agent 提供文档内容理解）应该是有官方自带的功能（或已有相关插件/技能），我们的 PDF 解析是为了能够执行 Agent 对 PDF 的高亮和内容锚点用的。因此需要全面的 PDF 内容解析，以此准确执行 Agent 的意图。所以是 A+文本表。\n\n这一句把重点挑明了：**文档理解不是我们的活**，我们要的是 **锚点与高亮**。文本表的**几何坐标就是交付物**，不是副产品。`board_read` 把每一行连同归一化矩形一起打印出来，Agent 抄四个数就能写 `rect`。\n\n**这事实上复活了 `rect`**：Q8 当年把页内锚定判为「不引入重 OCR」，而 **PDF 自带的文本层就是那个替代品**——扫描件没有文本层，所以扫描件仍然没有页内锚点，与已定的决定完全一致。\n\n### 三个框架事实（读出来的）\n\n| 事实 | 位置 |\n| --- | --- |\n| 投影 `apply` **同步、绝不 await** | `dsh-session-projection/lib/index.js:303,370,392,411` |\n| 常驻大纲 `text(context)` **同步** | `dsh-system-prompt/lib/index.js:342,350` |\n| 但工具 `execute` **可以 async** | `dsh-tools/lib/index.js:3310` |\n\n→ **解析绝不能发生在折叠里**。\n\n### `pageCount` 必须从模型里删除\n\n`nodeHints` 能存在块上，是因为它在 `commit` 里**同步**算出来，搭同一次发布的车。而解析需要异步 I/O——就算异步写回 state，**投影也不会再发布一次**（只在 `apply` 返回新值时才推），那个改动是隐形的。\n\n而 `pageCount` 本来就是死的：声明了、进了哈希、可折叠，**但工具 schema 里根本没有这个字段**。所以它不是「实现不完整」，而是「文档在持有关于文件、而不是关于看板的事实」。\n\n删掉它改变了哈希臂 → **模型版本 3 → 4**。旧 checkpoint 从日志重新折——这正是版本号的用途。\n\n### 「渲染失败」从两个来源变成三个\n\n- `doc.diag` —— 宿主同步 lint（UML 的引擎/探测器）\n- `renderReports` —— 浏览器试过之后的观察\n- **`pdfFacts` —— 宿主自己的异步解析**\n\n三者对 Agent 是一件事，都进 `board_outline` 的 `diag`。\n\n### 两个「看起来像成功」的陷阱\n\n1. **`cMapUrl` 必须是文件系统路径，绝不能是 `file://` URL。** pdf.js 读不了的那种情况下只 `console.warn`，然后**返回空字符串当作文本**——一页中文就退化成一页没字，**和扫描件 indistinguishable**（而扫描件是本设计故意支持的）。它还必须以**字面的正斜杠**结尾，否则 pdf.js 直接拒。\n2. **y 轴已经是向下的。** `Util.transform` 已经包含了翻转，再翻一次会把页面镜像，而**每个矩形仍然落在 0..1 内**——任何边界检查都抓不到。只有阅读顺序断言能抓。\n\n两个都用**变异测试**钉住了（回滚修复会精确失败对应的断言）。CMap 那个需要一个**真的需要 CMap** 的 fixture，所以测试自己构建一个 CID-keyed、未嵌入字体的 `STSong-Light` 页面；仓里其它 PDF 都嵌入字体 + ToUnicode，宽容到「中文出来了」什么都证明不了。\n\n### 行归并\n\nPDF 在每个样式切换处切分文本，所以原始 item 接近音节而不是行。阈值是**字高的比例**（`SEGMENT_GAP_RATIO = 0.6`）而不是常数，因为词间距与字号成正比。实测：词间距 `0.0054–0.0063`，表格列间距 `0.0698–0.1437`——**八倍差距，阈值就在中间**。"
+          },
+          {
+            "id": "bl_92cbf1",
+            "kind": "prose",
+            "slug": "q23",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r17-0103176122cd",
+            "updatedAtRev": "r18-80338ed5c9fa",
+            "markdown": "**Q23 · 位图查询在教师/研究员场景下是刚需吗** —— ✅ 评估完成：**不是刚需，建议不做（或无限期推迟）**。\n\n用户给的前提：**假设用户上传的 PDF 都是可解析的非图片型**。\n\n### 关键事实：`read_image` 已经在三个预设里了\n\n那个能「把图片返回给模型」的工具**不需要我们做，DSH 自带**。而且它在我方关心的场景里都在：\n\n| 预设 | 插件清单行 |\n| --- | --- |\n| `preset-standard` | `cordis.patch.yml:71` `name: '@deepseek-ai/dsh-tool-fs'` |\n| `preset-ptc` | `cordis.patch.yml:197` 同上 |\n| `preset-cordis` | `cordis.patch.yml:332` 同上 |\n\n`dsh-tool-fs/lib/index.js:973` `applyReadImageTool(ctx)` 就是它的实现——`ctx.inject(['attachments'], …)`，返回 `[{type:'image', attachment}]`（`:960`），走 `assertImageCapableRoute` 门禁。本 profile 的模型 `deepseek-v4.1-flash:cloud` 声明了 `input: [text, image]`，所以这条路是通的。\n\n### 逐场景看\n\n**教师**\n\n- 课件 PPT→PDF：可解析 → 看板给出文本表 + 归一化矩形，讲到哪里指到哪里。\n- 作业照片 / 幻灯片里的插图：用户作为**附件**发进对话时，模型**本来就看得见**。不需要看板回传。\n- 磁盘上的图片：`read_image` 一行解决。\n- **剩下的真空白**：用户只给了一个 PDF 路径（没发附件），而那一页是矢量图表。文本层给得出标签和坐标，给不出画面。\n\n**研究员**\n\n- 数据处理 → 数字与表格 → 已经是文本。\n- 联网检索 → 文本。\n- 图表 → mermaid 的 `pie`/`xychart` 源码是文本，**而且渲染失败会回传**（Q13）。\n- **剩下的真空白**：同上——只有「磁盘上的 PDF 页/图片里到底是什么样」这一类。\n\n### 为什么连那个空白也不算刚需\n\n**Agent 已经有通用逃生出口了：它有 shell，也有 `read_image`。** 真需要看的时候，它可以自己把 PDF 页栅格化成 PNG（宿主已经自带 pdf.js，无头 Edge 也在），再 `read_image` 读回来。\n\n→ **看板原生位图查询是「方便」，不是「能力」。**\n\n### 更根本的一点：它的初始理由已经被三件事吸收\n\nQ-H 当年说「v1 只给结构化文本，视觉信息后续做成由 Agent 主动发起的位图查询工具」——那时前提是「视觉信息没有任何别的途径」。现在不是了：\n\n1. **PDF 文本层**（`7fe6a18`）——几何不必靠像素；\n2. **`read_image`**——图片本来就能回传；\n3. **渲染失败上报**（`6e175e5`）——「画不出来」不需要看图才知道。\n\n三个理由里没有一个还需要看板自己去抓位图。\n\n### 结论与建议\n\n**不做。** 唯一真正还缺的是 **Q18 剩下的几何那一半**（UML 图里节点在哪里，让 `{kind:'node'}` 箭头末端真的落到方框上）——但那是**图内部的结构问题**，不是「查询工具」，两者不能混着做。\n\n因此 **Q21 的边界可以划在这里**：工具面（4 个工具、8 种块类型）**已经稳定**，主体完成，预设可以开工。"
+          },
+          {
+            "id": "bl_b35da9",
+            "kind": "prose",
+            "slug": "q24",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r19-af2c360a1ac0",
+            "updatedAtRev": "r19-af2c360a1ac0",
+            "markdown": "**Q24 · 教师预设的 TTS** —— 已记入路线图，**现在不做**（用户 2026-10-04：」后面会考虑引入自动TTS能力，但是现在先不做」）。\n\n现在只是记一笔它会影响什么：TTS 是**客户端**能力（浏览器有 `speechSynthesis`，系统级、零依赖），而看板内容由 Agent 写、用户在浏览器里读——所以最自然的形态是「**教师预设的讲解可以点一下念出来**」，而不是 Agent 生成音频文件。\n\n与现有设计的接口：块已经有稳定的 id 与 slug，所以「念哪一段」天然可寻址；不需要新块类型。\n\n真要做时得先定：念什么（整页/选中块/Agent 新写的那一段）、什么时候念（自动还是手动）、语言与音色怎么选。"
+          },
+          {
+            "id": "bl_de4d85",
+            "kind": "prose",
+            "slug": "q25",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r20-4cce45a50bb3",
+            "updatedAtRev": "r20-4cce45a50bb3",
+            "markdown": "**Q25 · 三个预设的压缩缺口** —— 已记录，换 profile 时要处理。\n\n三个新预设都不带 `compaction` 组，因为它们必须和本 profile 的 billion-context 共存，而 billion-context 够不到自己没有声明的预设行。\n\n后果：**在一个没有 billion-context 的 profile 里，这三个预设的 agent 会完全没有压缩。**\n\n要发布给别人用时，得选一条路：\n\n- 把 `compaction` 组从上游预设里抄回三个预设（代价：在**本** profile 里会和 billion-context 重叠，就是那个已知的双挂载问题）；\n- 或者发两个变体；\n- 或者写清楚「本 bundle 假定 profile 自备压缩」。\n\n现在选的是第三条——因为这三个预设本来就是为**这个** profile 的看板生态写的。但既然 bundle 已经公开在 GitHub 上，这个假设值得写成一条明文的兼容性声明。"
+          },
+          {
+            "id": "bl_a9102e",
+            "kind": "prose",
+            "slug": "q26",
+            "alias": [
+              "prose-22"
+            ],
+            "anchors": [],
+            "createdAtRev": "r26-2e62ba1bc6fc",
+            "updatedAtRev": "r27-2cb62705203e",
+            "markdown": "**Q26 · 图如何跟随主题（m07846）** —— ✅ 已完成并推送（`5dc8bdd`）。\n\n用户提的是「mermaid 在深色背景下渲染效果不佳」。中途目标变过两次：先说适配刚装的 `dsh-opencode-palette`，然后（m11149）因为该插件有 bug 改用 `@nonamelego/dsh-catppuccin`，最后（m11151）用户表示**只适配深色主题也可以，免得绑死插件**。\n\n结论正好满足后一条：实现**完全不提任何插件名**，只读 DSH 自己的 token，所以任何主题插件都自动跟。根因是两层：\n\n1. **渲染面**：图走 `<img src=\"data:image/svg+xml…\">`，CSS 进不去，主题必须在编码前烘焙进 SVG——由 `diagramThemeVariables` 把 DSH 的 token 转成 mermaid 变量。\n2. **原来的真 bug**：`darkMode` 被放在了 `themeVariables` **外面**，而顶层 `darkMode` 无效。所以深色背景上跑的一直是 mermaid 的浅色默认值。\n\n三个实测出来的坑（都写进了代码注释与文档）：\n\n- `theme: 'base'` 是**唯一**尊重完整变量集的 mermaid 主题。\n- **mermaid 拒绝 `color-mix()`**：喂 `color(srgb …)` 会给 `Unsupported color format` 并**丢掉整张图**，不只是一个形状。\n- 主题插件把 token 写成 `<body>` 的内联自定义属性，**必须读 DOM**；只看 `data-ds-dark-theme` 会在两个深色主题间切换时失明。"
+          },
+          {
+            "id": "bl_3cd513",
+            "kind": "prose",
+            "slug": "q27",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r27-2cb62705203e",
+            "updatedAtRev": "r27-2cb62705203e",
+            "markdown": "**Q27 · 画布上的选择：一次拖拽的两种含义（m11541 第 1 条）** —— ✅ 已完成。\n\n用户提的是「框选只能框到组件而无法选中文字」，希望**选中文字以更精确地传给 Agent**，并支持系统的 `Ctrl+C`。\n\n**手势选定（用户答）**：按起点分派——起点在渲染出的文字上就是文字选择，否则是框选；**而框选到文字就自动把所触及的块选上（允许跨块）**。\n\n**为什么原来一个字都选不中**：`.sb-picking` 带 `user-select:none`，而它在每一次 `pointerdown` 就加上，于是任何拖动都变成框选。\n\n**本功能的全部难点是判定「起点是不是文字」，而显然的判法是错的两次**：\n\n1. **`caretRangeFromPoint` 永远吸附到最近的可编辑文字**——实测：段落只有一行的卡片，在它**底边内侧 3px**、左侧内边、以及一行**末端之后**取点，报告的都还是那一段的真实文本节点。\n2. **caret 所在的节点不是被点中的东西**——在段落左侧 4px 取点，返回的是该段落自己的文本节点。\n\n所以判据是「该点是否落在该文字的**已渲染行盒**之内」（对该文本节点宿主元素建 `Range.getClientRects()`）：不猜字体度量，换行的段落每行一个 rect，于是两行之间的行距**正确地算作空白**——实测 `two:gap between lines` 判为框选，两条行内均判为文字。\n\n**中途加抑制类会毁掉选择**（实测）：对已有选区的元素施加 `user-select:none`，浏览器当场清空——`before: \"Prose a human wou\"` → `after: \"\"`。所以这个类只在 `pointerdown` 加、只在 `pointerup` 撤。\n\n**两个必须显式处理的异步问题**：矩形拖拽期间要忽略 `selectionchange`（抑制类阻止的是浏览器**画出**选区，事件仍带着折叠区间触发）；而我们自己 `removeAllRanges()` 引发的那一次要吞掉——它在 `pointerup` 返回**之后**送达，那时 `marqueeRef` 已复位，而折叠选区与「一次应清空选区的点击」形状完全一样，于是矩形刚算出的结果会被自己的回声抹掉。\n\n**载荷**：规整后的字符原文以**独立字段** `payload.text` 与块列表一起送出，托盘里以 `>` 逐行引用，且**不折进某一块的 text**——Agent 必须能区分「用户指的是这一句」与「这一整块就是答案」。"
+          },
+          {
+            "id": "bl_5e7727",
+            "kind": "prose",
+            "slug": "q28",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r27-2cb62705203e",
+            "updatedAtRev": "r27-2cb62705203e",
+            "markdown": "**Q28 · 预设的中文化与「回复前检查看板」（m11541 第 2、4 条）** —— ✅ 已完成（宿主半，**需重启生效**）。\n\n**中文化**：三行预设的 `name`/`description` 改为中文（工程师 / 教师 / 研究员）。这不是风格偏好而是**技术上必须的**：`presetDisplayText`（`dsh-agent-preset-registry/lib/types/display.js`）只对四个**内置** id 查 locale 字典，注释明写用户自撰的元数据 \"is never translated\"——所以名字留在英文里就永远是英文，无论 locale 是什么。\n\n**回复前检查看板**：只加在**工程师与研究员**上，教师**故意不动**（其板书是随讲随写的，不是关于世界的持续主张；用户要求等 TTS 模块到位后再做更精细的设计）。两个角色的措辞各自贴合其职责：工程师查「命名了版本/路径/计数/`file:line`/commit 的声明是否还有效、是否与自身矛盾」；研究员查「数字是否过期、后到的发现是否推翻先前的结论、置信度标注是否还准确」。都**限定在「正式回复之前」**，而不是每一轮——一次一行确认也要通读整块看板纯是成本，而过贵的规矩会被忽略。"
+          },
+          {
+            "id": "bl_25a2f7",
+            "kind": "prose",
+            "slug": "q29",
+            "alias": [
+              "prose-25"
+            ],
+            "anchors": [],
+            "createdAtRev": "r28-c577192f84d9",
+            "updatedAtRev": "r29-b3c08cb91f91",
+            "markdown": "**Q29 · 宣传片**（m11935，进行中）—— 用户要求做一个展示插件卖点与功能的发布宣传片，放在工作区下新目录，技术栈自选，**并特别强调要按需渲染相对真实的看板界面**，音乐可用开放版权或代码生成，**不做 TTS 配音**，**教师预设不宣传**（可标明未完成一笔带过），并建议妥善使用子代理。\n\n**已定的做法**：\n\n| 层 | 选择 | 理由 |\n|---|---|---|\n| 看板画面 | **加载发布版 `src/client.js`** + 真实 board 数据 + 真实主题 token，无头 Edge + CDP 截帧 | 简报明确要求「真实渲染」，而这是唯一真正满足它的做法 |\n| 动画 | 纯 Web（HTML/CSS/Canvas） | **不用 WebGL/Three.js**：没有三维需求，只会多出失败面 |\n| 音乐 | 代码合成 PCM → WAV | 原创、零授权风险，且能精确对齐剪辑点 |\n| 剪辑 | ffmpeg 1920×1080 30fps H.264 + AAC，**2× 截帧再降采样** | 看板字号小，直接 1× 截会糊 |\n\n**三条硬规矩**（写进了 `scenes/AUTHORING.md`）：\n\n1. **`renderScene(t)` 必须是 `t` 的纯函数**——不许 `setTimeout`/`rAF`/`Date.now`/CSS 动画驱动画面。截帧工具会在任意时刻反复调用它，任何「自己会走」的动画都会在两次调用间漂移，而这种 bug **只在最终成片里才看得见**。\n2. **不许画假的看板界面**。加载发布版客户端，它渲染出什么就是什么。\n3. **静默失败是默认形态**：页面报错与页面慢，在磁盘上都留下一个空帧。所以每个场景都要把 `String(error.stack)` 写进 DOM 标记。\n\n**一条被驳回的镜头**：原计划展示「箭头指进图片/PDF 里的某个区域」，子代理**回源码验证后拒绝照画**——`src/client.js:1738-1739` 只按 `edge.from.blockId`/`edge.to.blockId` 取整块矩形，`edge.from.at` 在客户端出现 **0 次**，`test/render.test.js:349` 还专门钉住了这个能力的删除。改为展示**真实存在的那个能力**：宿主自带 pdf.js 6.3.289 解析 PDF 文本层，`board_read` 把每一视觉行连同它归一化到 0..1 的矩形一起交给 Agent——**Agent 看不见像素，所以矩形必须由宿主读出来给它**。**宁可少一个卖点，不可多一个假卖点。**"
+          }
+        ],
+        "createdAtRev": "r0-000000000000",
+        "layout": {
+          "template": "flow"
+        }
+      },
+      {
+        "id": "pg_d0893a",
+        "slug": "research",
+        "alias": [],
+        "blocks": [
+          {
+            "id": "bl_82be0a",
+            "kind": "heading",
+            "slug": "rhead",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r2-b824dfa681e4",
+            "updatedAtRev": "r2-b824dfa681e4",
+            "level": 2,
+            "text": "框架调研结论（阶段三）"
+          },
+          {
+            "id": "bl_c1b1ee",
+            "kind": "prose",
+            "slug": "rnote",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r2-b824dfa681e4",
+            "updatedAtRev": "r2-b824dfa681e4",
+            "markdown": "每条都有 `file:line` 证据，全文在三份调研文档里。这一页只留会改变设计的那些。\n\n[`dsh-client-rendering.md`] · [`dsh-markdown-capabilities.md`] · [`dsh-image-to-model.md`]"
+          },
+          {
+            "id": "bl_1d4f83",
+            "kind": "list",
+            "slug": "r1",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r2-b824dfa681e4",
+            "updatedAtRev": "r2-b824dfa681e4",
+            "ordered": false,
+            "items": [
+              {
+                "id": "li_8f05e8",
+                "text": "客户端半可以用 `require.async(\"./client.<name>.js\")` 按需加载自己包里的 chunk——**不需要改 package.json**，只要声明了 `dsh.client.platform: \"web\"`",
+                "depth": 0
+              },
+              {
+                "id": "li_df24fa",
+                "text": "URL 形状 `/plugins/<pkg>/client.<name>.js?rev=<rev>`，响应头 **`public, max-age=31536000, immutable`**",
+                "depth": 0
+              },
+              {
+                "id": "li_9eb6f7",
+                "text": "**没有体积上限。** DSH 自己就这么装 pdf.js：`client.pdf.js` = 7,108,786 字节；SheetJS 7.06MB",
+                "depth": 0
+              },
+              {
+                "id": "li_e2c000",
+                "text": "`dsh.client.external` **不是干这个的**——它连的是插件依赖图的边，名字匹配不上会**静默跳过**，看起来像成功其实什么都没发生",
+                "depth": 0
+              }
+            ]
+          },
+          {
+            "id": "bl_e04eb4",
+            "kind": "group",
+            "slug": "rg1",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r2-b824dfa681e4",
+            "updatedAtRev": "r2-b824dfa681e4",
+            "title": "加载第三方库：路是通的",
+            "children": [
+              "bl_1d4f83"
+            ],
+            "layout": {
+              "template": "flow"
+            }
+          },
+          {
+            "id": "bl_d189d5",
+            "kind": "list",
+            "slug": "r2",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r2-b824dfa681e4",
+            "updatedAtRev": "r2-b824dfa681e4",
+            "ordered": false,
+            "items": [
+              {
+                "id": "li_8cac8a",
+                "text": "**数学**：KaTeX 0.16.47 常开，四种分隔符 + ` ```math ` 围栏；CSS 与字体已由 index.html 无条件加载",
+                "depth": 0
+              },
+              {
+                "id": "li_cab5cb",
+                "text": "**mermaid**：整个安装 **0 处渲染、0 处引用**（连语法高亮都没有）；` ```mermaid ` 围栏会掉进普通代码块",
+                "depth": 0
+              },
+              {
+                "id": "li_0a0a8b",
+                "text": "**图表**：任何图表库都没有；DSH 的立场是 detect-and-decline",
+                "depth": 0
+              },
+              {
+                "id": "li_8803f3",
+                "text": "**DSH 自己的图形是手写 React SVG**（`ui-primitives` 里的 `GuideArtwork*` 就是字面 path 数组）——这是「自己画」属于house style 而不是退路的原因",
+                "depth": 0
+              }
+            ]
+          },
+          {
+            "id": "bl_b095e0",
+            "kind": "group",
+            "slug": "rg2",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r2-b824dfa681e4",
+            "updatedAtRev": "r2-b824dfa681e4",
+            "title": "DSH 已经有什么",
+            "children": [
+              "bl_d189d5"
+            ],
+            "layout": {
+              "template": "flow"
+            }
+          },
+          {
+            "id": "bl_332999",
+            "kind": "list",
+            "slug": "r3",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r2-b824dfa681e4",
+            "updatedAtRev": "r2-b824dfa681e4",
+            "ordered": false,
+            "items": [
+              {
+                "id": "li_9b47d7",
+                "text": "**能。** `output.render` 的返回值就是 `ContentBlock[]`，`image` 是合法块；先例是 `read_image`",
+                "depth": 0
+              },
+              {
+                "id": "li_a63136",
+                "text": "上限：单图 20MiB、单条消息 20 张、64e6 像素、8192 边长；存储归一化到 4MiB",
+                "depth": 0
+              },
+              {
+                "id": "li_e6c10c",
+                "text": "请求层再压到 2MiB / 4096 长边；而且**视觉 token 封顶 1024/图，与尺寸无关**——超过约 1344×1344 是白给",
+                "depth": 0
+              },
+              {
+                "id": "li_41cb72",
+                "text": "必须抄 `read_image` 的 `assertImageCapableRoute`：非视觉路由下要**拒绝**，否则会把一张谁也看不见的图写进永久历史",
+                "depth": 0
+              }
+            ]
+          },
+          {
+            "id": "bl_6df672",
+            "kind": "group",
+            "slug": "rg3",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r2-b824dfa681e4",
+            "updatedAtRev": "r2-b824dfa681e4",
+            "title": "图片能不能回给模型：能",
+            "children": [
+              "bl_332999"
+            ],
+            "layout": {
+              "template": "flow"
+            }
+          },
+          {
+            "id": "bl_d04f6e",
+            "kind": "list",
+            "slug": "r4",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r2-b824dfa681e4",
+            "updatedAtRev": "r2-b824dfa681e4",
+            "ordered": false,
+            "items": [
+              {
+                "id": "li_8cf4ca",
+                "text": "DSH 自己用 **pdf.js 6.3.289** 栅格化到 `<canvas>`，**不用 iframe**，主题变量正常生效",
+                "depth": 0
+              },
+              {
+                "id": "li_1a0fa6",
+                "text": "但它整个塞在 documentpreview 的私有 chunk 里，只导出 `apply`/`inject`——第三方拿不到",
+                "depth": 0
+              },
+              {
+                "id": "li_3579ba",
+                "text": "字节传输已有现成通道：**`GET /api/file?path=<绝对路径>`**，cookie 认证，同源 `fetch` 直接用；上限是 `imageLimits.maxImageBytes`",
+                "depth": 0
+              },
+              {
+                "id": "li_11ba85",
+                "text": "宿主侧**真的有原生栅格化器**：`libreoffice-kit.exe`（178MB，LibreOfficeKit + PDFium）；但只暴露了 PDF 转换，PNG 那条路没开放给插件",
+                "depth": 0
+              }
+            ]
+          },
+          {
+            "id": "bl_326b76",
+            "kind": "group",
+            "slug": "rg4",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r2-b824dfa681e4",
+            "updatedAtRev": "r2-b824dfa681e4",
+            "title": "PDF 与字节传输",
+            "children": [
+              "bl_d04f6e"
+            ],
+            "layout": {
+              "template": "flow"
+            }
+          },
+          {
+            "id": "bl_db1f23",
+            "kind": "list",
+            "slug": "r5",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r12-b859d7ee9889",
+            "updatedAtRev": "r12-b859d7ee9889",
+            "ordered": false,
+            "items": [
+              {
+                "id": "li_851a81",
+                "text": "**旧的 `$DSH_HOME/.agent-presets/<id>/` 已经死了。** `editing-cordis-compositions/SKILL.md:70` 原话：\"Nothing reads that directory any more.\" 本机那两个（`planner` / `teacher`）就是这种，里面的 `agent.cordis.yml` 现在没有任何东西读——但它们仍是**可照抄的 `plugins:` 列表范本**",
+                "depth": 0
+              },
+              {
+                "id": "li_2759d9",
+                "text": "**现在的形态是 bundle**：一个目录两个文件——`package.json`（`dsh.bundle.patch: \"./cordis.patch.yml\"`）+ `cordis.patch.yml`。安装用 `plugin_manager install_bundle`（绝对路径），它自己跑包安装和 bundle 选择",
+                "depth": 0
+              },
+              {
+                "id": "li_d7c84d",
+                "text": "`cordis.patch.yml` 里 `insert` 一行：`id: preset-<id>`（约定的 Loader 行 id）、`name: '@deepseek-ai/dsh-agent-preset'`、`config: { id, name, description, order, plugins: [...] }`。`plugins` 就是该 agent realm 的子插件列表",
+                "depth": 0
+              },
+              {
+                "id": "li_4a565c",
+                "text": "**官方那四个在 `@deepseek-ai/dsh-web-app` 里**：`preset-standard` / `preset-ptc` / `preset-minimal` / `preset-cordis`（`presets/<id>.patch.yml`）。Desktop 下它们在 `app.asar` 里，shell 命令打不开——用 file-read 工具或 `cordis_inspect_query Config.listConfigs`",
+                "depth": 0
+              },
+              {
+                "id": "li_c3f095",
+                "text": "**改官方预设 = 覆盖同名行**，而且**覆盖会替换整个 `config`**，所以必须把 `id` / `plugins` 和它原有的每个字段都重述一遍",
+                "depth": 0
+              },
+              {
+                "id": "li_73cdf0",
+                "text": "**身份那一档的关键**：`dsh-persona` 的 `prefix` 遮蔽部署人格（\"You are a coding agent…\" 就在那儿）。**不要用 `complete: true`**——那会连工具指南一起压掉，而 preset 的 agent 正需要用工具（这条是 legacy teacher 预设实测记录的）",
+                "depth": 0
+              },
+              {
+                "id": "li_b25213",
+                "text": "**验证**：`plugin_manager list_bundles` 看 bundle，`list_plugins` 看 `preset-<id>` 行的激活状态。声明激活失败会**留在花名册上并带着诊断信息**，在修好并重装之前不能组装会话",
+                "depth": 0
+              }
+            ]
+          },
+          {
+            "id": "bl_86a60b",
+            "kind": "group",
+            "slug": "rg5",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r12-b859d7ee9889",
+            "updatedAtRev": "r12-b859d7ee9889",
+            "title": "预设（preset）现在的真实形态",
+            "children": [
+              "bl_db1f23"
+            ],
+            "layout": {
+              "template": "flow"
+            }
+          }
+        ],
+        "createdAtRev": "r2-b824dfa681e4",
+        "layout": {
+          "template": "grid"
+        }
+      },
+      {
+        "id": "pg_abade8",
+        "slug": "issues",
+        "alias": [],
+        "blocks": [
+          {
+            "id": "bl_9b0825",
+            "kind": "heading",
+            "slug": "ihead",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r7-97883ebc964b",
+            "updatedAtRev": "r7-97883ebc964b",
+            "level": 2,
+            "text": "已知问题 · 记录但不马上动"
+          },
+          {
+            "id": "bl_fa945e",
+            "kind": "prose",
+            "slug": "inote",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r7-97883ebc964b",
+            "updatedAtRev": "r21-9bca29cd3bca",
+            "markdown": "这一页是**记账**，不是待办队列。一条问题进来意味着「已经看清、已经写清楚、现在不动」，而不是「快修」。每条得写清楚怎么触发、机制在哪、为什么不现在修。\n\n唯一的例外是 **I2**：它是正确性缺陷，不是外观问题，所以已经修了。判断标准就是这个——**I1 只是难看，I2 会吃数据**。"
+          },
+          {
+            "id": "bl_8833b2",
+            "kind": "prose",
+            "slug": "i1",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r7-97883ebc964b",
+            "updatedAtRev": "r22-423594a7abd5",
+            "markdown": "**I1 · 格子布局下的箭头走线难看** —— 记录，暂不修（用户 2026-10-04 提出）。\n\n**现象**：`roadmap` 页的 `g1 → g2 → g3 → g4` 四条 `next` 边里，`g2 → g3` 从第一行第 4 列拉到第二行第 1 列，一条长对角线**横穿整个看板**；相邻的两条则贴着卡片边缘绕。\n\n**机制**：`src/client.js` 的 `EdgeLayer` 只取两个块的 DOM 矩形，然后画一条弓形曲线，弓高是 `bow = Math.max(18, Math.min(60, |Δ| / 3))`——**上限 60px**。于是短边有弧度，长边几乎是直线，而直线会压过中间的卡片。\n\n**触发条件**：只在**格子或多列布局**下明显。`flow` 单列时相邻块上下相接，看起来是正常的。\n\n**为什么不现在修**：这是排版问题，不是正确性问题——边的存在、方向、标签都对。真要修就是在做路由（避让、端口选择、正交走线），那是一条独立的工作线。\n\n**可能的解法（未选）**：按相对位置选端口（上/下/左/右）而不是固定取中；或者对长边改用正交折线；或者限定 `next` 边的语义只在单列布局下画。"
+          },
+          {
+            "id": "bl_0c463c",
+            "kind": "prose",
+            "slug": "i2",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r21-9bca29cd3bca",
+            "updatedAtRev": "r24-d92adf0ed79b",
+            "markdown": "**I2 · 看板被「回滚」，十批写入凭空消失** —— ✅ 已定位并修复，**两层**（`6910f21` + `e0b6ae2`）。**重启 DSH 后内容会自动回来。**\n\n**症状**：看板整体退回 `r11`，其后十次 `board_apply` 的成果全部消失。用户描述为「看板中途被回滚过一次」。\n\n---\n\n### 第一层（`6910f21`）：闸比了不该比的东西\n\n`expected_revision` 以前比**整串**（含 hash），而 hash 是内容编码的摘要。`7fe6a18` 把 `BOARD_MODEL_VERSION` 3→4（删了 `pdf-page.pageCount` 那段编码），同一块看板就算出不同的 hash。修法：两道闸改为**只比 `revSeq`**（新增 `parseRevSeq`）。「调用者是否落后」是**时间**问题，只有计数器能答；hash 回答的是「是不是同一块看板」。\n\n### 第二层（`e0b6ae2`）：真正的根因——**重折在重新裁定已提交的批次**\n\n这是更根本的一层，也是第一层不够的原因。\n\n`commit` 只在日志记录为**成功结算**的调用上运行。在线路径上 DSH 的管线**已经**跑过 `board_apply` 自己的闸：stale 调用抛错 → 结果以 `isError: true` 送达 → 折叠在 `withoutPending` 里就丢掉了，**根本到不了 `commit`**。实测本会话 25 次 `board_apply`：**1 次**以 error 送达，**0 次**以「成功但带 stale 消息」送达——所以在 `commit` 里再查一遍，在线路径上什么也没保护。\n\n它真正干的坏事：**让重折截断自己的历史**。`applyOps` 拿**日志里记录的 `expected_revision`** 去和「这次重折恰好走到哪」比，于是一旦版本升级换了 hash，整条尾巴都看起来 stale、被丢弃。\n\n**这个错误还会自我重复**：我写在被截断看板上的三批（就是 I2 / I3 这几条记录）`expected_revision` 带着 `r11`/`r12`/`r13`，而重启后重折走到 seq 21——它们会**再次**被同一机制丢掉。也就是说，**这页关于 I2 的记录本来会在下次重启时自己消失**。\n\n修法：**`commit` 不再咨询这道闸**。一个已提交的批次是**事实**，重放要复现它，而不是重新裁定它该不该被接纳；接纳判断属于 `board_apply` 的 `executeApply`（那里才还有「你落后了」可告知调用者），`applyOps` 保留 `expectedRevision` 参数让两者共用同一个比较。\n\n---\n\n**证据**（`session-b0e78947`，全量重折）：新编码 **24** 批，旧编码 21 批，而只修第一层时得到 21 批并会再吃掉最后 3 批。落地检查点 `board.val.lastOpError` 原文 = `stale board revision: expected r20-e1dbe4683e79 but the board is now r11-513c602416f3`。\n\n**已验证**：修后重折 **24 批**，五页块数 `10/10/22/12/6`，十个早期丢失的块（`q20`–`q25`、`r5`、`rg5`、`pdfparse`、`pdfwhy`）加三批新记录全部保留。362 个测试全绿，三处变异测试逐一验过。\n\n**教训**：**接纳（admission）与重放（replay）是两件事。** 把前者放进后者，会让折叠依赖「自己走到哪」而不是依赖日志——而它必须是日志的纯函数，那正是 log-native 设计赖以成立的前提。"
+          },
+          {
+            "id": "bl_5a6467",
+            "kind": "prose",
+            "slug": "i2-restart",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r21-9bca29cd3bca",
+            "updatedAtRev": "r27-2cb62705203e",
+            "markdown": "✅ **重启已完成（2026-10-04），验收全部通过。**\n\n这次重启要求是 I2 修复的**恢复手段**，不是普通建议：宿主半改动需要重启，而重启后 `stateVersion` 4→5 会让投影丢弃那份被截断的 checkpoint、用新代码重折整条日志。已核实：\n\n| 验收项 | 要求 | 实测 |\n|---|---|---|\n| rev 在 24 批之后 | > `r24` | **`r27-2cb62705203e`** ✅ |\n| 五页块数 | `10/11/21/12/6`（当时） | `10/11/22/12/7` ✅（多出的是 I4、Q26 两条新记录本身） |\n| 丢失的块回来 | `q20`–`q25` / `r5` / `rg5` / `pdfparse` / `pdfwhy` / `i2` / `i3` | 均在 ✅ |\n| 大纲底部的「上批被拒」提示 | 消失 | 已消失 ✅ |\n\n具体位置：`C:\\Users\\haoch\\.dsh\\storages\\session_projcache\\sessions\\session-b0e78947-8260-44e5-b61a-14c6f3934b7c.json`（顶层 `version`=7）→ `record.rows.board`，其中 `ver = 5`、`val.modelVersion = 5`、`val.pending = {}`、`val.diag = {}`、`lastOpError` 已清空。\n\n**一个值得记下的细节**：如果只修了第一层（只比 `revSeq`）而没有第二层（让重折不再重新裁定已提交的批次），那么写在被截断看板上的 `i2`/`i3`/`i2-restart` 这三条记录的 `expected_revision` 带着 `r11`/`r12`/`r13`，重启后重折走到 seq 21 时会被**同一机制再次吃掉**——即「这页关于 I2 的记录本来会在下次重启时自己消失」。它们如今还在，这本身就是第二层修复生效的证据。"
+          },
+          {
+            "id": "bl_991a26",
+            "kind": "prose",
+            "slug": "i3",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r23-762a842cb837",
+            "updatedAtRev": "r23-762a842cb837",
+            "markdown": "**I3 · 写入成功后「上批被拒」的提示不消失** —— ✅ 已修复（`21bba16`）。\n\n**症状**：只要曾有一批被拒，此后**每一次**成功的 `board_apply` 之后，`board_outline` 仍然报「the last board_apply was rejected and changed nothing」。本次调查 I2 时亲眼看到：后两次写入都成功了，大纲底部却还挂着第 12 批那条 stale 错误。\n\n**机制**：`lastOpError` 在折叠里只写不删（`src/fold.js` 的 `commit`）。它存在意义是「让 Agent 不用主动重读就知道上批为何失败」——但失败被修复之后，它变成了一句**不再为真的报告**，而它同样会进常驻大纲（`src/index.js:170`），于是 Agent 会为了一个不存在的理由去重读看板。**一个过期的失败报告比没有报告更糟。**\n\n**修法**：写入成功时删掉该字段（它就是被这次成功取代了）。更晚的拒绝仍然会覆盖它——所以不是「不再记录」，两边都有测试钉住。变异测试：改回「一直带着」会精确失败一条。\n\n**与 I2 的关系**：I2 是「写入被静默丢弃」，I3 是「丢弃被永久宣告」。两个都是同一次调查里出来的，且都是**输出与现实不一致**这一类——看板说得和做得不一样。"
+          },
+          {
+            "id": "bl_5cad69",
+            "kind": "prose",
+            "slug": "i4",
+            "alias": [
+              "prose-7"
+            ],
+            "anchors": [],
+            "createdAtRev": "r26-2e62ba1bc6fc",
+            "updatedAtRev": "r27-2cb62705203e",
+            "markdown": "**I4 · 图在深色主题下的两个真实可读性缺陷** —— ✅ 已修复（`5dc8bdd`）。\n\n两个都是**截图看出来的**，而且**图都照常渲染**，所以只有量才能发现：\n\n| 缺陷 | 实测 | 根因 | 修法 |\n|---|---|---|---|\n| 象限图四个填充只有**三**个颜色，象限 1 与 2 对比度 **1.00** | 深色 Mocha 下 `--dsw-alias-bg-layer-3` 与 `--dsw-alias-bg-overlay` **同值** | 我原来把四个象限映射到 `raised`/`overlay`/`accentTint`/`surface`，预设了四个 token 互不相同 | 改为由 `surface` 向 `text` 按四档权重混合——表面对比度既然够读出文字，就够分出四档 |\n| 饼图百分号在深色下对比度只有 **1.03–1.95** | `pieSectionTextColor` 是**一个**颜色，却要盖在深浅不一的切片上 | 直接把主题文字色塞进去 | 取「最差切片上对比度最高」的候选：先主题自己的中性极值，不达标才用黑/白 |\n\n**第二处有个必须记下的取舍**：浅色 Latte 下最好的主题色只有 **2.37**，而消色差极值可达 **6.23**（仅 38%），所以那里只能放弃品牌色用纯黑。但深色 Mocha 下主题色是 **3.83**、纯黑是 **4.29**——只差 12%，按正文 4.5 要求就会丢掉用户整个配色。所以阈值定在 **3.0**（大字号 AA）：饼图百分号是 17px，本来就偏大字号。**可读性优先，但只在真的换得来的时候。**\n\n另外 `pie1..8`/`git0..7` 的 `--shiki-token-*` 做了**去重**：Mocha 的九个名字只落到六个颜色，不去重会让两块饼同色。"
+          },
+          {
+            "id": "bl_69c30e",
+            "kind": "prose",
+            "slug": "i5",
+            "alias": [],
+            "anchors": [],
+            "createdAtRev": "r27-2cb62705203e",
+            "updatedAtRev": "r27-2cb62705203e",
+            "markdown": "**I5 · 看板上的文字一个字都选不中** —— ✅ 已修复（随 Q27）。\n\n**症状**：框选只能框到组件，整块看板的文字无法选中，也无法 `Ctrl+C`。\n\n**机制**：`.sb-picking,.sb-picking *{user-select:none}` 在**每一次** `pointerdown` 就由 React 状态加上（`className: 'sb-canvas' + (marquee !== null ? ' sb-picking' : '')`）。这条规则本身是对的——不抑制的话画框会把看板自己的正文一起选上——但它被加在了**所有**拖拽上，于是任何拖动都变成框选、文字永远选不中。修法是只在**确实要画框**的那次拖拽上就地加类（`classList.add`，不走 React 状态，因为必须在浏览器开始扩展选区之前就生效）。\n\n**一个顺带修掉的真 bug**：`textSelectionText` 起初只检查 `toString()` 的返回值是不是字符串，但**普通对象继承的 `Object.prototype.toString` 返回的是货真价实的字符串 `\"[object Object]\"`**，会被当成一次幻影选区送进载荷。改为按接口判断（`typeof selection.rangeCount === 'number'`）。这是测试先写、实现后改出来的——我第一版「修法」正是这个错的。"
+          },
+          {
+            "id": "bl_a2aac7",
+            "kind": "prose",
+            "slug": "i6",
+            "alias": [
+              "I6-·-图解析失败时，mermaid-把报错图"
+            ],
+            "anchors": [],
+            "createdAtRev": "r28-c577192f84d9",
+            "updatedAtRev": "r29-b3c08cb91f91",
+            "markdown": "**I6 · 图解析失败时，mermaid 把报错图钉在**整个看板**上** —— ✅ 已修复（`725e3b4`）。做宣传片的 S5 镜头时发现。\n\n**症状**：一个 mermaid 源码解析失败的 `uml` 块，卡片里**正确**显示了失败原因，但整个看板被一张巨大的「Syntax error in text」炸弹图盖住。两者同时发生，所以它看起来像「失败被处理好了」，实际上一张全屏图压在页面上。\n\n**机制**：`suppressErrorRendering` 默认为 `false`，于是 mermaid 把它自己的报错图形插进 **`document.body`**，而不是插进卡片。我们自己的 `catch` 照常运行、卡片照常显示真实原因——**两条路各走各的**，失败看上去是妥善的。\n\n**修法**：在 `mermaid.initialize()`（`src/client.js:1441+`）传 `suppressErrorRendering: true`，让 mermaid 改为**抛错**——这正是错误路径一直以为自己对着的行为。该选项在 mermaid 的 `secure` 白名单里，所以可以从 `initialize()` 设置。\n\n**为什么会漏这么久**：这个图形的归属地是 `document.body`，不是看板本身，所以**任何只看看板 DOM 的检查都看不到它**。它只在一个把镜头对准失败卡片、因而整个视口被它填满的镜头里才显形。"
+          }
+        ],
+        "createdAtRev": "r7-97883ebc964b"
+      }
+    ],
+    "regions": [],
+    "edges": [
+      {
+        "id": "ed_b11f30",
+        "slug": "next",
+        "alias": [],
+        "from": {
+          "blockId": "bl_c1faa1"
+        },
+        "to": {
+          "blockId": "bl_f6f4f3"
+        },
+        "rel": "next",
+        "createdAtRev": "r0-000000000000",
+        "updatedAtRev": "r0-000000000000"
+      },
+      {
+        "id": "ed_4d9a65",
+        "slug": "next-2",
+        "alias": [],
+        "from": {
+          "blockId": "bl_f6f4f3"
+        },
+        "to": {
+          "blockId": "bl_d8a0e4"
+        },
+        "rel": "next",
+        "createdAtRev": "r0-000000000000",
+        "updatedAtRev": "r0-000000000000"
+      },
+      {
+        "id": "ed_bc5dca",
+        "slug": "next-3",
+        "alias": [],
+        "from": {
+          "blockId": "bl_d8a0e4"
+        },
+        "to": {
+          "blockId": "bl_b26eb7"
+        },
+        "rel": "next",
+        "createdAtRev": "r0-000000000000",
+        "updatedAtRev": "r0-000000000000"
+      }
+    ],
+    "revSeq": 30,
+    "revHash": "7a7a256fcd4f74c0",
+    "rev": "r30-7a7a256fcd4f"
+  },
+  "diag": {}
+}

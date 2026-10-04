@@ -1,0 +1,404 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <title>s4 · 块类型与排版模板</title>
+    <link rel="stylesheet" href="/scenes/theme.css" />
+    <style>
+      /*
+       * Scene-local dressing only. Everything under `#board` is the SHIPPED renderer, untouched:
+       * the six tiles below are six real container templates, six real groups, twenty-five real
+       * blocks. The overlays (ring / caption) live outside `#mount` so they cannot perturb the
+       * board's own layout.
+       */
+      #mount { position: absolute; inset: 0; }
+
+      #ring {
+        position: fixed;
+        z-index: 5;
+        border: 2px solid var(--accent);
+        border-radius: 14px;
+        /* No background: a fill over a tile would tint the thing being examined. */
+        box-shadow: 0 0 0 6px var(--accent-soft), 0 0 26px 2px var(--accent-soft);
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      /*
+       * The board's own six tiles would otherwise sit in the top half of the canvas, with the whole
+       * lower half empty — the canvas is 920px tall and the grid is ~560px. Centring the grid's rows
+       * is a camera choice of the same kind as AUTHORING.md §4's `zoom`, not a change to how the
+       * board lays out: it selects where the same geometry sits in frame, and it stays a pure
+       * function of the model.
+       */
+      .sb-canvas > .sb-grid { min-height: 100%; align-content: center; }
+
+      /* The caption band is theme.css's, re-flowed into three rows so the kind list and the beat
+         label share one band instead of stacking two bands over the board. */
+      .caption {
+        height: 158px;
+        flex-direction: column;
+        align-items: stretch;
+        justify-content: center;
+        gap: 10px;
+        z-index: 10;
+      }
+      .caption .kinds { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+      .caption .kinds > .kindsLabel {
+        font-size: 15px;
+        color: var(--ink-faint);
+        letter-spacing: 0.04em;
+        margin-right: 4px;
+      }
+      .caption .pill { font-size: 15px; padding: 4px 11px; opacity: 0.72; }
+      .caption .pill > b { color: var(--ink); font-weight: 600; }
+      .caption .pill > i { font-family: var(--font-mono); font-style: normal; font-size: 13px; color: var(--ink-faint); }
+      .caption .line { display: flex; align-items: baseline; justify-content: space-between; gap: 24px; }
+      .caption .label { font-size: 32px; }
+      .caption .label > em { font-style: normal; font-family: var(--font-mono); color: var(--accent); font-size: 26px; margin-right: 10px; }
+      .caption .sub { margin-top: 6px; font-size: 20px; }
+      .caption .sub.calling { color: var(--warn); }
+      .caption .index { font-size: 54px; }
+
+      #error {
+        display: none;
+        position: fixed;
+        inset: 0;
+        z-index: 99;
+        padding: 24px;
+        overflow: auto;
+        white-space: pre-wrap;
+        background: var(--surface);
+        color: var(--danger);
+        font: 13px/1.5 var(--font-mono);
+      }
+    </style>
+  </head>
+  <body data-ds-dark-theme="true">
+    <div id="mount"></div>
+    <div id="ring"></div>
+
+    <div class="caption" id="cap">
+      <div class="kinds" id="kinds">
+        <span class="kindsLabel">模型里的块种类 · 8</span>
+      </div>
+      <div class="line">
+        <div>
+          <div class="label" id="cap-label"></div>
+          <div class="sub" id="cap-sub"></div>
+        </div>
+        <div class="index" id="cap-index"></div>
+      </div>
+    </div>
+
+    <pre id="error"></pre>
+
+    <script src="/vendor/react.production.min.js"></script>
+    <script src="/vendor/react-dom.production.min.js"></script>
+    <script>window.__ModuleLoader__ = { load: (definition) => { window.__sbDef = definition } }</script>
+    <script src="/repo/src/client.js"></script>
+    <script src="/scenes/harness.js"></script>
+    <script>
+      /*
+       * S4 · 34–47s — the board's expressive range.
+       *
+       * Six beats, one per layout template, each a REAL render: the page holds six real `group`
+       * blocks, one per template, and each group carries real blocks of several kinds. The beat
+       * just tells the viewer which tile to look at. Nothing on screen is a drawing of a template.
+       *
+       * The facts shown are the ones the repo can back:
+       *   · 8 block kinds — `src/model.js:43-52` BLOCK_KINDS, README.md:27 「八种块」.
+       *   · 6 templates — `src/model.js:105` LAYOUT_TEMPLATES.
+       *   · layout belongs to the CONTAINER — `src/client.js:3129-3150` (a page arranges the blocks
+       *     nobody claimed) and `src/client.js:3154-3208` (a group arranges its children).
+       *   · `areas` on a `grid` — resolved by the host into line spans; the client only ever reads
+       *     `params.cells` (`src/model.js:657-705`, `src/client.js:285-311`), which is the shape
+       *     this scene hands it.
+       *   · a `region` tints and labels, and arranges nothing — `src/client.js:3094-3116`.
+       */
+      const DURATION = 13
+      const DIM = 0.3
+      const FADE = 0.34
+
+      const KIND_LABELS = [
+        ['heading', '标题'],
+        ['prose', '正文'],
+        ['list', '列表'],
+        ['code', '代码'],
+        ['uml', 'UML'],
+        ['image', '图片'],
+        ['pdf-page', 'PDF 页'],
+        ['group', '分组'],
+      ]
+
+      const BEATS = [
+        { slug: 'flow', name: 'flow', what: '竖排，默认',
+          line: 'region 只做标注、不参与排版 —— 两块离得再远，也还是同一个标注。',
+          calling: true },
+        { slug: 'row', name: 'row', what: '横排，会换行',
+          line: '给并列的小卡用：宽度不够就折到下一行。' },
+        { slug: 'cols', name: 'columns', what: 'N 等分列，行优先',
+          line: 'cols: 2 的四张卡是「两行两张」，不是「两列各两张」。' },
+        { slug: 'cells', name: 'grid + areas', what: '卡片填满，具名格',
+          line: '名字占一个实心矩形，于是这张卡能横跨两列。' },
+        { slug: 'masonry', name: 'masonry', what: '瀑布流，各随高度',
+          line: '高度差得大就用它：短卡不留空，下一张流进最短的一列。' },
+        { slug: 'canvas', name: 'canvas', what: '不排版，只做盒子',
+          line: '看板不是自由画布：每个块属于一个容器，容器决定排版。',
+          calling: true },
+      ]
+      const SPAN = DURATION / BEATS.length
+
+      window.__diag = { stage: 'boot', kinds: KIND_LABELS.length, templates: BEATS.length }
+      window.addEventListener('error', (e) => { window.__diag.error = String(e.message) })
+      window.addEventListener('unhandledrejection', (e) => { window.__diag.error = 'rejection: ' + String(e.reason) })
+
+      // ---- the demonstration model ------------------------------------------------------------
+      // Ids are derived, never random: `bl_` + 6 hex of an FNV-1a of the slug, the same shape
+      // `deriveIdBody` produces. Collisions are linear-probed so the model stays valid.
+      const takenIds = new Set()
+      function idFor(slug) {
+        let round = 0
+        for (;;) {
+          const seed = round === 0 ? slug : slug + '\u001f' + round
+          let hash = 2166136261
+          for (let i = 0; i < seed.length; i += 1) {
+            hash ^= seed.charCodeAt(i)
+            hash = Math.imul(hash, 16777619)
+          }
+          const id = 'bl_' + (hash >>> 0).toString(16).padStart(8, '0').slice(0, 6)
+          if (!takenIds.has(id)) {
+            takenIds.add(id)
+            return id
+          }
+          round += 1
+        }
+      }
+      function block(kind, slug, extra) {
+        return { id: idFor(slug), kind, slug, alias: [], anchors: [], ...extra }
+      }
+
+      const heading = (slug, level, text) => block('heading', slug, { level, text })
+      const prose = (slug, markdown) => block('prose', slug, { markdown })
+      const list = (slug, items) =>
+        block('list', slug, {
+          ordered: false,
+          items: items.map((text, index) => ({ id: 'li_' + idFor(slug + index).slice(3), text, depth: 0 })),
+        })
+
+      // Tile 1 — flow. Three kinds in a vertical stack, which is what "no template declared" means.
+      const f1 = heading('f-lead', 3, '块从上往下排')
+      const f2 = prose('f-note', '容器不声明模板时，就是这一种。')
+      const f3 = list('f-list', ['第一条', '第二条'])
+      const tFlow = block('group', 'flow', { title: '竖排 · 默认', children: [f1.id, f2.id, f3.id], layout: { template: 'flow' } })
+
+      // Tile 2 — row. Three short cards: two share the first run, the third wraps and grows.
+      const r1 = prose('r-one', '横排')
+      const r2 = prose('r-two', '不够宽就换行')
+      const r3 = prose('r-three', '剩下的占满一整行')
+      const tRow = block('group', 'row', { title: '横排 · 会换行', children: [r1.id, r2.id, r3.id], layout: { template: 'row' } })
+
+      // Tile 3 — columns. Four cards, row-major: 1 2 / 3 4.
+      const c1 = prose('c-one', '1 · 行优先')
+      const c2 = prose('c-two', '2 · 从左到右')
+      const c3 = prose('c-three', '3 · 不是先填满一列')
+      const c4 = prose('c-four', '4 · 再下一行')
+      const tCols = block('group', 'cols', {
+        title: 'N 等分列 · 行优先',
+        children: [c1.id, c2.id, c3.id, c4.id],
+        layout: { template: 'columns', params: { cols: 2 } },
+      })
+
+      // Tile 4 — grid with `areas`. `cells` is what the host's `applyAreas` would have resolved
+      // `areas: ["a1 a1", "a2 a3"]` into; the client reads only this (`src/client.js:3131`).
+      const a1 = prose('a-span', 'areas 用名字声明格子，所以这一张横跨两列。')
+      const a2 = prose('a-left', '左格')
+      const a3 = prose('a-right', '右格')
+      const tCells = block('group', 'cells', {
+        title: '具名格 · 跨列',
+        children: [a1.id, a2.id, a3.id],
+        layout: {
+          template: 'grid',
+          params: {
+            cols: 2,
+            rows: 2,
+            cells: {
+              [a1.id]: { row: 1, col: 1, rowSpan: 1, colSpan: 2 },
+              [a2.id]: { row: 2, col: 1, rowSpan: 1, colSpan: 1 },
+              [a3.id]: { row: 2, col: 2, rowSpan: 1, colSpan: 1 },
+            },
+          },
+        },
+      })
+
+      // Tile 5 — masonry. Deliberately ragged heights, which is the whole reason it exists.
+      const m1 = prose('m-short', '一行。')
+      const m2 = prose('m-tall', '卡片保持自己的高度。\n\n网格的行高等于该行最高的一张，所以短卡下面会空着。\n\n瀑布流把下一张放进最短的那一列。')
+      const m3 = prose('m-mid', '两行。\n\n再一行。')
+      const m4 = prose('m-tail', '顺序敏感的内容不要用它：超过一栏之后是按列优先填的。')
+      const tMasonry = block('group', 'masonry', {
+        title: '瀑布流 · 各随高度',
+        children: [m1.id, m2.id, m3.id, m4.id],
+        layout: { template: 'masonry', params: { cols: 2 } },
+      })
+
+      // Tile 6 — canvas. Arranges nothing, so it is the honest place to say what a board is not.
+      const v1 = prose('v-box', 'canvas 不做任何安排：它只是把块分段装起来的盒子。')
+      const v2 = block('code', 'v-code', { lang: 'json', code: '{\n  "template": "canvas",\n  "params": { "gap": 12 }\n}' })
+      const v3 = prose('v-zero', '块没有坐标 —— 位置不是块的事。')
+      const tCanvas = block('group', 'canvas', { title: '不排版 · 只做盒子', children: [v1.id, v2.id, v3.id], layout: { template: 'canvas' } })
+
+      const REGION = {
+        id: 'rg_5b0a11',
+        slug: 'annot',
+        alias: [],
+        blockIds: [f1.id, m1.id],
+        label: 'region · 只标注',
+        tone: 'warn',
+      }
+      // A region is annotation, not a container: these two cards belong to two DIFFERENT groups,
+      // sit in different grid cells, and still carry the same tint and the same label chip.
+      f1.regionId = REGION.id
+      m1.regionId = REGION.id
+
+      // Every block lives in `page.blocks`; a group only *references* its children
+      // (`docs/design/board-model.md:265` 「子块不会被移出 page.blocks，group.children 只是引用列表」).
+      // The tiles come first so the page's grid reads flow · row · columns / grid · masonry · canvas.
+      const PAGE_BLOCKS = [
+        tFlow, tRow, tCols, tCells, tMasonry, tCanvas,
+        f1, f2, f3,
+        r1, r2, r3,
+        c1, c2, c3, c4,
+        a1, a2, a3,
+        m1, m2, m3, m4,
+        v1, v2, v3,
+      ]
+
+      function buildModel(model) {
+        const pages = model.pages.map((page, index) => {
+          if (index !== 0) return page
+          return {
+            ...page,
+            blocks: PAGE_BLOCKS,
+            // The page is a container too, so it declares how it arranges the six tiles. `cols`
+            // without `areas` keeps every card at its natural height (`src/client.js:302-304`).
+            layout: { template: 'grid', params: { cols: 3, minCardWidth: 260 } },
+          }
+        })
+        return { ...model, pages, regions: [REGION] }
+      }
+
+      // ---- mount ------------------------------------------------------------------------------
+      const el = (id) => document.getElementById(id)
+      const ring = el('ring')
+      const cap = el('cap')
+      const capLabel = el('cap-label')
+      const capSub = el('cap-sub')
+      const capIndex = el('cap-index')
+
+      let api = null
+      let tiles = []
+
+      function paintKinds() {
+        const host = el('kinds')
+        for (const [kind, zh] of KIND_LABELS) {
+          const pill = document.createElement('span')
+          pill.className = 'pill'
+          const name = document.createElement('b')
+          name.textContent = zh
+          const code = document.createElement('i')
+          code.textContent = kind
+          pill.append(name, code)
+          host.appendChild(pill)
+        }
+      }
+
+      async function main() {
+        paintKinds()
+        window.__diag.stage = 'mount'
+        api = await window.SuperboardHarness.startBoard({ sessionId: 'promo-s4', mutate: buildModel })
+        await api.selectPage('roadmap')
+
+        // Resolve the six tile elements ONCE; the board never re-renders after this, because the
+        // model is fixed. Order matches BEATS, so `tiles[i]` is beat i's tile.
+        tiles = BEATS.map((beat) => api.blockBySlug(beat.slug) ?? null)
+        for (const tile of tiles) {
+          if (tile !== null) tile.style.transition = 'none'
+        }
+        ring.style.transition = 'none'
+
+        window.__diag.stage = 'ready'
+        window.__diag.tiles = tiles.map((tile, index) => {
+          if (tile === null) return BEATS[index].slug + ':MISSING'
+          const box = tile.getBoundingClientRect()
+          const layout = tile.querySelector('[class*=sb-]')
+          return `${BEATS[index].slug}:${Math.round(box.width)}x${Math.round(box.height)}@${Math.round(box.left)},${Math.round(box.top)}(${layout ? layout.className.split(' ').pop() : '?'})`
+        })
+        window.__diag.cards = api.blocks().length
+        window.__diag.regionTags = document.querySelectorAll('.sb-regionTag').length
+        window.__diag.canvasClass = (document.querySelector('[data-superboard-canvas]')?.firstElementChild ?? {}).className ?? null
+      }
+
+      window.__ready = main().catch((error) => {
+        window.__diag.stage = 'failed'
+        window.__diag.error = String((error && error.stack) || error)
+        const pre = el('error')
+        pre.textContent = window.__diag.error
+        pre.style.display = 'block'
+      })
+
+      // ---- the scene --------------------------------------------------------------------------
+      const clamp01 = (value) => (value < 0 ? 0 : value > 1 ? 1 : value)
+
+      window.renderScene = (t) => {
+        if (api === null || window.__diag.stage !== 'ready') return window.__ready
+
+        const clock = t < 0 ? 0 : t > DURATION ? DURATION : t
+        const index = Math.min(BEATS.length - 1, Math.max(0, Math.floor(clock / SPAN)))
+        const beat = BEATS[index]
+        const local = clamp01((clock - index * SPAN) / FADE)
+        const intro = clamp01(clock / 0.55)
+        const outro = clamp01((DURATION - clock) / 0.4)
+
+        // Every tile's opacity is a function of `t` alone — a trapezoid per beat, so the handover
+        // between two beats is a cross-fade rather than a flash. A re-capture at any frame index
+        // therefore lands on exactly the same picture.
+        for (let i = 0; i < tiles.length; i += 1) {
+          const tile = tiles[i]
+          if (tile === null) continue
+          const start = i * SPAN
+          const end = start + SPAN
+          const weight = Math.min(clamp01((clock - (start - FADE)) / FADE), clamp01((end + FADE - clock) / FADE))
+          tile.style.opacity = String(DIM + (1 - DIM) * weight)
+        }
+
+        const active = tiles[index]
+        if (active !== null && active !== undefined) {
+          const box = active.getBoundingClientRect()
+          ring.style.left = `${box.left - 5}px`
+          ring.style.top = `${box.top - 5}px`
+          ring.style.width = `${box.width + 10}px`
+          ring.style.height = `${box.height + 10}px`
+          ring.style.opacity = String(local * intro * outro)
+        }
+
+        el('mount').style.opacity = String(0.4 + 0.6 * intro)
+
+        // The caption is keyed on the beat index, so it cuts at the boundary while the tiles
+        // cross-fade — the same way the rest of the film cuts.
+        capLabel.innerHTML = ''
+        const number = document.createElement('em')
+        number.textContent = String(index + 1).padStart(2, '0')
+        capLabel.append(number, document.createTextNode(`${beat.name} · ${beat.what}`))
+        capSub.textContent = beat.line
+        capSub.className = `sub${beat.calling ? ' calling' : ''}`
+        capIndex.textContent = String(index + 1).padStart(2, '0')
+        cap.style.opacity = String(local * intro * outro)
+
+        window.__diag.beat = `${index + 1}/6 ${beat.slug}`
+        window.__diag.t = Math.round(clock * 100) / 100
+        return null
+      }
+    </script>
+  </body>
+</html>

@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <title>s1 · 标题</title>
+    <link rel="stylesheet" href="/scenes/theme.css" />
+    <style>
+      html, body { background: #0a0a10; }
+
+      /*
+       * The real board, whole. It carries the entire scene: at t=0 it is a magnified
+       * detail (the canvas, cropped), and by t≈6.5 it has pulled back to its natural
+       * 1:1 framing — which is exactly the frame S2 opens on, so the cut at 8s is a
+       * cut between two views of the same thing rather than a cut away from the card.
+       *
+       * `transform: scale` rather than `zoom`: `zoom` re-lays-out, so the grid would
+       * reflow into more columns and the "detail shot" would show *more* board at a
+       * larger size instead of less board at a larger size. Scale magnifies the layout
+       * that is already there, which is what a camera would do.
+       */
+      #mount {
+        position: absolute;
+        inset: 0;
+        transform-origin: 50% 0%;
+        will-change: transform;
+      }
+
+      /*
+       * A soft horizontal band of darkness, sized to the title and to nothing else.
+       *
+       * A radial pool reads as a spotlight and leaves an obvious dark ellipse sitting on
+       * the board; a flat full-frame scrim turns the product into a grey slab. A band
+       * fades in below the page tabs and fades out above the bottom of the frame, so the
+       * board is still *the board* at both edges — including the tab strip, which is the
+       * single most recognisable thing in a 1920×1080 still — while the middle is dark
+       * enough for 100px type.
+       */
+      #scrim {
+        position: absolute;
+        inset: 0;
+        pointer-events: none;
+        background: linear-gradient(
+          to bottom,
+          rgba(9, 9, 15, 0.30) 0%,
+          rgba(9, 9, 15, 0.46) 18%,
+          rgba(9, 9, 15, 0.93) 36%,
+          rgba(9, 9, 15, 0.94) 66%,
+          rgba(9, 9, 15, 0.52) 82%,
+          rgba(9, 9, 15, 0.26) 100%
+        );
+      }
+
+      /* The open from black. Fades itself out over the first half second. */
+      #black { position: absolute; inset: 0; background: #000; pointer-events: none; }
+
+      #title-block {
+        position: absolute;
+        left: 0;
+        right: 0;
+        top: 50%;
+        transform: translateY(-50%);
+        text-align: center;
+        pointer-events: none;
+      }
+
+      #wordmark {
+        font: 700 100px/1.06 var(--font-mono);
+        letter-spacing: -0.01em;
+        color: var(--ink);
+        text-shadow: 0 4px 44px rgba(0, 0, 0, 0.92), 0 1px 3px rgba(0, 0, 0, 0.95);
+      }
+
+      #rule {
+        width: 0;
+        height: 3px;
+        margin: 26px auto 0;
+        border-radius: 2px;
+        background: var(--accent);
+        opacity: 0.9;
+      }
+
+      #positioning {
+        margin-top: 24px;
+        font-size: 34px;
+        font-weight: 500;
+        line-height: 1.3;
+        color: var(--ink);
+        text-shadow: 0 2px 24px rgba(0, 0, 0, 0.95);
+      }
+
+      #subline {
+        margin-top: 14px;
+        font-size: 20px;
+        line-height: 1.4;
+        color: var(--ink-dim);
+        text-shadow: 0 2px 20px rgba(0, 0, 0, 0.95);
+      }
+    </style>
+  </head>
+  <body data-ds-dark-theme="true">
+    <div id="mount"></div>
+    <div id="scrim"></div>
+
+    <div id="title-block">
+      <div id="wordmark" class="reveal">dsh-superboard</div>
+      <div id="rule"></div>
+      <div id="positioning" class="reveal">让 Agent 把结论画在一块看板上</div>
+      <div id="subline" class="reveal">看板取代对话框，成为主要界面</div>
+    </div>
+
+    <div id="black"></div>
+
+    <script src="/vendor/react.production.min.js"></script>
+    <script src="/vendor/react-dom.production.min.js"></script>
+    <script>window.__ModuleLoader__ = { load: (definition) => { window.__sbDef = definition } }</script>
+    <script src="/repo/src/client.js"></script>
+    <script src="/scenes/harness.js"></script>
+    <script>
+      // 0–8s: the opening. The real board magnified on a detail of the roadmap canvas,
+      // slowly pulling back to its natural framing while the name arrives over it.
+      window.__diag = { stage: 'boot' }
+      window.addEventListener('error', (e) => { window.__diag.error = String(e.message) })
+      window.addEventListener('unhandledrejection', (e) => { window.__diag.error = 'rejection: ' + String(e.reason) })
+
+      let api = null
+
+      async function main() {
+        window.__diag.stage = 'mount'
+        api = await window.SuperboardHarness.startBoard({ sessionId: 'promo-s1' })
+        await api.selectPage('roadmap')
+        window.__diag.stage = 'ready'
+        window.__diag.blocks = api.blocks().length
+        window.__diag.activePage = api.activePage()
+      }
+
+      window.__ready = main().catch((error) => {
+        window.__diag.stage = 'failed'
+        window.__diag.error = String((error && error.stack) || error)
+        const pre = document.createElement('pre')
+        pre.style.cssText =
+          'position:absolute;inset:0;padding:20px;color:#f38ba8;font:12px monospace;z-index:99;white-space:pre-wrap'
+        pre.textContent = window.__diag.error
+        document.body.appendChild(pre)
+      })
+
+      const clamp01 = (x) => (x < 0 ? 0 : x > 1 ? 1 : x)
+      const easeOut = (x) => 1 - Math.pow(1 - x, 3)
+
+      /** Ramp `[from, to]` seconds, eased, as a 0..1 progress. */
+      const ramp = (t, from, to) => easeOut(clamp01((t - from) / (to - from)))
+
+      window.renderScene = (t) => {
+        // Before the board mounts there is nothing to draw; hand the capture tool the
+        // ready promise so it waits instead of screenshoting an empty stage.
+        if (api === null) return window.__ready
+
+        const mount = document.getElementById('mount')
+        const canvas = document.querySelector('[data-superboard-canvas]')
+
+        // The one movement in the shot: magnified detail → whole product, eased out so
+        // it is standing still for the last ~1.5s. Everything below is timed against it.
+        const pull = ramp(t, 0.15, 6.5)
+        const scale = 1.66 - 0.66 * pull
+        mount.style.transform =
+          pull > 0.999
+            ? ''
+            : `translate3d(${(-32 * (1 - pull)).toFixed(2)}px, ${(-26 * (1 - pull)).toFixed(2)}px, 0) scale(${scale.toFixed(4)})`
+
+        // The canvas drifts under the pull-back, in the same direction: the board slides
+        // down-and-right toward its resting position rather than fighting the zoom.
+        if (canvas !== null) {
+          canvas.scrollTop = (1 - pull) * 168
+          canvas.scrollLeft = (1 - pull) * 24
+        }
+
+        // Dark at t=0 (the board is barely a silhouette), thinning as the board comes
+        // into its own so the closing frames are the product, not a title slide.
+        document.getElementById('scrim').style.opacity = String(1 - 0.18 * ramp(t, 0.2, 5.6))
+        document.getElementById('black').style.opacity = String(0.7 * (1 - ramp(t, 0, 0.6)))
+
+        const word = document.getElementById('wordmark')
+        const wp = ramp(t, 1.2, 2.1)
+        word.style.opacity = String(wp)
+        word.style.transform = `translateY(${((1 - wp) * 30).toFixed(2)}px)`
+
+        document.getElementById('rule').style.width = `${(218 * ramp(t, 1.75, 2.45)).toFixed(1)}px`
+
+        const positioning = document.getElementById('positioning')
+        const pp = ramp(t, 1.9, 2.7)
+        positioning.style.opacity = String(pp)
+        positioning.style.transform = `translateY(${((1 - pp) * 16).toFixed(2)}px)`
+
+        const subline = document.getElementById('subline')
+        const sp = ramp(t, 2.3, 3.05)
+        subline.style.opacity = String(sp)
+        subline.style.transform = `translateY(${((1 - sp) * 12).toFixed(2)}px)`
+      }
+    </script>
+  </body>
+</html>

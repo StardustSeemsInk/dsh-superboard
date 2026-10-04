@@ -1,0 +1,40 @@
+{
+  "source": "C:\\Users\\haoch\\.dsh\\storages\\session_projcache\\sessions\\session-b0e78947-8260-44e5-b61a-14c6f3934b7c.json",
+  "rev": "r30-7a7a256fcd4f",
+  "pages": [
+    {
+      "slug": "roadmap",
+      "blocks": 10
+    },
+    {
+      "slug": "architecture",
+      "blocks": 11
+    },
+    {
+      "slug": "questions",
+      "blocks": 25
+    },
+    {
+      "slug": "research",
+      "blocks": 12
+    },
+    {
+      "slug": "issues",
+      "blocks": 9
+    }
+  ],
+  "corrections": [
+    {
+      "at": "roadmap/status",
+      "find": "13 种块类型",
+      "replace": "8 种块类型",
+      "why": "BLOCK_KINDS has 8 entries (src/model.js:43-52)"
+    },
+    {
+      "at": "questions/q23",
+      "find": "13 种块类型",
+      "replace": "8 种块类型",
+      "why": "BLOCK_KINDS has 8 entries (src/model.js:43-52)"
+    }
+  ]
+}
