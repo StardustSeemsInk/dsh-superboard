@@ -153,14 +153,14 @@ test('a batch that lands clears the previous rejection', () => {
   // reason that is no longer true. A stale failure report is worse than none.
   const rejected = foldAll(
     applied(10, 'c1', {
-      expected_revision: 'r9-deadbeef0000',
-      ops: [{ op: 'add_block', page: 'main', kind: 'prose', markdown: 'x' }],
+      // A malformed op, not a stale revision: the fold no longer re-checks staleness, because a
+      // committed batch is a fact (see the replay test below).
+      ops: [{ op: 'add_block', page: 'nope', kind: 'prose', markdown: 'x' }],
     }),
   )
-  assert.match(rejected.lastOpError.message, /stale board revision/, 'the rejection is on record')
+  assert.match(rejected.lastOpError.message, /no page matches "nope"/, 'the rejection is on record')
 
   const settled = applied(20, 'c2', {
-    expected_revision: rejected.model.rev,
     ops: [{ op: 'add_block', page: 'main', kind: 'prose', markdown: 'ok' }],
   }).reduce((state, event) => foldBoard(state, event), rejected)
 
@@ -169,9 +169,86 @@ test('a batch that lands clears the previous rejection', () => {
 
   // A *newer* rejection must still be reported, so the clearing is not simply "never record".
   const rejectedAgain = applied(30, 'c3', {
-    ops: [{ op: 'add_block', page: 'nope', kind: 'prose', markdown: 'x' }],
+    ops: [{ op: 'add_block', page: 'gone', kind: 'prose', markdown: 'x' }],
   }).reduce((state, event) => foldBoard(state, event), settled)
-  assert.match(rejectedAgain.lastOpError.message, /no page matches "nope"/)
+  assert.match(rejectedAgain.lastOpError.message, /no page matches "gone"/)
+})
+
+test('a committed batch is replayed, never re-litigated', () => {
+  // The I2 bug, at the layer where it actually lived.
+  //
+  // `commit` only runs for a call the log records as settled **successfully**. On the live path that
+  // means DSH's pipeline already ran `board_apply`'s own staleness gate, and a stale call arrives as
+  // `isError: true` and is dropped before `commit` is ever reached — so re-checking here protects
+  // nothing. What it *did* do is let replay truncate its own history: `applyOps` compared the
+  // `expected_revision` recorded in the log against whatever revision this replay had reached, and
+  // once a model-version bump changed the hash half, the entire tail looked stale and was discarded.
+  // Ten committed batches were lost that way, and the same mechanism then ate the batches written
+  // against the truncated board.
+  //
+  // A fold must be a pure function of the log, so a batch the log says landed must land.
+  const committed = foldAll([
+    ...applied(10, 'c1', addHeading),
+    ...applied(20, 'c2', {
+      // A revision from a different model version, and even a nonsense one: the log records that
+      // this call succeeded, and that is the fact replay must reproduce.
+      expected_revision: 'r99-deadbeef0000',
+      ops: [{ op: 'add_block', page: 'main', kind: 'prose', markdown: 'ok' }],
+    }),
+  ])
+
+  assert.equal(committed.model.revSeq, 2, 'a committed batch is applied during replay')
+  assert.equal(committed.model.pages[0].blocks.length, 2)
+  assert.equal(committed.lastOpError, undefined, 'and is not recorded as a rejection')
+
+  // Replaying the same log twice must agree, which is the property the old gate destroyed.
+  assert.equal(committed.model.rev, foldAll([
+    ...applied(10, 'c1', addHeading),
+    ...applied(20, 'c2', {
+      expected_revision: 'r99-deadbeef0000',
+      ops: [{ op: 'add_block', page: 'main', kind: 'prose', markdown: 'ok' }],
+    }),
+  ]).model.rev)
+})
+
+test('the shared gate compares the sequence half and not the hash half', () => {
+  // `applyOps` still supports `expectedRevision`, because `board_apply`'s admission check lives
+  // there (via `executeApply` in `src/tools.js`). That is where a caller can still be told it is
+  // behind; the fold no longer consults it. This test pins the comparison itself.
+  //
+  // A revision has two halves: the sequence, which counts folded batches, and a hash of the content
+  // encoding. Bumping `BOARD_MODEL_VERSION` changes the encoding, so every revision an Agent holds
+  // gets a hash that can no longer be produced — while the board it names is perfectly current.
+  // Comparing whole strings would then reject honest writes.
+  //
+  // A real revision at seq 1, from the fold — `applyOps` deliberately does not bump `revSeq`, because
+  // that is `commit`'s job, so a model it returns still carries the caller's revision.
+  const withOne = foldAll(applied(10, 'c1', addHeading)).model
+  assert.equal(withOne.revSeq, 1)
+
+  const op = [{ op: 'add_block', page: 'main', kind: 'prose', markdown: 'ok' }]
+  const admit = (expected) =>
+    applyOps(structuredClone(withOne), op, {
+      sessionId: SESSION,
+      callSeq: 20,
+      callerRev: withOne.rev,
+      expectedRevision: expected,
+    })
+
+  // Same sequence, foreign hash: admitted. This is the case the I2 fix exists for.
+  assert.equal(admit(`r1-ffffffffffff`).pages[0].blocks.length, 2)
+
+  // Older sequence: refused. That is the failure mode the gate exists for.
+  assert.throws(() => admit('r0-000000000000'), BoardOpError)
+  assert.throws(() => admit('r0-ffffffffffff'), /stale board revision/)
+
+  // A string that is not a revision at all must never compare equal to `r0-…`.
+  assert.throws(() => admit('not-a-revision'), /stale board revision/)
+
+  // And `undefined` means "no expectation declared", which is how `previewRevision` calls it.
+  assert.doesNotThrow(() =>
+    applyOps(structuredClone(withOne), op, { sessionId: SESSION, callSeq: 20, callerRev: withOne.rev }),
+  )
 })
 
 test('the same log always folds to the same board', () => {
@@ -191,16 +268,20 @@ test('the same log always folds to the same board', () => {
   )
 })
 
-test('a stale expected_revision is refused and nothing is applied', () => {
-  const stale = {
-    expected_revision: 'r7-deadbeef0000',
-    ops: [{ op: 'add_block', page: 'main', kind: 'prose', markdown: 'x' }],
-  }
-  const state = foldAll(applied(10, 'c1', stale))
-
-  // Because the op threw, the batch was dropped: the revision did not move.
-  assert.equal(state.model.revSeq, 0)
-  assert.equal(state.model.pages[0].blocks.length, 0)
+test('a stale expected_revision is refused by the shared gate and nothing is applied', () => {
+  // The refusal now belongs to `applyOps`, which `board_apply` calls. The fold deliberately does not
+  // consult it — see "a committed batch is replayed, never re-litigated".
+  const base = emptyBoardDoc(SESSION).model
+  assert.throws(
+    () =>
+      applyOps(structuredClone(base), [{ op: 'add_block', page: 'main', kind: 'prose', markdown: 'x' }], {
+        sessionId: SESSION,
+        callSeq: 1,
+        callerRev: base.rev,
+        expectedRevision: 'r7-deadbeef0000',
+      }),
+    /stale board revision/,
+  )
 })
 
 test('a matching expected_revision applies', () => {
@@ -213,52 +294,6 @@ test('a matching expected_revision applies', () => {
 
   assert.equal(second.model.revSeq, 2)
   assert.equal(second.model.pages[0].blocks.length, 2)
-})
-
-test('the sequence half is compared and the hash half is not', () => {
-  // This is the 2026-10-04 data-loss bug, pinned.
-  //
-  // A revision string has two halves: the sequence, which counts folded batches, and a hash of the
-  // content encoding. Bumping `BOARD_MODEL_VERSION` changes the encoding, so every revision an
-  // Agent is holding suddenly has a hash that can no longer be produced — while the board it names
-  // is perfectly current. Comparing whole strings then rejects honest writes, and the rejection is
-  // invisible from the Agent's side: the tool's dry run executes against the live in-memory model
-  // and reports success, while the fold drops the batch. Ten consecutive batches were lost that way.
-  const first = foldAll(applied(10, 'c1', addHeading))
-
-  // A same-sequence string with a hash from a previous model version must be accepted.
-  const staleHash = `r${first.model.revSeq}-000000000000`
-  const accepted = foldAll([
-    ...applied(10, 'c1', addHeading),
-    ...applied(20, 'c2', {
-      expected_revision: staleHash,
-      ops: [{ op: 'add_block', page: 'main', kind: 'prose', markdown: 'ok' }],
-    }),
-  ])
-  assert.equal(accepted.model.revSeq, 2, 'a same-sequence revision must still apply')
-  assert.equal(accepted.model.pages[0].blocks.length, 2)
-  assert.equal(accepted.lastOpError, undefined, 'and must not be recorded as a rejection')
-
-  // An older sequence is still refused: that is the failure mode the gate exists for.
-  const refused = foldAll([
-    ...applied(10, 'c1', addHeading),
-    ...applied(20, 'c2', {
-      expected_revision: 'r0-000000000000',
-      ops: [{ op: 'add_block', page: 'main', kind: 'prose', markdown: 'no' }],
-    }),
-  ])
-  assert.equal(refused.model.revSeq, 1, 'an older sequence must be refused')
-  assert.match(refused.lastOpError.message, /stale board revision/)
-
-  // A string that is not a revision at all must never compare equal to the empty board's `r0-…`.
-  const garbage = foldAll(
-    applied(10, 'c1', {
-      expected_revision: 'not-a-revision',
-      ops: [{ op: 'add_block', page: 'main', kind: 'prose', markdown: 'no' }],
-    }),
-  )
-  assert.equal(garbage.model.revSeq, 0, 'unparseable revisions must be refused on an empty board')
-  assert.match(garbage.lastOpError.message, /stale board revision/)
 })
 
 test('parseRevSeq reads the sequence and rejects anything else', () => {

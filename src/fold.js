@@ -199,7 +199,23 @@ function commit(state, callId, args, seq) {
       sessionId: state.sessionId,
       callSeq: seq,
       callerRev: state.model.rev,
-      expectedRevision: args.expected_revision,
+      // Deliberately **no** `expectedRevision` here, and this is the heart of the I2 fix.
+      //
+      // `commit` only ever runs for a call the log records as settled *successfully*. On the live
+      // path that means DSH's pipeline already ran `board_apply`'s own gate: a stale call throws,
+      // the result is delivered as `isError: true`, and the fold drops it in `withoutPending`
+      // without ever reaching this function. So re-checking here adds no safety on the live path.
+      //
+      // What it did add was a way for replay to truncate its own history. `applyOps` would compare
+      // the `expected_revision` **recorded in the log** against the revision this replay happened
+      // to have reached, and when a model-version bump changed the hash half, the whole tail of the
+      // log looked stale — so ten committed batches were silently discarded on reload. The same
+      // thing then discarded batches written against the truncated board. A committed batch is a
+      // fact; replay must reproduce it, not re-litigate whether it should have been admitted.
+      //
+      // Admission lives in `board_apply`'s `executeApply` (`src/tools.js`), which is where a caller
+      // can still be told "you are behind". Keeping the check available in `applyOps` is what lets
+      // that live gate and the preview both go through the same code.
     })
   } catch (error) {
     if (!(error instanceof BoardOpError)) throw error
