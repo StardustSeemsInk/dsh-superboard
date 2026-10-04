@@ -88,7 +88,13 @@ window.__ModuleLoader__.load({
       '.sb-link:hover{text-decoration:underline;}',
       '.sb-list{margin:0;padding-left:18px;font-size:13px;line-height:20px;color:var(--dsw-alias-label-secondary);}',
       '.sb-code{margin:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;line-height:18px;white-space:pre-wrap;background:var(--dsw-alias-bg-layer-1);border-radius:6px;padding:8px;}',
-      '.sb-media{display:block;max-width:100%;border-radius:6px;}',
+      '.sb-mediaBox{display:flex;flex-direction:column;gap:6px;min-width:0;}',
+    '.sb-media{display:block;max-width:100%;border-radius:6px;border:1px solid var(--dsw-alias-border-l2);background:var(--dsw-alias-bg-layer-1);}',
+    // A rendered page is a canvas the width of its card, and it is the one thing on the board that
+    // can be taller than the screen. It gets a frame and a scroll ceiling for the same reason the
+    // diagram does.
+    '.sb-pdfPage{display:block;max-width:100%;height:auto;border:1px solid var(--dsw-alias-border-l2);border-radius:6px;background:var(--dsw-alias-bg-layer-1);}',
+    '.sb-pdfPending{visibility:hidden;}',
       '.sb-missing{color:var(--dsw-alias-label-tertiary);font-size:12px;font-style:italic;}',
       '.sb-group{border-style:dashed;padding-left:14px;}',
       '.sb-edges{position:absolute;inset:0;pointer-events:none;overflow:visible;}',
@@ -527,6 +533,28 @@ window.__ModuleLoader__.load({
     const RENDER_REPORT_URL = '/dsh-superboard/render-report'
 
     /**
+     * pdf.js, and the three trees it fetches while rendering.
+     *
+     * All four are served by this plugin's own host routes out of `vendor/pdf`. The paths are
+     * absolute and same-origin, which is what lets pdf.js hand them to a worker and to a `fetch`
+     * without any base-URL reasoning.
+     */
+    const PDF_MODULE_URL = '/dsh-superboard/pdfjs/pdf.min.mjs'
+    const PDF_WORKER_URL = '/dsh-superboard/pdfjs/pdf.worker.min.mjs'
+    const PDF_CMAP_URL = '/dsh-superboard/pdfjs/assets/cmaps/'
+    const PDF_FONT_URL = '/dsh-superboard/pdfjs/assets/standard_fonts/'
+    const PDF_WASM_URL = '/dsh-superboard/pdfjs/assets/wasm/'
+
+    /**
+     * The widest a page is rasterised at, in CSS pixels.
+     *
+     * A page is drawn at the density of the screen and the width of the card, so a wide window
+     * would otherwise turn one page into a canvas tens of megabytes large. Beyond this the extra
+     * pixels buy nothing a reader can see.
+     */
+    const MAX_PAGE_WIDTH = 1600
+
+    /**
      * The in-flight (or settled) load of the runtime.
      *
      * Shared by every diagram on the page: the bundle is 3.5 MB and is loaded once per document.
@@ -558,6 +586,53 @@ window.__ModuleLoader__.load({
       return mermaidLoad
     }
 
+    /**
+     * The in-flight (or settled) load of pdf.js, shared the way the mermaid bundle is.
+     *
+     * Loaded with a dynamic `import` rather than a `<script>` tag because it is a real ES module
+     * with named exports, and because the module itself is what pulls in the worker it names.
+     */
+    let pdfjsLoad
+
+    function loadPdfjs() {
+      if (pdfjsLoad !== undefined) return pdfjsLoad
+      pdfjsLoad = import(PDF_MODULE_URL).then((module) => {
+        module.GlobalWorkerOptions.workerSrc = PDF_WORKER_URL
+        return module
+      })
+      pdfjsLoad.catch(() => {
+        pdfjsLoad = undefined
+      })
+      return pdfjsLoad
+    }
+
+    /**
+     * The open documents, by file path.
+     *
+     * Three page blocks of one PDF are one fetch and one parse, not three. A rejection is removed
+     * again: the Agent may be correcting a path this very moment, and a remembered failure would
+     * keep the card broken after the file appeared.
+     */
+    const pdfDocuments = new Map()
+
+    function openDocument(pdfjs, src) {
+      let pending = pdfDocuments.get(src)
+      if (pending === undefined) {
+        pending = pdfjs
+          .getDocument({
+            url: fileUrl(src),
+            cMapUrl: PDF_CMAP_URL,
+            cMapPacked: true,
+            standardFontDataUrl: PDF_FONT_URL,
+            wasmUrl: PDF_WASM_URL,
+          })
+          .promise
+        pending.catch(() => pdfDocuments.delete(src))
+        pdfDocuments.set(src, pending)
+      }
+      return pending
+    }
+
     /** Whether the shell is in its dark theme. The shell marks it on `<body>`, not on a class. */
     function isDarkTheme() {
       if (typeof document === 'undefined' || document.body === null || document.body === undefined) return false
@@ -584,15 +659,54 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * The URL for a file on disk.
+     *
+     * `/api/file` is DSH's own authenticated file route: one absolute path in the query string, the
+     * bytes back, with the status codes to match (404/403 for missing or unreadable, 413 over the
+     * byte limit). It is the same origin, so an `<img>` can point straight at it — no fetch, no
+     * object URL to revoke, and the browser's own decoding and caching.
+     *
+     * The board stores paths rather than bytes, which is why a picture can stop existing. That is
+     * a property of the design, not an accident: a path is the one thing `board_apply` can be given
+     * without the plugin owning a copy of every file the user ever points at.
+     *
+     * @param path - an absolute path.
+     * @returns the URL to read it from.
+     */
+    function fileUrl(path) {
+      return `/api/file?path=${encodeURIComponent(path)}`
+    }
+
+    /**
+     * The client's half of `renderInputKey` in `src/runtime.js`.
+     *
+     * A report is retired by comparing this to the block's current value, so it has to be exactly
+     * what the host would compute. This file cannot import the host's copy — it is served as a
+     * classic script through the plugin loader — so the three cases are written out twice on
+     * purpose. Keep them in step.
+     *
+     * @param block - a board block.
+     * @returns the key.
+     */
+    function renderInput(block) {
+      if (block.kind === 'uml') return block.source
+      if (block.kind === 'pdf-page') return `${block.src}#${block.page}`
+      if (block.kind === 'image') return block.src
+      return undefined
+    }
+
+    /**
      * Tell the host that this diagram did not draw.
      *
      * Fire and forget, and failures are swallowed: the user is already looking at the error on
      * screen, and a board that also throws because a telemetry POST failed would be a worse board.
-     * The source travels with the report because it is the key the report is retired by — the host
-     * stops showing it the moment the block's source no longer matches.
+     * The render input travels with the report because it is the key the report is retired by — the
+     * host stops showing it the moment the block no longer has that input.
      */
     function reportRenderFailure(sessionId, block, message) {
       if (typeof fetch !== 'function') return
+      const input = renderInput(block)
+      if (typeof input !== 'string') return
       try {
         fetch(RENDER_REPORT_URL, {
           method: 'POST',
@@ -601,7 +715,7 @@ window.__ModuleLoader__.load({
             sessionId,
             blockId: block.id,
             blockSlug: block.slug,
-            source: block.source,
+            input,
             message,
           }),
         }).catch(() => {})
@@ -611,12 +725,12 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * mermaid's error text, reduced to something the Agent can act on.
+     * A renderer's error text, reduced to something the Agent can act on.
      *
-     * It arrives with a caret diagram and a stack. The first line carries the parse position, which
-     * is the part worth spending the Agent's attention on.
+     * It arrives with a caret diagram and a stack. The first line carries the position, which is
+     * the part worth spending the Agent's attention on.
      */
-    function diagramErrorText(error) {
+    function renderErrorText(error) {
       const raw = error instanceof Error ? error.message : String(error)
       const firstLine = raw.split('\n')[0].trim()
       return (firstLine === '' ? raw.trim() : firstLine).slice(0, 600)
@@ -694,7 +808,7 @@ window.__ModuleLoader__.load({
           })
           .catch((error) => {
             if (cancelled) return
-            const message = diagramErrorText(error)
+            const message = renderErrorText(error)
             setState({ status: 'failed', message })
             reportRenderFailure(sessionId, block, message)
           })
@@ -722,6 +836,132 @@ window.__ModuleLoader__.load({
         state.status === 'loading'
           ? h('p', { className: 'sb-diagramNote' }, '正在渲染图…')
           : h('p', { className: 'sb-diagramError' }, `渲染失败：${state.message}`),
+      )
+    }
+
+    /**
+     * A picture the board points at.
+     *
+     * The block holds a path and the bytes belong to the filesystem, which means they can be moved,
+     * replaced, or deleted between the write and the read. So "this picture is not there" is a
+     * state this component has rather than an impossibility, and it is reported to the host the
+     * same way a diagram that will not draw is — because to the Agent it is the same problem.
+     *
+     * @param props - `{ block, sessionId }`.
+     */
+    function Picture({ block, sessionId }) {
+      const [failed, setFailed] = React.useState(false)
+      const url = fileUrl(block.src)
+
+      // A path the Agent corrects has to clear the failure it caused, or the card stays broken
+      // until the view happens to remount.
+      React.useEffect(() => {
+        setFailed(false)
+      }, [url])
+
+      if (failed) {
+        return h(
+          'div',
+          { className: 'sb-mediaBox' },
+          h('p', { className: 'sb-diagramError' }, `读不到这张图：${block.src}`),
+          h('p', { className: 'sb-diagramNote' }, '文件被移走、改名或删除了，也可能它超过了 /api/file 的读取上限。'),
+        )
+      }
+
+      return h(
+        'div',
+        { className: 'sb-mediaBox' },
+        h('img', {
+          className: 'sb-media',
+          src: url,
+          alt: block.alt,
+          onError: () => {
+            setFailed(true)
+            reportRenderFailure(sessionId, block, `读不到文件 ${block.src}`)
+          },
+        }),
+      )
+    }
+
+    /**
+     * One page of a PDF.
+     *
+     * The bytes come from the host's own file route and the rasterisation happens here, in the
+     * browser, for the same reason the diagram does: the alternative is a native PDF renderer in
+     * the host process, and the price of that is a platform-specific binary in a plugin. DSH
+     * itself draws PDFs this way.
+     *
+     * The page is a `<canvas>` at the screen's density and the card's width rather than a fixed
+     * scale, because a page drawn at 1× on a wide card is visibly soft and one drawn at 3× on a
+     * narrow card is a canvas nobody looks at closely enough to justify.
+     *
+     * @param props - `{ block, sessionId }`.
+     */
+    function PdfPage({ block, sessionId }) {
+      const [state, setState] = React.useState({ status: 'loading' })
+      const canvas = React.useRef(null)
+      const src = block.src
+      const number = block.page
+
+      React.useEffect(() => {
+        let cancelled = false
+        setState({ status: 'loading' })
+        loadPdfjs()
+          .then(async (pdfjs) => {
+            const document = await openDocument(pdfjs, src)
+            // pdf.js is the only thing that knows how many pages a file has, and asking for the
+            // twelfth page of an eight-page document is the mistake this is most likely to see.
+            if (number < 1 || number > document.numPages) {
+              throw new Error(`这份 PDF 一共 ${document.numPages} 页，没有第 ${number} 页`)
+            }
+            const page = await document.getPage(number)
+            const target = canvas.current
+            if (cancelled || target === null || target === undefined) return
+            const base = page.getViewport({ scale: 1 })
+            const density = window.devicePixelRatio || 1
+            const cssWidth = Math.min(target.parentElement?.clientWidth || base.width, MAX_PAGE_WIDTH)
+            const viewport = page.getViewport({ scale: (cssWidth / base.width) * density })
+            target.width = Math.floor(viewport.width)
+            target.height = Math.floor(viewport.height)
+            target.style.width = `${Math.round(viewport.width / density)}px`
+            await page.render({ canvasContext: target.getContext('2d'), viewport }).promise
+            if (!cancelled) setState({ status: 'ready' })
+          })
+          .catch((error) => {
+            if (cancelled) return
+            const message = renderErrorText(error)
+            setState({ status: 'failed', message })
+            reportRenderFailure(sessionId, block, message)
+          })
+        return () => {
+          cancelled = true
+        }
+      }, [src, number])
+
+      const canvasElement = h('canvas', {
+        // Hidden until there is something on it: an untouched canvas is white in both themes, so
+        // showing it while the page loads would flash a light rectangle into a dark board.
+        className: state.status === 'ready' ? 'sb-pdfPage' : 'sb-pdfPage sb-pdfPending',
+        ref: canvas,
+        'data-superboard-pdf': `${src}#${number}`,
+      })
+
+      if (state.status === 'failed') {
+        return h(
+          'div',
+          { className: 'sb-mediaBox' },
+          h('p', { className: 'sb-diagramError' }, `这一页画不出来：${state.message}`),
+          h('p', { className: 'sb-diagramNote' }, `${src} 第 ${number} 页`),
+        )
+      }
+
+      return h(
+        'div',
+        { className: 'sb-mediaBox' },
+        canvasElement,
+        state.status === 'loading'
+          ? h('p', { className: 'sb-diagramNote' }, `正在渲染 ${src} 第 ${number} 页…`)
+          : null,
       )
     }
 
@@ -774,16 +1014,14 @@ window.__ModuleLoader__.load({
           return h(
             'div',
             null,
-            h('img', { className: 'sb-media', src: block.src, alt: block.alt }),
+            h(Picture, { block, sessionId }),
             block.caption === undefined ? null : h('p', { className: 'sb-p' }, h(RichText, { text: block.caption })),
           )
         case 'pdf-page':
-          // Rendering a PDF page needs rasterisation in the host document (an iframe would lose
-          // the theme and locale), which is a subsystem of its own. Until then, say what it is.
           return h(
             'div',
             null,
-            h('p', { className: 'sb-missing' }, `PDF page ${block.page} of ${block.src} — not rendered yet`),
+            h(PdfPage, { block, sessionId }),
             block.caption === undefined ? null : h('p', { className: 'sb-p' }, h(RichText, { text: block.caption })),
           )
         case 'uml':
@@ -2222,6 +2460,15 @@ window.__ModuleLoader__.load({
       Diagram,
       codeClass,
       svgDataUrl,
+      // The picture card and the two things it shares with the host: the file URL and the key a
+      // render report is retired by.
+      Picture,
+      fileUrl,
+      renderInput,
+      // The PDF page card and its shared document cache, exported so a test can drive the cache's
+      // failure rule — a remembered rejection would keep a corrected path broken.
+      PdfPage,
+      openDocument,
     }
   },
 })

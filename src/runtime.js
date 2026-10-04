@@ -25,6 +25,8 @@
  */
 
 import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 
 /** Where the browser loads the vendored mermaid bundle. */
 export const MERMAID_ROUTE = '/dsh-superboard/mermaid.min.js'
@@ -32,17 +34,43 @@ export const MERMAID_ROUTE = '/dsh-superboard/mermaid.min.js'
 /** Where the board view reports what a render actually did. */
 export const RENDER_REPORT_ROUTE = '/dsh-superboard/render-report'
 
+/**
+ * Where the browser loads pdf.js.
+ *
+ * Two module files and one asset tree, all under one prefix so the things pdf.js is told to fetch
+ * (its worker, its CMaps, its standard fonts, its wasm) share a single origin and a single ETag.
+ */
+export const PDF_MODULE_ROUTE = '/dsh-superboard/pdfjs/pdf.min.mjs'
+export const PDF_WORKER_ROUTE = '/dsh-superboard/pdfjs/pdf.worker.min.mjs'
+export const PDF_ASSETS_ROUTE = '/dsh-superboard/pdfjs/assets/'
+
 const MANIFEST_URL = new URL('../vendor/mermaid.json', import.meta.url)
 const RUNTIME_URL = new URL('../vendor/mermaid.min.js', import.meta.url)
+const PDF_MANIFEST_URL = new URL('../vendor/pdf.json', import.meta.url)
+const PDF_ROOT = new URL('../vendor/pdf/', import.meta.url)
 
 /** A reported message is model-facing text; keep a paste of a stack trace from becoming one. */
 const MAX_MESSAGE_CHARS = 600
 
 /** A mermaid source larger than this is not something the board should be rendering anyway. */
-const MAX_SOURCE_CHARS = 64 * 1024
+const MAX_INPUT_CHARS = 64 * 1024
 
 /** The request body is bounded before it is parsed, so a bad client cannot allocate here. */
 const MAX_BODY_BYTES = 128 * 1024
+
+/**
+ * What the asset trees are served as.
+ *
+ * An allowlist rather than a lookup: the prefix route reads arbitrary paths out of a directory, so
+ * a file type nobody named is a request the board has no reason to answer. The two font formats
+ * are deliberately generic — the browser is told not to sniff, and pdf.js parses them itself.
+ */
+const ASSET_TYPES = new Map([
+  ['.bcmap', 'application/octet-stream'],
+  ['.pfb', 'application/octet-stream'],
+  ['.ttf', 'font/ttf'],
+  ['.wasm', 'application/wasm'],
+])
 
 /**
  * Read the record of what was vendored.
@@ -64,12 +92,32 @@ export function readRuntimeManifest() {
 }
 
 /**
+ * Read the record of the vendored pdf.js.
+ *
+ * Same contract as the mermaid manifest, and the same reason: absent means a checkout where
+ * `npm run vendor:pdfjs` was never run, and the right answer there is that a page says it cannot
+ * be drawn — not that the plugin fails to load.
+ *
+ * @returns `{version, tree, core}` for the vendored build, or `undefined`.
+ */
+export function readPdfManifest() {
+  try {
+    const manifest = JSON.parse(readFileSync(PDF_MANIFEST_URL, 'utf8'))
+    if (typeof manifest?.version !== 'string') return undefined
+    if (typeof manifest?.tree?.sha256 !== 'string') return undefined
+    return manifest
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * What the board view reports after trying to draw a diagram.
  *
  * Deliberately volatile. A render report is an observation about DOM that exists right now, and
  * the projection is a fold over committed events — so this cannot live in the board state
  * without inventing an event type, which the whole design forbids. What makes that safe is that
- * a report carries **the source it was produced from**: it is surfaced only while the block's
+ * a report carries **the render input it was produced from**: it is surfaced only while the block's
  * current source still matches, so editing the diagram retires its own complaint and nothing
  * has to be invalidated or expired.
  *
@@ -89,7 +137,7 @@ export class RenderReports {
    * Record a failure, replacing whatever was known about that block.
    *
    * @param sessionId - the owning session.
-   * @param report - `{blockId, blockSlug, source, message}`.
+   * @param report - `{blockId, blockSlug, input, message}`.
    */
   record(sessionId, report) {
     if (typeof sessionId !== 'string' || sessionId === '') return
@@ -110,9 +158,9 @@ export class RenderReports {
   /**
    * The reports that still describe the board as it is now.
    *
-   * The comparison is the whole mechanism: a report about source the block no longer has is
-   * silently dropped rather than shown, so the Agent never reads a complaint about a diagram it
-   * has already rewritten.
+   * The comparison is the whole mechanism: a report about a render input the block no longer has
+   * is silently dropped rather than shown, so the Agent never reads a complaint about a diagram it
+   * has already rewritten, or about a path the block has already stopped pointing at.
    *
    * @param sessionId - the owning session.
    * @param blockById - current blocks, keyed by id.
@@ -125,7 +173,7 @@ export class RenderReports {
     for (const report of forSession.values()) {
       const block = blockById?.get?.(report.blockId)
       if (block === undefined) continue
-      if (block.source !== report.source) continue
+      if (renderInputKey(block) !== report.input) continue
       live.push(report)
     }
     return live
@@ -168,6 +216,12 @@ export function registerRuntimeRoutes(ctx, reports) {
       'dsh-superboard: vendor/mermaid.min.js is missing; `uml` blocks will show their source. Run `npm run vendor:mermaid`.',
     )
   }
+  const pdf = readPdfManifest()
+  if (pdf === undefined) {
+    ctx.logger?.warn?.(
+      'dsh-superboard: vendor/pdf is missing; `pdf-page` blocks will say they cannot be drawn. Run `npm run vendor:pdfjs`.',
+    )
+  }
 
   ctx.effect(
     () =>
@@ -177,6 +231,36 @@ export function registerRuntimeRoutes(ctx, reports) {
         handler: (req, res) => serveRuntime(req, res, manifest),
       }),
     'dsh-superboard: mermaid runtime route',
+  )
+
+  ctx.effect(
+    () =>
+      ctx.webServer.register({
+        kind: 'exact',
+        path: PDF_MODULE_ROUTE,
+        handler: (req, res) => serveVendoredPdf(req, res, pdf, 'pdf.min.mjs', 'text/javascript; charset=utf-8'),
+      }),
+    'dsh-superboard: pdf.js module route',
+  )
+
+  ctx.effect(
+    () =>
+      ctx.webServer.register({
+        kind: 'exact',
+        path: PDF_WORKER_ROUTE,
+        handler: (req, res) => serveVendoredPdf(req, res, pdf, 'pdf.worker.min.mjs', 'text/javascript; charset=utf-8'),
+      }),
+    'dsh-superboard: pdf.js worker route',
+  )
+
+  ctx.effect(
+    () =>
+      ctx.webServer.register({
+        kind: 'prefix',
+        path: PDF_ASSETS_ROUTE,
+        handler: (req, res) => serveVendoredPdf(req, res, pdf, undefined, undefined),
+      }),
+    'dsh-superboard: pdf.js assets route',
   )
 
   ctx.effect(
@@ -235,6 +319,97 @@ function serveRuntime(req, res, manifest) {
     etag,
     'cache-control': 'no-cache',
     // The bundle is mermaid's own minified output; nothing here is a document.
+    'x-content-type-options': 'nosniff',
+  })
+  res.end(req.method === 'HEAD' ? undefined : body)
+}
+
+/**
+ * Serve one file out of the vendored pdf.js tree.
+ *
+ * Two callers and one body, because the module files and the asset tree differ only in how the
+ * relative path is arrived at: `name` for the two known modules, and the tail of the request URL
+ * for the prefix route. Everything after that is the same question — is this a file that was
+ * vendored, and what is it.
+ *
+ * Read from disk per request. The whole tree shares one ETag because it is versioned as a whole:
+ * re-running the vendor script changes every hash it covers, so a stale asset cannot outlive a
+ * fresh module.
+ *
+ * @param req - the HTTP request.
+ * @param res - the HTTP response.
+ * @param manifest - the vendored record, or `undefined` when nothing was vendored.
+ * @param name - a path relative to `vendor/pdf`, or `undefined` to take it from the URL.
+ * @param contentType - the type to serve with, or `undefined` to derive it from the extension.
+ */
+function serveVendoredPdf(req, res, manifest, name, contentType) {
+  const notFound = () => {
+    res.writeHead(404)
+    res.end()
+  }
+
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    res.writeHead(405, { allow: 'GET, HEAD' })
+    res.end()
+    return
+  }
+  if (manifest === undefined) {
+    notFound()
+    return
+  }
+
+  let relative = name
+  if (relative === undefined) {
+    const pathname = new URL(req.url ?? '/', 'http://x').pathname
+    try {
+      relative = `assets/${decodeURIComponent(pathname.slice(PDF_ASSETS_ROUTE.length))}`
+    } catch {
+      notFound()
+      return
+    }
+  }
+
+  // The prefix route hands over whatever the caller typed, so the rule is a whitelist rather than
+  // a sanitiser: no separators of either spelling, no NUL, and no segment that is empty, `.` or
+  // `..`. Normalising and then comparing prefixes is the other way to do this, and it is the way
+  // that keeps being wrong.
+  const parts = relative.split('/')
+  if (relative.includes('\0') || relative.includes('\\')) {
+    notFound()
+    return
+  }
+  if (parts.some((part) => part === '' || part === '.' || part === '..')) {
+    notFound()
+    return
+  }
+
+  const type = contentType ?? ASSET_TYPES.get(parts.at(-1).slice(parts.at(-1).lastIndexOf('.')))
+  if (type === undefined) {
+    notFound()
+    return
+  }
+
+  const etag = `"pdfjs-${manifest.version}-${manifest.tree.sha256.slice(0, 16)}"`
+  if (req.headers['if-none-match'] === etag) {
+    res.writeHead(304, { etag, 'cache-control': 'no-cache' })
+    res.end()
+    return
+  }
+
+  let body
+  try {
+    body = readFileSync(join(fileURLToPath(PDF_ROOT), ...parts))
+  } catch {
+    notFound()
+    return
+  }
+
+  res.writeHead(200, {
+    'content-type': type,
+    'content-length': body.length,
+    etag,
+    // Not `immutable`: re-running `vendor:pdfjs` replaces these bytes at the same paths.
+    'cache-control': 'no-cache',
     'x-content-type-options': 'nosniff',
   })
   res.end(req.method === 'HEAD' ? undefined : body)
@@ -312,8 +487,8 @@ function readBody(req, limit) {
 /**
  * Validate one report.
  *
- * Every field is required and bounded. The source is carried verbatim because it is the key the
- * report is retired by — a hash would work too, but only if both halves computed it the same
+ * Every field is required and bounded. The render input is carried verbatim because it is the key
+ * the report is retired by — a hash would work too, but only if both halves computed it the same
  * way, and the client half is a build-step-free classic script that cannot import this file.
  *
  * @param body - the raw request body.
@@ -328,17 +503,39 @@ function parseReport(body) {
   }
   if (typeof value !== 'object' || value === null) return undefined
 
-  const { sessionId, blockId, blockSlug, source, message } = value
+  const { sessionId, blockId, blockSlug, input, message } = value
   if (typeof sessionId !== 'string' || sessionId === '') return undefined
   if (typeof blockId !== 'string' || blockId === '') return undefined
-  if (typeof source !== 'string' || source.length > MAX_SOURCE_CHARS) return undefined
+  if (typeof input !== 'string' || input.length > MAX_INPUT_CHARS) return undefined
   if (typeof message !== 'string' || message === '') return undefined
 
   return {
     sessionId,
     blockId,
     blockSlug: typeof blockSlug === 'string' ? blockSlug : blockId,
-    source,
+    input,
     message: message.slice(0, MAX_MESSAGE_CHARS),
   }
+}
+
+/**
+ * What a report about this block is retired by.
+ *
+ * The client sends the render input it used and the host compares it against the block's current
+ * one, so this has to be the value whose change means "that observation is about the past". A
+ * diagram's is its source. A picture's is the file it points at — the bytes behind a path can be
+ * replaced, but a report about a path the block no longer names is certainly stale. A PDF page's
+ * is the path plus which page, because `src` and `page` are separately editable.
+ *
+ * The client half computes the same three values inline (`renderInput` in `src/client.js`); it
+ * cannot import this file. Keep the two in step.
+ *
+ * @param block - a board block.
+ * @returns the key, or `undefined` for a block kind that cannot fail to render.
+ */
+export function renderInputKey(block) {
+  if (block.kind === 'uml') return block.source
+  if (block.kind === 'pdf-page') return `${block.src}#${block.page}`
+  if (block.kind === 'image') return block.src
+  return undefined
 }

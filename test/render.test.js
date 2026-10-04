@@ -26,6 +26,7 @@ import vm from 'node:vm'
 
 import { foldBoard } from '../src/fold.js'
 import { emptyBoardDoc } from '../src/model.js'
+import { renderInputKey } from '../src/runtime.js'
 import { boardWireSchema, toWire } from '../src/schema.js'
 
 const CLIENT_PATH = new URL('../src/client.js', import.meta.url)
@@ -48,6 +49,9 @@ const fakeReact = {
   useCallback: (callback) => callback,
 }
 
+/** Every `fetch` the client made, as `[url, init]`. Cleared by the tests that assert on it. */
+const fetchCalls = []
+
 /** Load the client half and return its exports, as `test/client.test.js` does. */
 function loadClient() {
   const source = readFileSync(CLIENT_PATH, 'utf8')
@@ -58,6 +62,12 @@ function loadClient() {
     requestAnimationFrame: (callback) => {
       callback()
       return 1
+    },
+    // A report is fire-and-forget, so the stub only has to be thenable-shaped: `reportRenderFailure`
+    // calls `.catch` on whatever comes back and never looks at a response.
+    fetch: (url, init) => {
+      fetchCalls.push([url, init])
+      return { catch: () => {} }
     },
     cancelAnimationFrame: () => {},
     ResizeObserver: undefined,
@@ -120,6 +130,7 @@ function richWire() {
         { op: 'add_block', page: 'main', kind: 'list', ordered: true, items: ['读取会话', '校验令牌'] },
         { op: 'add_block', page: 'main', kind: 'uml', source: 'flowchart TD\n  A-->B', diagram: 'flowchart' },
         { op: 'add_block', page: 'main', kind: 'image', src: 'docs/arch.png', alt: '架构图' },
+        { op: 'add_block', page: 'main', kind: 'pdf-page', src: 'docs/spec.pdf', pdfPage: 4, caption: '规格书第 4 页' },
         { op: 'add_block', page: 'main', kind: 'prose', markdown: '附注说明。', slug: 'notes' },
         // The inner container first: a group can only adopt what already exists.
         { op: 'add_block', page: 'main', kind: 'group', title: '内层', slug: 'inner', layout: { template: 'row' }, children: ['arch', 'intro'] },
@@ -784,4 +795,153 @@ test('a diagram document becomes a data URL that cannot escape the attribute it 
   assert.ok(!url.includes('<'), 'markup must not survive into the URL')
   assert.ok(!url.includes('"'), 'a quote here would close the src attribute early')
   assert.equal(decodeURIComponent(url.slice('data:image/svg+xml;charset=utf-8,'.length)), svg)
+})
+
+test('a file path becomes a URL the host route can read', () => {
+  // Windows paths carry a colon and backslashes, and a user's filename carries whatever it likes.
+  // The query string has to survive all of it, so it is encoded rather than interpolated.
+  const url = client.fileUrl('E:\\参考 资料\\shot 1.png')
+  assert.ok(url.startsWith('/api/file?path='), url)
+  assert.ok(!url.includes(' '), 'a space must be encoded')
+  assert.equal(decodeURIComponent(url.slice('/api/file?path='.length)), 'E:\\参考 资料\\shot 1.png')
+})
+
+test('the client and the host agree on what a report is retired by', () => {
+  // Both halves compute this, on purpose: the client half is a classic script served through the
+  // plugin loader and cannot import `src/runtime.js`. A drift between them would be silent — the
+  // report would simply never surface — so the agreement is asserted here rather than assumed.
+  const blocks = [
+    { kind: 'uml', source: 'flowchart TD\n  A-->B' },
+    { kind: 'image', src: 'E:\\shot.png' },
+    { kind: 'pdf-page', src: 'E:\\doc.pdf', page: 3 },
+    { kind: 'heading', text: '没有可渲染的东西' },
+  ]
+  for (const block of blocks) {
+    assert.equal(
+      client.renderInput(block),
+      renderInputKey(block),
+      `${block.kind}: the two halves must derive the same key`,
+    )
+  }
+  // `undefined` is the answer for a kind that cannot fail to render, and it has to be `undefined`
+  // on both sides — a report is refused outright when its key is not a string.
+  assert.equal(client.renderInput({ kind: 'prose', markdown: 'x' }), undefined)
+})
+
+test('a picture points at the host file route, and an unreadable one reports why', () => {
+  fetchCalls.length = 0
+  const block = { id: 'bl_shot', slug: 'shot', kind: 'image', src: 'E:\\gone.png', alt: '截图' }
+  const tree = render(client.Picture({ block, sessionId: 'sess-1' }))
+
+  const image = elements(tree).find((node) => node.type === 'img')
+  assert.ok(image !== undefined, 'a picture block renders an img')
+  assert.equal(image.props.src, '/api/file?path=E%3A%5Cgone.png')
+  assert.equal(image.props.alt, '截图')
+
+  image.props.onError()
+  assert.equal(fetchCalls.length, 1, 'an image that will not decode is reported once')
+  const [url, init] = fetchCalls[0]
+  assert.equal(url, '/dsh-superboard/render-report')
+  const body = JSON.parse(init.body)
+  assert.equal(body.blockId, 'bl_shot')
+  assert.equal(body.input, 'E:\\gone.png', 'the report is keyed by the path, not by a source it has not got')
+  assert.ok(body.message.includes('E:\\gone.png'), 'the message names the path too')
+})
+
+test('a picture that could not be read shows which path failed, and no broken image', () => {
+  // The only thing either party can act on is *which* path went missing, so the failure state has
+  // to name it — and it must not leave a browser broken-image glyph standing in for an explanation.
+  const original = fakeReact.useState
+  fakeReact.useState = () => [true, () => {}]
+  try {
+    const block = { id: 'bl_shot', slug: 'shot', kind: 'image', src: 'E:\\gone.png', alt: '截图' }
+    const tree = render(client.Picture({ block, sessionId: 'sess-1' }))
+    assert.ok(textOf(tree).join(' ').includes('E:\\gone.png'), 'the failed path is named on screen')
+    assert.equal(
+      elements(tree).some((node) => node.type === 'img'),
+      false,
+      'the broken image is replaced rather than shown',
+    )
+  } finally {
+    fakeReact.useState = original
+  }
+})
+
+test('one PDF is opened once, however many of its pages are on the board', async () => {
+  // Three page blocks of one document are one download and one parse. The assets are named on the
+  // same options object because PDFs routinely need a CMap or a standard font, and a missing one
+  // shows up as wrong glyphs rather than as an error.
+  const calls = []
+  const pdfjs = {
+    getDocument: (options) => {
+      calls.push(options)
+      return { promise: Promise.resolve({ numPages: 8 }) }
+    },
+  }
+
+  const first = client.openDocument(pdfjs, 'E:\\共享\\spec.pdf')
+  const second = client.openDocument(pdfjs, 'E:\\共享\\spec.pdf')
+  assert.equal(first, second, 'the second page joins the first load rather than starting another')
+  assert.equal((await first).numPages, 8)
+  assert.equal(calls.length, 1)
+
+  assert.equal(calls[0].url, '/api/file?path=E%3A%5C%E5%85%B1%E4%BA%AB%5Cspec.pdf')
+  assert.equal(calls[0].cMapUrl, '/dsh-superboard/pdfjs/assets/cmaps/')
+  assert.equal(calls[0].cMapPacked, true)
+  assert.equal(calls[0].standardFontDataUrl, '/dsh-superboard/pdfjs/assets/standard_fonts/')
+  assert.equal(calls[0].wasmUrl, '/dsh-superboard/pdfjs/assets/wasm/')
+})
+
+test('a PDF that would not open is not remembered as unopenable', async () => {
+  // The likeliest failure is a path the Agent has just been told is wrong, so the next attempt has
+  // to be a real attempt: a cached rejection would keep the card broken after the file appeared.
+  let attempts = 0
+  const pdfjs = {
+    getDocument: () => {
+      attempts += 1
+      return {
+        promise: attempts === 1 ? Promise.reject(new Error('404 not a regular file')) : Promise.resolve({ numPages: 2 }),
+      }
+    },
+  }
+
+  await assert.rejects(client.openDocument(pdfjs, 'E:\\moved.pdf'), /404/)
+  await new Promise((resolve) => setImmediate(resolve))
+  assert.equal((await client.openDocument(pdfjs, 'E:\\moved.pdf')).numPages, 2)
+  assert.equal(attempts, 2, 'the failure was forgotten, so the retry reached the loader')
+})
+
+test('a pdf page renders a canvas tagged with the document and the page', () => {
+  const block = { id: 'bl_pdf', slug: 'spec', kind: 'pdf-page', src: 'E:\\spec.pdf', page: 4 }
+  const tree = render(client.PdfPage({ block, sessionId: 'sess-1' }))
+
+  const canvas = elements(tree).find((node) => node.type === 'canvas')
+  assert.ok(canvas !== undefined, 'a pdf block renders a canvas')
+  assert.equal(canvas.props['data-superboard-pdf'], 'E:\\spec.pdf#4')
+  // White in both themes, so showing it before there is anything on it would flash a light
+  // rectangle into a dark board.
+  assert.match(canvas.props.className, /sb-pdfPending/)
+  assert.match(textOf(tree).join(' '), /正在渲染/)
+})
+
+test('a pdf page that could not be drawn names the page it tried', () => {
+  // "8 pages, no page 12" is the mistake this is most likely to see, and it is precisely the kind
+  // of thing the Agent cannot work out on its own — only pdf.js knows the page count.
+  const original = fakeReact.useState
+  fakeReact.useState = () => [{ status: 'failed', message: '这份 PDF 一共 8 页，没有第 12 页' }, () => {}]
+  try {
+    const block = { id: 'bl_pdf', slug: 'spec', kind: 'pdf-page', src: 'E:\\spec.pdf', page: 12 }
+    const tree = render(client.PdfPage({ block, sessionId: 'sess-1' }))
+    const text = textOf(tree).join(' ')
+
+    assert.match(text, /没有第 12 页/)
+    assert.match(text, /E:\\spec\.pdf 第 12 页/, 'the card still says which page of which file')
+    assert.equal(
+      elements(tree).some((node) => node.type === 'canvas'),
+      false,
+      'an empty canvas is replaced rather than left standing',
+    )
+  } finally {
+    fakeReact.useState = original
+  }
 })

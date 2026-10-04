@@ -398,7 +398,7 @@ test('a renderer report rides the same channel as the host\u2019s own prediction
   reports.record('sess-out', {
     blockId: findBlockId(doc, 'good'),
     blockSlug: 'good',
-    source: 'flowchart TD\n  A-->B',
+    input: 'flowchart TD\n  A-->B',
     message: 'Parse error on line 3',
   })
 
@@ -422,7 +422,7 @@ test('a report about a version of the block that no longer exists is not repeate
   reports.record('sess-out', {
     blockId: findBlockId(doc, 'good'),
     blockSlug: 'good',
-    source: 'an older version of the source',
+    input: 'an older version of the source',
     message: 'stale complaint',
   })
 
@@ -436,7 +436,7 @@ test('a report about a version of the block that no longer exists is not repeate
   reports.record('sess-out', {
     blockId: findBlockId(doc, 'good'),
     blockSlug: 'good',
-    source: 'flowchart TD\n  A-->B',
+    input: 'flowchart TD\n  A-->B',
     message: 'Parse error on line 3',
   })
   const fresh = drive('board_outline', {}, doc, reports)

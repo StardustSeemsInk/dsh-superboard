@@ -30,6 +30,8 @@
   ],
   "scripts": {
     "vendor:mermaid": "node scripts/vendor-mermaid.mjs",
+    "vendor:pdfjs": "node scripts/vendor-pdfjs.mjs",
+    "vendor": "npm run vendor:mermaid && npm run vendor:pdfjs",
     "test": "node --test \"test/**/*.test.js\"",
     "verify": "node --test \"test/**/*.test.js\" && node -e \"import('dsh-superboard').then(m => { if (typeof m.apply !== 'function') throw new Error('host half does not export apply()'); console.log('host half ok, exports:', Object.keys(m).join(', ')) })\""
   },
@@ -45,7 +47,8 @@
     "@deepseek-ai/dsh-session-projection": "0.2.0-rc.2",
     "@deepseek-ai/dsh-system-prompt": "0.2.0-rc.2",
     "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
-    "mermaid": "11.17.2"
+    "mermaid": "11.17.2",
+    "pdfjs-dist": "6.3.289"
   },
   "dsh": {
     "bundle": {

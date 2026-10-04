@@ -17,14 +17,20 @@ import { test } from 'node:test'
 import {
   blockIndex,
   MERMAID_ROUTE,
-  RENDER_REPORT_ROUTE,
+  PDF_ASSETS_ROUTE,
+  PDF_MODULE_ROUTE,
+  PDF_WORKER_ROUTE,
+  readPdfManifest,
   readRuntimeManifest,
   registerRuntimeRoutes,
+  RENDER_REPORT_ROUTE,
   RenderReports,
 } from '../src/runtime.js'
 
 const MANIFEST = readRuntimeManifest()
 const BUNDLE = readFileSync(new URL('../vendor/mermaid.min.js', import.meta.url))
+const PDF = readPdfManifest()
+const PDF_ROOT = new URL('../vendor/pdf/', import.meta.url)
 
 /** A plugin context that records the routes instead of serving them. */
 function fakeContext() {
@@ -45,11 +51,12 @@ function fakeContext() {
 }
 
 /** A request whose body is delivered when the handler subscribes. */
-function fakeRequest(method, { body, headers = {} } = {}) {
+function fakeRequest(method, { body, headers = {}, url = '/' } = {}) {
   const handlers = new Map()
   const req = {
     method,
     headers,
+    url,
     on(event, handler) {
       const list = handlers.get(event) ?? []
       list.push(handler)
@@ -178,7 +185,7 @@ test('a render report is stored, and stops applying when the block is rewritten'
     sessionId: 'sess-1',
     blockId: 'bl_1',
     blockSlug: 'flow',
-    source: 'flowchart TD\n  A-->',
+    input: 'flowchart TD\n  A-->',
     message: 'Parse error on line 2',
   })
   const req = fakeRequest('POST', { body: payload })
@@ -188,14 +195,14 @@ test('a render report is stored, and stops applying when the block is rewritten'
   await settled()
   assert.equal(res.status, 204)
 
-  const blocks = new Map([['bl_1', { id: 'bl_1', source: 'flowchart TD\n  A-->' }]])
+  const blocks = new Map([['bl_1', { id: 'bl_1', kind: 'uml', source: 'flowchart TD\n  A-->' }]])
   const live = reports.live('sess-1', blocks)
   assert.equal(live.length, 1)
   assert.equal(live[0].blockSlug, 'flow')
 
   // The Agent fixes the source. Nothing has to be invalidated: the report simply no longer
   // describes the block, which is why an observation about the DOM is safe to keep out of the fold.
-  blocks.set('bl_1', { id: 'bl_1', source: 'flowchart TD\n  A-->B' })
+  blocks.set('bl_1', { id: 'bl_1', kind: 'uml', source: 'flowchart TD\n  A-->B' })
   assert.deepEqual(reports.live('sess-1', blocks), [])
 
   // And a report for a block that no longer exists at all is not surfaced either.
@@ -205,11 +212,11 @@ test('a render report is stored, and stops applying when the block is rewritten'
 
 test('reports are per session, and one can be forgotten', async () => {
   const reports = new RenderReports()
-  const report = { blockId: 'bl_1', blockSlug: 'flow', source: 'graph TD', message: 'boom' }
+  const report = { blockId: 'bl_1', blockSlug: 'flow', input: 'graph TD', message: 'boom' }
   reports.record('sess-1', report)
   reports.record('sess-2', report)
 
-  const blocks = new Map([['bl_1', { id: 'bl_1', source: 'graph TD' }]])
+  const blocks = new Map([['bl_1', { id: 'bl_1', kind: 'uml', source: 'graph TD' }]])
   assert.equal(reports.live('sess-1', blocks).length, 1)
   assert.equal(reports.live('sess-2', blocks).length, 1)
   assert.deepEqual(reports.live('sess-3', blocks), [], 'an unknown session has nothing to say')
@@ -230,13 +237,13 @@ test('the report route refuses a cross-site caller and a body that is not a repo
   await route.handler(
     fakeRequest('POST', {
       headers: { 'sec-fetch-site': 'cross-site' },
-      body: JSON.stringify({ sessionId: 's', blockId: 'b', source: '', message: 'x' }),
+      body: JSON.stringify({ sessionId: 's', blockId: 'b', input: '', message: 'x' }),
     }),
     crossSite,
   )
   assert.equal(crossSite.status, 403)
 
-  for (const body of ['not json', '{}', '{"sessionId":"s","blockId":"b"}', '{"sessionId":"","blockId":"b","source":"","message":"m"}']) {
+  for (const body of ['not json', '{}', '{"sessionId":"s","blockId":"b"}', '{"sessionId":"","blockId":"b","input":"","message":"m"}']) {
     const req = fakeRequest('POST', { body })
     const res = fakeResponse()
     await route.handler(req, res)
@@ -266,7 +273,7 @@ test('a report is recorded only after its body has been read', async () => {
       sessionId: 'sess',
       blockId: 'bl_9',
       blockSlug: 'seq',
-      source: 'sequenceDiagram\n  A->>B: x',
+      input: 'sequenceDiagram\n  A->>B: x',
       message: 'boom',
     }),
   })
@@ -277,7 +284,7 @@ test('a report is recorded only after its body has been read', async () => {
   req.flush()
   await settled()
   assert.equal(res.status, 204)
-  assert.equal(reports.live('sess', new Map([['bl_9', { id: 'bl_9', source: 'sequenceDiagram\n  A->>B: x' }]])).length, 1)
+  assert.equal(reports.live('sess', new Map([['bl_9', { id: 'bl_9', kind: 'uml', source: 'sequenceDiagram\n  A->>B: x' }]])).length, 1)
 })
 
 test('blockIndex finds blocks across pages, keyed by id', () => {
@@ -290,4 +297,133 @@ test('blockIndex finds blocks across pages, keyed by id', () => {
   const index = blockIndex(model)
   assert.equal(index.size, 3)
   assert.equal(index.get('bl_3').id, 'bl_3')
+})
+
+// ---------------------------------------------------------------------------
+// The vendored pdf.js
+// ---------------------------------------------------------------------------
+
+test('every file in the vendored pdf.js tree is the one the manifest describes', () => {
+  // 190 files, four megabytes, committed. The hash is over the whole tree — names and contents —
+  // so this one assertion covers the two modules and all 188 assets: a file edited, added or
+  // removed anywhere underneath invalidates it.
+  assert.ok(PDF !== undefined, 'vendor/pdf.json must exist; run `npm run vendor:pdfjs`')
+
+  const sha256 = (bytes) => createHash('sha256').update(bytes).digest('hex')
+  const names = [...PDF.assets, ...Object.keys(PDF.core)].sort()
+  assert.equal(names.length, PDF.tree.files, 'the manifest lists a different number of files than it hashed')
+
+  const digest = createHash('sha256')
+  let bytes = 0
+  for (const name of names) {
+    const contents = readFileSync(new URL(name, PDF_ROOT))
+    bytes += contents.byteLength
+    digest.update(name).update('\0').update(contents).update('\0')
+  }
+  assert.equal(bytes, PDF.tree.bytes, 'the vendored tree is a different size than recorded')
+  assert.equal(digest.digest('hex'), PDF.tree.sha256, 'the vendored tree does not match its recorded hash')
+
+  for (const [name, entry] of Object.entries(PDF.core)) {
+    const contents = readFileSync(new URL(name, PDF_ROOT))
+    assert.equal(contents.byteLength, entry.bytes, `${name} is a different length than recorded`)
+    assert.equal(sha256(contents), entry.sha256, `${name} is not the file that was vendored`)
+  }
+})
+
+test('the pdf.js routes serve the module, the worker and the assets', () => {
+  const { ctx, routes } = fakeContext()
+  registerRuntimeRoutes(ctx, new RenderReports())
+
+  const module = fakeResponse()
+  routes.get(PDF_MODULE_ROUTE).handler(fakeRequest('GET'), module)
+  assert.equal(module.status, 200)
+  assert.equal(module.headers['content-type'], 'text/javascript; charset=utf-8')
+  assert.ok(module.body.length > 400_000, 'the whole module came back')
+
+  // A worker that loads and then cannot speak the protocol fails on every document, so the bytes
+  // are checked rather than the status.
+  const worker = fakeResponse()
+  routes.get(PDF_WORKER_ROUTE).handler(fakeRequest('GET'), worker)
+  assert.equal(worker.status, 200)
+  assert.ok(worker.body.toString('utf8').includes('WorkerMessageHandler'))
+
+  const cmap = fakeResponse()
+  routes
+    .get(PDF_ASSETS_ROUTE)
+    .handler(fakeRequest('GET', { url: `${PDF_ASSETS_ROUTE}cmaps/78-EUC-H.bcmap` }), cmap)
+  assert.equal(cmap.status, 200)
+  assert.equal(cmap.headers['content-type'], 'application/octet-stream')
+  assert.ok(cmap.body.length > 0)
+
+  const font = fakeResponse()
+  routes
+    .get(PDF_ASSETS_ROUTE)
+    .handler(fakeRequest('GET', { url: `${PDF_ASSETS_ROUTE}standard_fonts/LiberationSans-Regular.ttf` }), font)
+  assert.equal(font.headers['content-type'], 'font/ttf')
+
+  const wasm = fakeResponse()
+  routes.get(PDF_ASSETS_ROUTE).handler(fakeRequest('GET', { url: `${PDF_ASSETS_ROUTE}wasm/qcms_bg.wasm` }), wasm)
+  assert.equal(wasm.headers['content-type'], 'application/wasm')
+})
+
+test('the pdf.js routes revalidate rather than promise these bytes forever', () => {
+  const { ctx, routes } = fakeContext()
+  registerRuntimeRoutes(ctx, new RenderReports())
+  const route = routes.get(PDF_MODULE_ROUTE)
+
+  const first = fakeResponse()
+  route.handler(fakeRequest('GET'), first)
+  assert.match(first.headers.etag, /^"pdfjs-6\./)
+  // Not `immutable`: `vendor:pdfjs` replaces these bytes at the same path, so the browser has to
+  // ask again. A one-year immutable cache would be a promise this repo cannot keep.
+  assert.equal(first.headers['cache-control'], 'no-cache')
+
+  const again = fakeResponse()
+  route.handler(fakeRequest('GET', { headers: { 'if-none-match': first.headers.etag } }), again)
+  assert.equal(again.status, 304)
+  assert.equal(again.body, undefined)
+
+  const head = fakeResponse()
+  route.handler(fakeRequest('HEAD'), head)
+  assert.equal(head.status, 200)
+  assert.equal(head.body, undefined, 'HEAD carries the length, not the bytes')
+
+  const post = fakeResponse()
+  route.handler(fakeRequest('POST'), post)
+  assert.equal(post.status, 405)
+  assert.equal(post.headers.allow, 'GET, HEAD')
+})
+
+test('the asset route serves only the files that were vendored', () => {
+  const { ctx, routes } = fakeContext()
+  registerRuntimeRoutes(ctx, new RenderReports())
+  const route = routes.get(PDF_ASSETS_ROUTE)
+
+  const refused = [
+    // Traversal, in both spellings of the separator and both spellings of the encoding.
+    `${PDF_ASSETS_ROUTE}../pdf.json`,
+    `${PDF_ASSETS_ROUTE}..%2Fpdf.json`,
+    `${PDF_ASSETS_ROUTE}cmaps%5C..%5C..%5Cpdf.json`,
+    `${PDF_ASSETS_ROUTE}%2e%2e/pdf.json`,
+    // A file that exists in the package but was deliberately not copied: the PDF-JavaScript
+    // interpreter. Serving it would hand a document the ability to run code.
+    `${PDF_ASSETS_ROUTE}wasm/quickjs-eval.wasm`,
+    // An extension nobody named. The allowlist is what keeps this route from being a file server.
+    `${PDF_ASSETS_ROUTE}assets/cmaps/x.bcmap.js`,
+    PDF_ASSETS_ROUTE,
+  ]
+  for (const url of refused) {
+    const res = fakeResponse()
+    route.handler(fakeRequest('GET', { url }), res)
+    assert.equal(res.status, 404, `${url} must not be served`)
+  }
+})
+
+test('the pdf.js routes say so when nothing was vendored', () => {
+  // A checkout where `npm run vendor:pdfjs` was never run must degrade to "this page cannot be
+  // drawn" — what the board did before this milestone — rather than to a plugin that will not
+  // load. `readPdfManifest` is the whole of that decision, so it is what is asserted: absent and
+  // malformed both read as "not vendored", never as a throw.
+  assert.equal(readPdfManifest().version, PDF.version, 'the manifest that is there reads back')
+  assert.equal(readRuntimeManifest().version !== undefined, true, 'and the mermaid one still does')
 })
