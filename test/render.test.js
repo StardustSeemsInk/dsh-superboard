@@ -703,3 +703,85 @@ test('a table in an assistant turn renders in the reading column too', () => {
   assert.equal(elements(tree).filter((node) => node.type === 'table').length, 1)
   assert.ok(!textOf(tree).join(' ').includes('| 候选 |'), 'the transcript must not show raw pipes')
 })
+
+// ---------------------------------------------------------------------------
+// Code and diagrams
+// ---------------------------------------------------------------------------
+
+/**
+ * Two ways a language reaches a `<code>`: a typed code block, and a fence written inside prose.
+ *
+ * Both matter for the same reason. An installed diagram renderer finds its work by scanning for a
+ * `<code>` whose class list holds exactly `language-mermaid`, and a board that emits no class is
+ * simply invisible to it — the diagram stays source text on an installation that would have drawn
+ * it. The class is also just what markdown is supposed to produce, so the plugin case is a
+ * consequence of being correct rather than a special accommodation.
+ */
+function codeWire() {
+  const doc = [
+    ...applied(10, 'c1', {
+      ops: [
+        { op: 'add_block', page: 'main', kind: 'code', lang: 'mermaid', code: 'flowchart TD\n  A-->B' },
+        { op: 'add_block', page: 'main', kind: 'code', code: '没有语言的一段' },
+        { op: 'add_block', page: 'main', kind: 'prose', markdown: '```mermaid\nsequenceDiagram\n  A->>B: 你好\n```' },
+      ],
+    }),
+  ].reduce((state, event) => foldBoard(state, event), emptyBoardDoc('sess-render'))
+  return boardWireSchema.parse(toWire(doc))
+}
+
+/** Render a board built from one of the wire fixtures above. */
+function renderWire(wire) {
+  return render(client.BoardView(props({ useProjection: (key) => (key === 'board' ? wire : undefined) })))
+}
+
+test('both a code block and a fenced paragraph tag their code with the language', () => {
+  const classNames = elements(renderWire(codeWire()))
+    .filter((node) => node.type === 'code')
+    .map((node) => node.props.className)
+
+  assert.equal(
+    classNames.filter((name) => name === 'language-mermaid').length,
+    2,
+    `the block path and the fence path must agree, saw ${classNames.join(' | ')}`,
+  )
+  assert.equal(
+    classNames.filter((name) => name === undefined).length,
+    1,
+    'a block with no language gets no class, rather than an empty or invented one',
+  )
+})
+
+test('the language class names a language, and says nothing when there is not one', () => {
+  assert.equal(client.codeClass('ts'), 'language-ts')
+  assert.equal(client.codeClass('mermaid'), 'language-mermaid')
+  // `language-undefined` would be a lie about the content, and the renderers that read this class
+  // treat any `language-` prefix as a claim worth acting on.
+  assert.equal(client.codeClass(undefined), undefined)
+  assert.equal(client.codeClass(''), undefined)
+})
+
+test('a diagram shows its source until the runtime resolves, tagged for a plugin to find', () => {
+  // The loading and failing states are the same shape on purpose: in both, the thing on screen is
+  // what the Agent wrote. A card that went blank would hide the only text either party can act on.
+  const tree = render(client.BoardView(props()))
+  const diagram = elements(tree).find((node) => node.props['data-superboard-diagram'] !== undefined)
+  assert.ok(diagram !== undefined, 'a uml block must render as a diagram card')
+
+  const text = textOf(diagram).join(' ')
+  assert.match(text, /flowchart TD/, 'the source stays visible while the runtime loads')
+  assert.match(text, /正在渲染图/)
+
+  const code = elements(diagram).find((node) => node.type === 'code')
+  assert.equal(code.props.className, 'language-mermaid', 'the fallback is tagged as mermaid too')
+})
+
+test('a diagram document becomes a data URL that cannot escape the attribute it is written into', () => {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg"><text>a &amp; "b"</text></svg>'
+  const url = client.svgDataUrl(svg)
+
+  assert.ok(url.startsWith('data:image/svg+xml;charset=utf-8,'), url.slice(0, 40))
+  assert.ok(!url.includes('<'), 'markup must not survive into the URL')
+  assert.ok(!url.includes('"'), 'a quote here would close the src attribute early')
+  assert.equal(decodeURIComponent(url.slice('data:image/svg+xml;charset=utf-8,'.length)), svg)
+})

@@ -179,6 +179,13 @@ window.__ModuleLoader__.load({
       '.sb-codeLang{font-size:10px;line-height:14px;color:var(--dsw-alias-label-tertiary);margin-bottom:4px;}',
       '.sb-inlineCode{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;background:var(--dsw-alias-bg-layer-1);border-radius:4px;padding:0 4px;}',
       '.sb-link{color:var(--dsw-alias-brand-primary);text-decoration:underline;}',
+      // A diagram is the one block whose content has its own intrinsic size and cannot be wrapped,
+      // so the card scrolls instead of pushing the grid column wider than the page.
+      '.sb-diagram{display:flex;justify-content:center;max-height:560px;overflow:auto;}',
+      '.sb-diagramImage{max-width:100%;height:auto;object-fit:contain;}',
+      '.sb-diagramWait{min-width:0;}',
+      '.sb-diagramNote{margin:6px 0 0;font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);}',
+      '.sb-diagramError{margin:6px 0 0;font-size:11px;line-height:16px;color:var(--dsw-alias-state-error-primary,var(--dsw-alias-brand-primary));overflow-wrap:anywhere;}',
     ].join('')
 
     /** Render the stylesheet as a component so unmounting removes it. */
@@ -475,12 +482,248 @@ window.__ModuleLoader__.load({
     // -----------------------------------------------------------------------
 
     /**
+     * The class a `<code>` element needs in order to be recognised as a language.
+     *
+     * `language-<lang>` is what every markdown renderer emits (GitHub, remark, marked), so
+     * emitting it is just correct markup. It is also the *only* thing a mermaid plugin looks at:
+     * `dsh-mermaid` accepts a `<code>` whose classList holds exactly
+     * `/^language-(?:mermaid|mermaidjs|mmd)$/i`, and our code blocks carried no class at all —
+     * which is why a diagram written as a fenced block rendered as plain source even on an
+     * installation with the plugin enabled. Costs nothing, couples to nothing: with no plugin
+     * installed the user sees the source, exactly as in the rest of DSH.
+     *
+     * @param lang - the declared language, possibly empty.
+     * @returns the class name, or `undefined` when there is no language.
+     */
+    function codeClass(lang) {
+      return lang === undefined || lang === '' ? undefined : `language-${lang}`
+    }
+
+    /**
      * Render one block.
      *
      * Every kind the model can hold is renderable except `uml`, which is data-only in v1 (Q-B):
      * it shows its source so the Agent and the user can at least see what is there, and the
      * error-feedback loop that will replace this arrives with the mermaid chunk.
      */
+
+    // -----------------------------------------------------------------------
+    // Diagrams
+    // -----------------------------------------------------------------------
+
+    /**
+     * Where the host serves the vendored mermaid bundle.
+     *
+     * A plugin-owned host route rather than a plugin chunk. That is what both mermaid plugins in
+     * this profile do, and `dsh-better-sidebar`'s own type declarations say why: the official
+     * chunk route resolves a chunk id through the module loader, and "a chunk id is none of those"
+     * things that resolver knows about, so resolution would be version-dependent. One file, served
+     * with an ETag, loaded through a `<script>` tag — mermaid's browser bundle is an IIFE whose
+     * entire published contract is the global it sets.
+     */
+    const MERMAID_URL = '/dsh-superboard/mermaid.min.js'
+
+    /** Where a failed render goes, so it can reach the Agent even though the Agent cannot see it. */
+    const RENDER_REPORT_URL = '/dsh-superboard/render-report'
+
+    /**
+     * The in-flight (or settled) load of the runtime.
+     *
+     * Shared by every diagram on the page: the bundle is 3.5 MB and is loaded once per document.
+     * A rejection clears it, so a transient failure is retried by the next diagram instead of
+     * every diagram in the session inheriting it.
+     */
+    let mermaidLoad
+
+    function loadMermaid() {
+      if (mermaidLoad !== undefined) return mermaidLoad
+      mermaidLoad = new Promise((resolve, reject) => {
+        const script = document.createElement('script')
+        script.src = MERMAID_URL
+        script.async = true
+        script.onload = () => {
+          const api = window.mermaid
+          if (api === undefined || typeof api.render !== 'function') {
+            reject(new Error(`${MERMAID_URL} loaded but exposed no mermaid`))
+            return
+          }
+          resolve(api)
+        }
+        script.onerror = () => reject(new Error(`could not load ${MERMAID_URL}`))
+        document.head.appendChild(script)
+      })
+      mermaidLoad.catch(() => {
+        mermaidLoad = undefined
+      })
+      return mermaidLoad
+    }
+
+    /** Whether the shell is in its dark theme. The shell marks it on `<body>`, not on a class. */
+    function isDarkTheme() {
+      if (typeof document === 'undefined' || document.body === null || document.body === undefined) return false
+      return document.body.hasAttribute('data-ds-dark-theme')
+    }
+
+    /**
+     * Follow the shell's theme.
+     *
+     * A diagram drawn in the light palette on a dark page is unreadable in a way no amount of
+     * border styling fixes, and the user can flip the theme at any moment — so the render has to
+     * be redone, not just recoloured. This is the same signal `dsh-mermaid` watches.
+     */
+    function useDarkTheme() {
+      const [dark, setDark] = React.useState(isDarkTheme)
+      React.useEffect(() => {
+        if (typeof MutationObserver !== 'function' || typeof document === 'undefined') return undefined
+        const observer = new MutationObserver(() => setDark(isDarkTheme()))
+        observer.observe(document.body, { attributes: true, attributeFilter: ['data-ds-dark-theme'] })
+        setDark(isDarkTheme())
+        return () => observer.disconnect()
+      }, [])
+      return dark
+    }
+
+    /**
+     * Tell the host that this diagram did not draw.
+     *
+     * Fire and forget, and failures are swallowed: the user is already looking at the error on
+     * screen, and a board that also throws because a telemetry POST failed would be a worse board.
+     * The source travels with the report because it is the key the report is retired by — the host
+     * stops showing it the moment the block's source no longer matches.
+     */
+    function reportRenderFailure(sessionId, block, message) {
+      if (typeof fetch !== 'function') return
+      try {
+        fetch(RENDER_REPORT_URL, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            sessionId,
+            blockId: block.id,
+            blockSlug: block.slug,
+            source: block.source,
+            message,
+          }),
+        }).catch(() => {})
+      } catch {
+        // A synchronous throw here (a malformed URL, a blocked fetch) must not escape into React.
+      }
+    }
+
+    /**
+     * mermaid's error text, reduced to something the Agent can act on.
+     *
+     * It arrives with a caret diagram and a stack. The first line carries the parse position, which
+     * is the part worth spending the Agent's attention on.
+     */
+    function diagramErrorText(error) {
+      const raw = error instanceof Error ? error.message : String(error)
+      const firstLine = raw.split('\n')[0].trim()
+      return (firstLine === '' ? raw.trim() : firstLine).slice(0, 600)
+    }
+
+    /**
+     * Turn mermaid's SVG into an `<img>` source.
+     *
+     * The obvious way to show rendered SVG is to inject the string as markup, and this file is
+     * under a standing rule not to — there is no `dangerouslySetInnerHTML` in this file, and
+     * `test/markdown.test.js` fails the build if one appears. That rule is not theatre: every other
+     * string rendered here is Agent-written prose, and React elements cannot execute.
+     *
+     * A data URL happens to be the *stronger* answer rather than a workaround. The SVG is decoded
+     * into its own document, so nothing in it shares this page's DOM: script cannot run, `onload`
+     * cannot fire, and a `<foreignObject>` cannot reach out. The parser is the browser's own, so
+     * there is no hand-written SVG-to-elements conversion to get subtly wrong — and mermaid's
+     * diagrams are self-contained anyway (`securityLevel: 'strict'` inlines the styling and strips
+     * external references), so isolation costs the picture nothing.
+     *
+     * What it does cost: the diagram's text is not selectable and not searchable, and it cannot
+     * inherit this page's CSS. The font is therefore passed to mermaid explicitly, read from the
+     * page at render time so it still follows the shell's typography.
+     *
+     * @param svg - the SVG document mermaid produced.
+     * @returns a `data:` URL.
+     */
+    function svgDataUrl(svg) {
+      return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+    }
+
+    /** The page's own font stack, so a diagram's labels match the board's text. */
+    function pageFontFamily() {
+      if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return 'sans-serif'
+      const family = window.getComputedStyle(document.body).fontFamily
+      return family === '' ? 'sans-serif' : family
+    }
+
+    /**
+     * Render one `uml` block.
+     *
+     * Three states, and the failure one deliberately keeps the source visible: a user looking at a
+     * diagram that will not draw needs to see what the Agent wrote, and the Agent needs the same
+     * text to fix it. Blanking the card would hide the only thing either of them can act on.
+     *
+     * @param props - `{ block, sessionId }`.
+     */
+    function Diagram({ block, sessionId }) {
+      const dark = useDarkTheme()
+      const [state, setState] = React.useState({ status: 'loading' })
+      const source = block.source
+
+      React.useEffect(() => {
+        let cancelled = false
+        setState({ status: 'loading' })
+        loadMermaid()
+          .then((mermaid) => {
+            mermaid.initialize({
+              startOnLoad: false,
+              // mermaid's default, stated rather than assumed: every label in this diagram came
+              // from the model, and strict is the level that encodes HTML in labels rather than
+              // interpreting it.
+              securityLevel: 'strict',
+              theme: dark ? 'dark' : 'default',
+              fontFamily: pageFontFamily(),
+              // SVG `<text>` rather than `<foreignObject>` labels. Nothing about the `<img>`
+              // isolation requires it, but plain text elements are the form that renders
+              // identically everywhere and the form that inherits the font above.
+              flowchart: { htmlLabels: false },
+            })
+            return mermaid.render(`sb-uml-${block.id}`, source)
+          })
+          .then((result) => {
+            if (!cancelled) setState({ status: 'ready', src: svgDataUrl(result.svg) })
+          })
+          .catch((error) => {
+            if (cancelled) return
+            const message = diagramErrorText(error)
+            setState({ status: 'failed', message })
+            reportRenderFailure(sessionId, block, message)
+          })
+        return () => {
+          cancelled = true
+        }
+      }, [block.id, source, dark])
+
+      if (state.status === 'ready') {
+        return h(
+          'div',
+          { className: 'sb-diagram', 'data-superboard-diagram': '' },
+          h('img', {
+            className: 'sb-diagramImage',
+            src: state.src,
+            alt: `${block.slug}：${block.engine} ${block.diagram} 图`,
+          }),
+        )
+      }
+
+      return h(
+        'div',
+        { className: 'sb-diagramWait', 'data-superboard-diagram': '' },
+        h('pre', { className: 'sb-code' }, h('code', { className: `language-${block.engine}` }, source)),
+        state.status === 'loading'
+          ? h('p', { className: 'sb-diagramNote' }, '正在渲染图…')
+          : h('p', { className: 'sb-diagramError' }, `渲染失败：${state.message}`),
+      )
+    }
 
     /**
      * The kind-specific body of a block.
@@ -490,7 +733,7 @@ window.__ModuleLoader__.load({
      * intact reads as broken text rather than as emphasis. Structured kinds (code, diagram source)
      * stay literal on purpose — their content is verbatim by definition.
      */
-    function renderBlockBody(block) {
+    function renderBlockBody(block, sessionId) {
       switch (block.kind) {
         case 'heading':
           return h(`h${block.level}`, { className: `sb-h${block.level}` }, h(RichText, { text: block.text }))
@@ -521,7 +764,11 @@ window.__ModuleLoader__.load({
             'div',
             null,
             block.filename === undefined ? null : h('div', { className: 'sb-slug' }, block.filename),
-            h('pre', { className: 'sb-code' }, block.code),
+            h(
+              'pre',
+              { className: 'sb-code' },
+              h('code', { className: codeClass(block.lang) }, block.code),
+            ),
           )
         case 'image':
           return h(
@@ -540,13 +787,7 @@ window.__ModuleLoader__.load({
             block.caption === undefined ? null : h('p', { className: 'sb-p' }, h(RichText, { text: block.caption })),
           )
         case 'uml':
-          return h(
-            'div',
-            null,
-            h('div', { className: 'sb-slug' }, `${block.engine} · ${block.diagram}`),
-            h('pre', { className: 'sb-code' }, block.source),
-            h('p', { className: 'sb-missing' }, 'Diagram rendering arrives with the UML milestone.'),
-          )
+          return h(Diagram, { block, sessionId })
         case 'group':
           return h(
             'div',
@@ -1013,7 +1254,7 @@ window.__ModuleLoader__.load({
             'pre',
             { className: 'sb-code', key },
             block.lang === '' ? null : h('div', { className: 'sb-codeLang' }, block.lang),
-            h('code', null, block.text),
+            h('code', { className: codeClass(block.lang) }, block.text),
           )
         case 'heading': {
           const level = Math.min(Math.max(block.level, 1), 6)
@@ -1670,6 +1911,7 @@ window.__ModuleLoader__.load({
                     selected,
                     byId,
                     regions,
+                    sessionId,
                   }),
               pageEdges.length > 0 && h(EdgeLayer, { containerRef, blocks: pageBlocks, edges: pageEdges }),
               marquee !== null &&
@@ -1706,7 +1948,7 @@ window.__ModuleLoader__.load({
     }
 
     /** One block, with its selection state. */
-    function Block({ block, selected, region, cell }) {
+    function Block({ block, selected, region, cell, sessionId }) {
       // A region is annotation, so it tints the block and adds its label — it never moves anything.
       const tone = region?.tone === undefined || region.tone === 'neutral' ? '' : ` sb-tone-${region.tone}`
       return h(
@@ -1726,7 +1968,7 @@ window.__ModuleLoader__.load({
           h('span', { className: 'sb-kind' }, block.kind),
           region?.label !== undefined && h('span', { className: `sb-regionTag${tone}` }, region.label),
         ),
-        renderBlockBody(block),
+        renderBlockBody(block, sessionId),
       )
     }
 
@@ -1738,10 +1980,10 @@ window.__ModuleLoader__.load({
      * geometry, which is what makes "the Agent declares structure, the engine decides where things
      * go" true rather than aspirational.
      *
-     * @param props - `{ blocks, layout, width, selected, byId, regions }`.
+     * @param props - `{ blocks, layout, width, selected, byId, regions, sessionId }`.
      * @returns the rendered level.
      */
-    function BlockTree({ blocks, layout, width, selected, byId, regions }) {
+    function BlockTree({ blocks, layout, width, selected, byId, regions, sessionId }) {
       const roots = rootBlocksOf(blocks)
       const cells = layout?.params?.cells
       return h(
@@ -1751,16 +1993,25 @@ window.__ModuleLoader__.load({
           style: layoutStyle(layout, width),
         },
         roots.map((block) =>
-          h(BlockNode, { key: block.id, block, width, selected, byId, regions, cell: cells?.[block.id] }),
+          h(BlockNode, {
+            key: block.id,
+            block,
+            width,
+            selected,
+            byId,
+            regions,
+            sessionId,
+            cell: cells?.[block.id],
+          }),
         ),
       )
     }
 
     /** One node of the tree: a container, or a leaf block. */
-    function BlockNode({ block, width, selected, byId, regions, cell }) {
+    function BlockNode({ block, width, selected, byId, regions, cell, sessionId }) {
       const region = block.regionId === undefined ? undefined : regions.get(block.regionId)
 
-      if (block.kind !== 'group') return h(Block, { block, selected: selected.has(block.id), region, cell })
+      if (block.kind !== 'group') return h(Block, { block, selected: selected.has(block.id), region, cell, sessionId })
 
       const children = (block.children ?? []).map((id) => byId.get(id)).filter((child) => child !== undefined)
       const innerCells = block.layout?.params?.cells
@@ -1805,6 +2056,7 @@ window.__ModuleLoader__.load({
               selected,
               byId,
               regions,
+              sessionId,
               cell: innerCells?.[child.id],
             }),
           ),
@@ -1965,6 +2217,11 @@ window.__ModuleLoader__.load({
       BlockNode,
       Block,
       Markdown,
+      // The diagram card and the class it puts on a code element. Exported for the same reason as
+      // the rest: the failure this milestone fixes was invisible to every pure helper.
+      Diagram,
+      codeClass,
+      svgDataUrl,
     }
   },
 })

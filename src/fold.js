@@ -42,6 +42,7 @@ import {
   LAYOUT_TEMPLATES,
   ID_PREFIX,
 } from './model.js'
+import { diagnoseModel } from './diagnose.js'
 
 /** The tool whose calls this fold consumes. */
 export const BOARD_TOOL_NAME = 'board_apply'
@@ -208,7 +209,15 @@ function commit(state, callId, args, seq) {
   const revSeq = state.model.revSeq + 1
   const revHash = sha256Hex(encodeModelForHash(draft)).slice(0, 16)
   const model = { ...draft, revSeq, revHash, rev: composeRev(revSeq, revHash) }
-  const next = { ...rest, model, modelVersion: BOARD_MODEL_VERSION }
+  // Diagnostics are recomputed here rather than at read time: the fold is the only place that
+  // knows a write happened, and a broken diagram has to reach the Agent even if nobody ever
+  // opens the board. See `src/diagnose.js`.
+  const next = {
+    ...rest,
+    model,
+    modelVersion: BOARD_MODEL_VERSION,
+    diag: diagnoseModel(model, rest.diag, model.rev),
+  }
   return next
 }
 

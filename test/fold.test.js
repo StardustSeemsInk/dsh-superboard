@@ -107,6 +107,45 @@ test('a failed op drops the whole batch', () => {
   )
 })
 
+test('a diagnostic is part of the projection, so a replay rebuilds it from the log', () => {
+  // The projection has to be a pure function of the events, or a reloaded session would show a
+  // different board than the one that was written. Recomputing diagnostics on every committed
+  // batch is what buys that, and this is the check that it holds.
+  const events = [
+    ...applied(10, 'c1', {
+      ops: [{ op: 'add_block', page: 'main', kind: 'uml', slug: 'flow', source: '这不是图' }],
+    }),
+    ...applied(20, 'c2', {
+      ops: [{ op: 'add_block', page: 'main', kind: 'uml', slug: 'fine', source: 'flowchart TD\n  A-->B' }],
+    }),
+  ]
+  const first = foldAll(events)
+  const second = foldAll(events)
+
+  assert.deepEqual(Object.keys(first.diag).sort(), Object.keys(second.diag).sort())
+  assert.equal(Object.keys(first.diag).length, 1, 'only the diagram that does not parse is reported')
+  assert.deepEqual(first.diag, second.diag, 'including the revision it was first seen at')
+  assert.ok(!Object.values(first.diag).some((entry) => entry.blockSlug === 'fine'), 'a working diagram is not reported')
+})
+
+test('a rejected batch leaves the diagnostics exactly as they were', () => {
+  // A rejected batch is not a no-op: it records why, so the Agent learns from the outline without
+  // re-reading. What it must not do is touch the board — and diagnostics are recomputed from the
+  // board, so a stale set here would be a second, quieter copy of the failure.
+  const bad = foldAll(applied(10, 'c1', {
+    ops: [{ op: 'add_block', page: 'main', kind: 'uml', slug: 'flow', source: '这不是图' }],
+  }))
+  const before = bad.diag
+  const after = applied(20, 'c2', {
+    ops: [{ op: 'add_block', page: 'nope', kind: 'prose', markdown: 'x' }],
+  }).reduce((state, event) => foldBoard(state, event), bad)
+
+  assert.equal(after.model.rev, bad.model.rev, 'the revision must not move')
+  assert.equal(after.model.pages, bad.model.pages, 'not even a new copy of the pages')
+  assert.deepEqual(after.diag, before, 'and the diagnostics still describe the board that exists')
+  assert.match(after.lastOpError.message, /no page matches "nope"/, 'the reason is recorded')
+})
+
 test('the same log always folds to the same board', () => {
   const events = [
     ...applied(10, 'c1', addHeading),

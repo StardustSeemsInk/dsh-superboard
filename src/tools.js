@@ -23,6 +23,7 @@
 
 import { BoardOpError, applyOps, previewRevision, OP_NAMES } from './fold.js'
 import { EDGE_RELS, LAYOUT_TEMPLATES } from './model.js'
+import { blockIndex } from './runtime.js'
 import {
   arrayOf,
   bool,
@@ -261,9 +262,16 @@ export function renderOutlineText(doc, options = {}) {
     }
   }
 
-  if ((include === 'all' || include === 'diag') && Object.keys(doc.diag ?? {}).length > 0) {
+  // Two ways a diagram is known to be broken, printed in one section: the host lint predicted it
+  // while folding, or the browser reported it after trying. The Agent is told the same thing
+  // either way — the diagram is not on the board, and why.
+  const renderReports = options.renderReports ?? []
+  if ((include === 'all' || include === 'diag') && (Object.keys(doc.diag ?? {}).length > 0 || renderReports.length > 0)) {
     lines.push('')
     lines.push('render failures:')
+    for (const report of renderReports) {
+      lines.push(`  ${report.blockSlug}  RENDERER: ${report.message}`)
+    }
     for (const diagnostic of Object.values(doc.diag)) {
       lines.push(`  ${diagnostic.blockSlug}  ${diagnostic.code}: ${diagnostic.message}`)
     }
@@ -442,20 +450,52 @@ const readTool = defineBoardTool({
   render: (_args, value) => textResult(value.text),
 })
 
+/**
+ * Collect every reason a block is known to be broken, for the Agent.
+ *
+ * Two sources, presented identically, because to the Agent they are one thing — *this diagram is
+ * not on the board*. They differ in how they were found: the host lint is a prediction made
+ * while folding (and is therefore part of the projection, surviving replay), while a render
+ * report is an observation the browser sent after actually trying. The renderer's message is
+ * listed first when both exist, because it is the more specific of the two.
+ *
+ * @param doc - the board document.
+ * @param renderReports - live reports from the board view, if any.
+ * @returns `(blockId) => string[]`.
+ */
+function failureNotes(doc, renderReports) {
+  const notes = new Map()
+  const push = (blockId, line) => {
+    const list = notes.get(blockId)
+    if (list === undefined) notes.set(blockId, [line])
+    else list.push(line)
+  }
+  for (const report of renderReports ?? []) {
+    push(report.blockId, `⚠ the board renderer reported a failure: ${report.message}`)
+  }
+  for (const diagnostic of Object.values(doc.diag ?? {})) {
+    push(
+      diagnostic.blockId,
+      `⚠ this diagram does not parse (${diagnostic.code}, first failing at ${diagnostic.firstFailedAtRev}): ${diagnostic.message}`,
+    )
+  }
+  return (blockId) => notes.get(blockId) ?? []
+}
+
 /** Render one resolved element as markdown, at the requested depth. */
-function renderElementMarkdown(model, found, depth) {
+function renderElementMarkdown(model, found, depth, noteFor = () => []) {
   const element = found.element
   switch (found.kind) {
     case 'page': {
       const header = `# page ${element.slug}  (${element.id})`
       if (depth === 'page' || depth === 'region') {
-        const blocks = element.blocks.map((block) => renderBlock(block)).join('\n\n')
+        const blocks = element.blocks.map((block) => renderBlock(block, noteFor(block.id))).join('\n\n')
         return `${header}\n\n${blocks}`
       }
       return `${header}\n\n${element.blocks.length} block(s): ${element.blocks.map((block) => block.slug).join(', ')}`
     }
     case 'block':
-      return renderBlock(element)
+      return renderBlock(element, noteFor(element.id))
     case 'edge':
       return [
         `edge ${element.slug}  (${element.id})`,
@@ -473,7 +513,7 @@ function renderElementMarkdown(model, found, depth) {
         const bodies = element.blockIds
           .map((id) => model.pages.flatMap((page) => page.blocks).find((block) => block.id === id))
           .filter((block) => block !== undefined)
-          .map((block) => renderBlock(block))
+          .map((block) => renderBlock(block, noteFor(block.id)))
           .join('\n\n')
         return `${header}\nmembers: ${members}\n\n${bodies}`
       }
@@ -485,29 +525,30 @@ function renderElementMarkdown(model, found, depth) {
 }
 
 /** Render one block as markdown, with its address so the Agent can patch it. */
-function renderBlock(block) {
+function renderBlock(block, notes = []) {
   const head = `▸ ${block.slug}  [${block.kind}]  (${block.id})`
+  const tail = notes.length === 0 ? '' : `\n${notes.join('\n')}`
   switch (block.kind) {
     case 'heading':
-      return `${head}\n${'#'.repeat(block.level)} ${block.text}`
+      return `${head}\n${'#'.repeat(block.level)} ${block.text}${tail}`
     case 'prose':
-      return `${head}\n${block.markdown}`
+      return `${head}\n${block.markdown}${tail}`
     case 'list':
       return `${head}\n${block.items
         .map((item, index) => `${'  '.repeat(item.depth)}${block.ordered ? `${index + 1}.` : '-'} ${item.text}`)
-        .join('\n')}`
+        .join('\n')}${tail}`
     case 'code':
-      return `${head}\n\`\`\`${block.lang}${block.filename === undefined ? '' : ` ${block.filename}`}\n${block.code}\n\`\`\``
+      return `${head}\n\`\`\`${block.lang}${block.filename === undefined ? '' : ` ${block.filename}`}\n${block.code}\n\`\`\`${tail}`
     case 'uml':
-      return `${head}\n\`\`\`${block.engine} (${block.diagram})\n${block.source}\n\`\`\``
+      return `${head}\n\`\`\`${block.engine} (${block.diagram})\n${block.source}\n\`\`\`${tail}`
     case 'image':
-      return `${head}\nsrc: ${block.src}\nalt: ${block.alt}${block.caption === undefined ? '' : `\ncaption: ${block.caption}`}`
+      return `${head}\nsrc: ${block.src}\nalt: ${block.alt}${block.caption === undefined ? '' : `\ncaption: ${block.caption}`}${tail}`
     case 'pdf-page':
-      return `${head}\nsrc: ${block.src}\npage: ${block.page}${block.caption === undefined ? '' : `\ncaption: ${block.caption}`}`
+      return `${head}\nsrc: ${block.src}\npage: ${block.page}${block.caption === undefined ? '' : `\ncaption: ${block.caption}`}${tail}`
     case 'group':
-      return `${head}\ntitle: ${block.title ?? '(none)'}\nchildren: ${block.children.join(', ')}`
+      return `${head}\ntitle: ${block.title ?? '(none)'}\nchildren: ${block.children.join(', ')}${tail}`
     default:
-      return `${head}\n${JSON.stringify(block, null, 2)}`
+      return `${head}\n${JSON.stringify(block, null, 2)}${tail}`
   }
 }
 
@@ -1212,10 +1253,21 @@ export const BOARD_TOOLS = Object.freeze([outlineTool, readTool, applyTool, quer
  * @param projections - the session-projection registry, from `ctx.inject`.
  * @returns the disposers, so the caller can own them in its own effect.
  */
-export function registerBoardTools(ctx, projections) {
+export function registerBoardTools(ctx, projections, reports) {
   const read = (exec) => readBoard(projections, exec)
-  outlineTool.execute = (args, exec) => executeOutline(read(exec), args)
-  readTool.execute = (args, exec) => executeRead(read(exec), args)
+  // Reports are volatile and per-session, so they are resolved at call time rather than held in
+  // the projection — see `RenderReports` for why an observation about the DOM cannot live there.
+  const reportsFor = (exec, doc) =>
+    reports === undefined ? [] : reports.live(exec?.agent?.session?.id, blockIndex(doc.model))
+
+  outlineTool.execute = (args, exec) => {
+    const doc = read(exec)
+    return executeOutline(doc, args, reportsFor(exec, doc))
+  }
+  readTool.execute = (args, exec) => {
+    const doc = read(exec)
+    return executeRead(doc, args, reportsFor(exec, doc))
+  }
   applyTool.execute = (args, exec) => executeApply(read(exec), args)
   queryTool.execute = (args, exec) => executeQuery(read(exec), args)
   return BOARD_TOOLS.map((tool) => ctx.tools.register(tool))
@@ -1249,8 +1301,8 @@ function readBoard(projections, exec) {
 }
 
 /** `board_outline`. */
-function executeOutline(doc, args) {
-  const rendered = renderOutlineText(doc, args)
+function executeOutline(doc, args, renderReports = []) {
+  const rendered = renderOutlineText(doc, { ...args, renderReports })
   const model = doc.model
 
   return {
@@ -1277,11 +1329,20 @@ function executeOutline(doc, args) {
       ...(edge.label === undefined ? {} : { label: edge.label }),
       ...(isDangling(model, edge) ? { dangling: true } : {}),
     })),
-    diag: Object.values(doc.diag ?? {}).map((diagnostic) => ({
-      block: diagnostic.blockSlug,
-      code: diagnostic.code,
-      message: diagnostic.message,
-    })),
+    // One list, two origins. `RENDERER` means the browser tried and failed, which is a stronger
+    // statement than any prediction the host can make — so it is listed first.
+    diag: [
+      ...renderReports.map((report) => ({
+        block: report.blockSlug,
+        code: 'RENDERER',
+        message: report.message,
+      })),
+      ...Object.values(doc.diag ?? {}).map((diagnostic) => ({
+        block: diagnostic.blockSlug,
+        code: diagnostic.code,
+        message: diagnostic.message,
+      })),
+    ],
     truncated: rendered.truncated,
     ...(rendered.omitted === undefined ? {} : { omitted: rendered.omitted }),
     text: rendered.text,
@@ -1289,10 +1350,11 @@ function executeOutline(doc, args) {
 }
 
 /** `board_read`. */
-function executeRead(doc, args) {
+function executeRead(doc, args, renderReports = []) {
   const model = doc.model
   const format = args.format ?? 'markdown'
   const depth = args.depth ?? 'block'
+  const noteFor = failureNotes(doc, renderReports)
   const resolved = []
   const sections = []
 
@@ -1308,7 +1370,7 @@ function executeRead(doc, args) {
     sections.push(
       format === 'json'
         ? JSON.stringify(found.element, null, 2)
-        : renderElementMarkdown(model, found, depth),
+        : renderElementMarkdown(model, found, depth, noteFor),
     )
   }
 

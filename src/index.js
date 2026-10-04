@@ -35,6 +35,7 @@ import {
 } from './activity.js'
 import { emptyBoardDoc, BOARD_MODEL_VERSION } from './model.js'
 import { boardDocSchema, boardWireSchema, toWire } from './schema.js'
+import { blockIndex, registerRuntimeRoutes, RenderReports } from './runtime.js'
 import { registerBoardTools, renderOutlineText } from './tools.js'
 
 /** The plugin name, used for prompt-context attribution and diagnostics. */
@@ -67,6 +68,17 @@ const STANDING_OUTLINE_CHARS = 1600
  *   plugin unloads, which is why nothing is registered on any other context.
  */
 export function apply(ctx) {
+  // What the browser last said about drawing a diagram. Created here rather than module-level so
+  // it belongs to this plugin instance: a reload starts with a clean slate, which is correct,
+  // because a report describes DOM that no longer exists.
+  const reports = new RenderReports()
+
+  // Optional: a profile without a web server still gets the whole board, just without diagrams —
+  // `ctx.inject` keeps the plugin inactive for services it does not have rather than throwing.
+  ctx.inject(['webServer'], (scope) => {
+    registerRuntimeRoutes(scope, reports)
+  })
+
   ctx.inject(['sessionProjections'], (projectionScope) => {
     const projections = projectionScope.sessionProjections
 
@@ -96,14 +108,14 @@ export function apply(ctx) {
     })
 
     ctx.inject(['tools'], (scope) => {
-      registerBoardTools(scope, projections)
+      registerBoardTools(scope, projections, reports)
     })
 
     ctx.inject(['systemPrompt'], (scope) => {
       scope.systemPrompt.context({
         name: `${PLUGIN_NAME}:board`,
         order: BOARD_CONTEXT_ORDER,
-        text: (context) => renderStandingOutline(projections, context),
+        text: (context) => renderStandingOutline(projections, context, reports),
       })
     })
   })
@@ -122,9 +134,10 @@ export function apply(ctx) {
  *
  * @param projections - the session-projection registry.
  * @param context - the assembly context for this step.
+ * @param reports - the board view's render reports, if the web server is up.
  * @returns the prompt line, or `''` while the board has nothing to say.
  */
-function renderStandingOutline(projections, context) {
+function renderStandingOutline(projections, context, reports) {
   const session = context?.agent?.session
   if (session === undefined) return ''
   const state = safeStateOf(projections, session)
@@ -132,9 +145,10 @@ function renderStandingOutline(projections, context) {
 
   const model = state.model
   const hasContent = model.pages.some((page) => page.blocks.length > 0) || model.edges.length > 0
+  const renderReports = reports?.live?.(session.id, blockIndex(model)) ?? []
   if (!hasContent && state.lastOpError === undefined) return ''
 
-  const { text } = renderOutlineText(state, { maxChars: STANDING_OUTLINE_CHARS })
+  const { text } = renderOutlineText(state, { maxChars: STANDING_OUTLINE_CHARS, renderReports })
   return [
     text,
     '',

@@ -25,9 +25,11 @@
   },
   "files": [
     "src",
+    "vendor",
     "cordis.patch.yml"
   ],
   "scripts": {
+    "vendor:mermaid": "node scripts/vendor-mermaid.mjs",
     "test": "node --test \"test/**/*.test.js\"",
     "verify": "node --test \"test/**/*.test.js\" && node -e \"import('dsh-superboard').then(m => { if (typeof m.apply !== 'function') throw new Error('host half does not export apply()'); console.log('host half ok, exports:', Object.keys(m).join(', ')) })\""
   },
@@ -42,7 +44,8 @@
   "devDependencies": {
     "@deepseek-ai/dsh-session-projection": "0.2.0-rc.2",
     "@deepseek-ai/dsh-system-prompt": "0.2.0-rc.2",
-    "@deepseek-ai/dsh-tools": "0.2.0-rc.2"
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
+    "mermaid": "11.17.2"
   },
   "dsh": {
     "bundle": {

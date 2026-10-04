@@ -36,6 +36,7 @@ import { test } from 'node:test'
 
 import { foldBoard } from '../src/fold.js'
 import { emptyBoardDoc } from '../src/model.js'
+import { RenderReports } from '../src/runtime.js'
 import { BOARD_TOOLS, registerBoardTools } from '../src/tools.js'
 
 /** DSH's real validators, when the extracted application is available. */
@@ -89,11 +90,12 @@ function richDoc() {
 }
 
 /** Register the tools against a fake registry and return a caller bound to one board. */
-function harness(doc) {
+function harness(doc, reports) {
   const registered = []
   registerBoardTools(
     { tools: { register: (definition) => (registered.push(definition), () => {}) } },
     { stateOf: () => doc },
+    reports,
   )
   return {
     registered,
@@ -120,10 +122,11 @@ function harness(doc) {
  * @param name - the tool to drive.
  * @param args - its arguments.
  * @param doc - the board it should read.
+ * @param reports - live render reports, when the test is about those.
  * @returns the validated value and the rendered content.
  */
-function drive(name, args, doc) {
-  const h = harness(doc)
+function drive(name, args, doc, reports) {
+  const h = harness(doc, reports)
   const tool = h.tool(name)
   const value = h.call(name, args)
 
@@ -327,4 +330,115 @@ test('the whole tool set is covered by this file', () => {
   for (const tool of BOARD_TOOLS) {
     assert.ok(driven.has(tool.name), `${tool.name} has no output-contract coverage — add it here`)
   }
+})
+
+// ---------------------------------------------------------------------------
+// Diagrams: a broken one has to be visible without the Agent asking
+// ---------------------------------------------------------------------------
+
+/** The id of a block, by the slug the fixture gave it. */
+function findBlockId(doc, slug) {
+  for (const page of doc.model.pages) {
+    const found = page.blocks.find((block) => block.slug === slug)
+    if (found !== undefined) return found.id
+  }
+  throw new Error(`no block with slug ${JSON.stringify(slug)}`)
+}
+
+/**
+ * A board whose diagrams are broken in both ways the host can be certain about, beside one that
+ * works.
+ *
+ * The lint itself is tested in `diagnose.test.js`. What is tested here is that its answer arrives
+ * in the tool output the Agent already reads: a diagnostic that lives in the projection and never
+ * reaches the outline is one the Agent has to think to ask for, which is the same as not having it.
+ */
+function brokenDiagramDoc() {
+  return foldEvents([
+    ...applied(10, 'c1', {
+      ops: [
+        { op: 'add_block', page: 'main', kind: 'heading', level: 1, slug: 'arch', text: '架构总览' },
+        { op: 'add_block', page: 'main', kind: 'uml', slug: 'flow', source: '这是一段散文，不是图' },
+        { op: 'add_block', page: 'main', kind: 'uml', slug: 'blank', source: '   ' },
+        { op: 'add_block', page: 'main', kind: 'uml', slug: 'good', source: 'flowchart TD\n  A-->B' },
+      ],
+    }),
+  ])
+}
+
+test('a broken diagram says so in the outline, and a working one stays quiet', () => {
+  const { value, content } = drive('board_outline', {}, brokenDiagramDoc())
+  const text = content[0].text
+
+  assert.deepEqual(value.diag.map((entry) => entry.block).sort(), ['blank', 'flow'])
+  assert.equal(value.diag.find((entry) => entry.block === 'flow').code, 'UNSUPPORTED')
+  assert.equal(value.diag.find((entry) => entry.block === 'blank').code, 'PARSE')
+  assert.ok(!value.diag.some((entry) => entry.block === 'good'), 'a diagram mermaid accepts is not reported')
+
+  assert.match(text, /render failures:/)
+  assert.match(text, /flow\s+UNSUPPORTED/)
+  assert.match(text, /blank\s+PARSE/)
+})
+
+test('the outline can be asked for diagnostics alone, which is the cheap way to re-check', () => {
+  const { value, content } = drive('board_outline', { include: 'diag' }, brokenDiagramDoc())
+  assert.equal(value.diag.length, 2)
+  assert.ok(!content[0].text.includes('page main'), 'the cheap read must not carry the pages')
+})
+
+test('a board with diagnostics still satisfies the contract when read block by block', () => {
+  // `diag` grew a second meaning in this milestone: the host's prediction and the renderer's
+  // observation share one field. The schema is the thing that would break, so drive it.
+  drive('board_read', { refs: ['flow'] }, brokenDiagramDoc())
+})
+
+test('a renderer report rides the same channel as the host\u2019s own prediction', () => {
+  const doc = brokenDiagramDoc()
+  const reports = new RenderReports()
+  reports.record('sess-out', {
+    blockId: findBlockId(doc, 'good'),
+    blockSlug: 'good',
+    source: 'flowchart TD\n  A-->B',
+    message: 'Parse error on line 3',
+  })
+
+  const { value, content } = drive('board_outline', {}, doc, reports)
+  assert.match(content[0].text, /good\s+RENDERER: Parse error on line 3/)
+  assert.equal(value.diag.find((entry) => entry.block === 'good').code, 'RENDERER')
+
+  // The block-level read carries it too, so the Agent that looks at one diagram rather than the
+  // overview still learns that it is not drawing. The two surfaces use different words on purpose:
+  // the outline lists codes, the block shows the sentence.
+  const read = drive('board_read', { refs: ['good'] }, doc, reports)
+  assert.match(read.content[0].text, /the board renderer reported a failure: Parse error on line 3/)
+})
+
+test('a report about a version of the block that no longer exists is not repeated', () => {
+  // Reports are retired by comparing the source they were made against to the block's current one.
+  // Nothing expires them, so this comparison is the only thing between a fixed diagram and a
+  // complaint about a mistake that was already corrected.
+  const doc = brokenDiagramDoc()
+  const reports = new RenderReports()
+  reports.record('sess-out', {
+    blockId: findBlockId(doc, 'good'),
+    blockSlug: 'good',
+    source: 'an older version of the source',
+    message: 'stale complaint',
+  })
+
+  const stale = drive('board_outline', {}, doc, reports)
+  assert.ok(!stale.content[0].text.includes('stale complaint'), 'a report that no longer describes the block is dropped')
+  assert.deepEqual(stale.value.diag.map((entry) => entry.block).sort(), ['blank', 'flow'])
+
+  // The same block, reported against the source it actually has: now it counts. A second report for
+  // one block replaces the first rather than queueing behind it — there is only ever one current
+  // render of a block, so a history of its failures is a history of things already fixed.
+  reports.record('sess-out', {
+    blockId: findBlockId(doc, 'good'),
+    blockSlug: 'good',
+    source: 'flowchart TD\n  A-->B',
+    message: 'Parse error on line 3',
+  })
+  const fresh = drive('board_outline', {}, doc, reports)
+  assert.match(fresh.content[0].text, /good\s+RENDERER: Parse error on line 3/)
 })
