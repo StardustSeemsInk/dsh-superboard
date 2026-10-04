@@ -84,8 +84,8 @@
     <div id="chips"></div>
     <div class="caption">
       <div>
-        <div class="label" id="cap-label">UML 直接画在卡片里</div>
-        <div class="sub" id="cap-sub">mermaid 11.17.2 随插件自带，不依赖网页环境</div>
+        <div class="label" id="cap-label">图，直接画在卡片里</div>
+        <div class="sub" id="cap-sub">mermaid 自带，不开网页就能画</div>
       </div>
       <div class="index" id="cap-index">05</div>
     </div>
@@ -366,9 +366,9 @@
       })
 
       const CHIPS = [
-        ['mermaid 11.17.2', '自带运行时'],
-        ['theme: base', '唯一尊重完整变量的主题'],
-        ['渲染错误回传', 'Agent 下一步就看见'],
+        ['mermaid', '自带'],
+        ['浅 / 深主题', '图跟着换'],
+        ['画错会回传', 'Agent 下一步就看见'],
       ]
 
       /** Draw the vignette around one card, or hide it. `null` hides it. */
@@ -445,18 +445,18 @@
         const sub = document.getElementById('cap-sub')
 
         if (inFix) {
-          label.textContent = '画不出来时，把原因交回 Agent'
-          sub.textContent = '卡片保留源码与失败原因；原因经 render-report 回到宿主，下一轮 board_outline 就能看到'
+          label.textContent = '画不出来时，原因写回给它'
+          sub.textContent = '卡片留下源码与原因，下一轮它就看得见'
           document.getElementById('cap-index').textContent = '06'
           setChips([false, false, true])
         } else {
           if (inTheme) {
-            label.textContent = '图跟随主题，而不是对着主题干'
-            sub.textContent = '同一个块、同一份源码：换主题后重新烘进 SVG，无需重画'
+            label.textContent = '换主题，图跟着变'
+            sub.textContent = '同一张图，深浅两套自动重画'
             setChips([true, true, false])
           } else {
-            label.textContent = 'UML 直接画在卡片里'
-            sub.textContent = 'mermaid 11.17.2 随插件自带，不依赖网页环境'
+            label.textContent = '图，直接画在卡片里'
+            sub.textContent = 'mermaid 自带，不开网页就能画'
             setChips([true, false, false])
           }
           document.getElementById('cap-index').textContent = '05'

@@ -161,7 +161,7 @@
     <div id="camera"><div id="mount"></div></div>
     <aside id="panel">
       <h3>board_read · pdf1</h3>
-      <p class="hint">宿主侧 pdf.js 解析文本层，把每一行的归一化矩形打印出来给 Agent。</p>
+      <p class="hint">pdf.js 把每行文字和它的位置读出来，交给 Agent。</p>
       <pre id="table"></pre>
       <div id="readout">
         <div class="quad" id="quad">—</div>
@@ -261,10 +261,10 @@
       ]
 
       const CAPTIONS = [
-        { at: 0, label: 'PDF 整页与图片，钉在看板上', sub: 'PDF 在浏览器里现栅格化；图片走 DSH 自己的 /api/file' },
-        { at: 2.0, label: 'Agent 看不到像素', sub: '所以坐标必须由宿主读出来给它：pdf.js 6.3.289 解析 PDF 的文本层' },
-        { at: 3.0, label: '每一行的归一化矩形', sub: 'Agent 拿到的是文字 + 它在页面上的位置：四个 0..1 的数就定位一行' },
-        { at: 6.0, label: '文本表就是交付物', sub: '0..1、原点在左上，与渲染 DPI、容器宽度、缩放级别全部无关' },
+        { at: 0, label: 'PDF、图片，钉在看板上', sub: '整页摆出来，随时都在' },
+        { at: 2.0, label: 'Agent 看不到像素', sub: '每行字的位置，由系统读出来给它' },
+        { at: 3.0, label: '每一行，都有坐标', sub: '文字加位置，四个数定一行' },
+        { at: 6.0, label: '它拿到的，就是这份表', sub: '跟分辨率、缩放都无关' },
       ]
 
       /* ---------- build ---------- */
@@ -339,7 +339,7 @@
       }
 
       const marks = document.getElementById('marks')
-      for (const text of ['pdf.js 6.3.289', '/api/file', 'pdf-page', 'image']) {
+      for (const text of ['pdf.js', '系统文件', 'pdf-page', 'image']) {
         const pill = document.createElement('span')
         pill.className = 'pill'
         pill.textContent = text

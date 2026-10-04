@@ -125,7 +125,7 @@
     <div id="stage">
       <div id="head">
         <div>
-          <div class="claim">看板 <span class="eq">＝</span> 会话日志里所有成功的 <span style="font-family: var(--font-mono); font-size: 28px">board_apply</span> 折叠出来的</div>
+          <div class="claim">Agent 边想边写，看板一块块长出来</div>
           <div class="note">版本对不上就整批拒绝，还会告诉你为什么</div>
         </div>
         <div class="spacer"></div>
@@ -136,9 +136,9 @@
         <div id="railwrap">
           <div id="railHead">
             <span class="who">Agent 侧</span>
-            <span>board_apply 调用流</span>
+            <span>Agent 往看板写了什么</span>
             <span class="spacer"></span>
-            <span class="frame">按批抽帧：第 1–8 批连续，再跳到第 28 批</span>
+            <span class="frame">真实会话 · 节选</span>
           </div>
           <div id="rail"><!-- rows are injected from the log --></div>
         </div>
@@ -185,7 +185,7 @@
           note: '{ "expected_revision": "0", "ops": [], "note": "probe for the current revision" }',
           res: 'Error: stale board revision: expected 0 but the board is now r0-000000000000.',
           tail: 'Nothing was applied. Call board_outline to see the current state, then re-issue the ops you still want.',
-          after: '整批拒绝，一个 op 都没跑；日志里什么都没留下',
+          after: '整批拒绝，什么都没写进去',
         },
         {
           seq: 7473, exp: 'r0-000000000000', ops: 22,
@@ -243,7 +243,7 @@
           opsText: '"ops": [{"op": "add_page", "page": "issues"}, {"op": "add_block", "page": "issues", "kind": "heading", "level": 2, "slug": "ihead", …',
           res: 'Board updated: 5 op(s) applied.',
           hist: 'add_page ×1 · add_block ×4',
-          after: '第 5 页 issues 同时开出',
+          after: '第五页跟着一起开出来',
         },
         {
           seq: 16399, exp: 'r27-2cb62705203e', ops: 6,
@@ -272,25 +272,25 @@
        * ===================================================================== */
       const BOARDS = [
         { rev: 'r0-000000000000', seq: 0, bound: -1, page: 'main', focus: null,
-          label: '先立闸：过期的写入整批拒绝', sub: 'expected_revision 写着 0，对不上任何 rev —— 什么都没应用' },
+          label: '版本对不上，整批拒绝', sub: '拒绝时，它把当前版本告诉你' },
         { rev: 'r1-097fe8c772d7', seq: 1, bound: 0, page: 'roadmap', focus: null,
-          label: '第 1 批 · 22 个 op 一次落板', sub: '拒绝信息本身就报出了当前 rev，重发的那一批直接用它' },
+          label: '第 1 批 · 22 处改动，一次落板', sub: '照着它给的版本重发，就成了' },
         { rev: 'r2-b824dfa681e4', seq: 2, bound: 1, page: 'questions', focus: 'q10',
-          label: '第 2 批 · 7 个 op', sub: '删掉脚手架页 main，三个待决问题入板' },
+          label: '第 2 批 · 7 处改动', sub: '脚手架页删掉，三个问题入板' },
         { rev: 'r3-65e201f5ce8e', seq: 3, bound: 2, page: 'research', focus: null,
-          label: '第 3 批 · 18 个 op', sub: '新开 research 页：10 个块一次成型' },
+          label: '第 3 批 · 18 处改动', sub: '调研页一次成型：10 个块排好' },
         { rev: 'r4-bc55914b4d49', seq: 4, bound: 3, page: 'questions', focus: 'q16',
-          label: '第 4 批 · 4 个 op', sub: 'q16 / q17 落板 —— UML 的渲染归属定了' },
+          label: '第 4 批 · 4 处改动', sub: '两个问题落板：UML 谁来画，定了' },
         { rev: 'r5-948e8947d97b', seq: 5, bound: 4, page: 'questions', focus: 'q18',
-          label: '第 5 批 · 3 个 op', sub: 'q18 / q19 落板：节点表与 PDF 都排上了' },
+          label: '第 5 批 · 3 处改动', sub: '又两个问题定了：节点表、PDF 排上' },
         { rev: 'r6-c8d67db9905e', seq: 6, bound: 5, page: 'questions', focus: 'q14',
-          label: '第 6 批 · 4 个 op 全是 update_block', sub: '一个块都没增删 —— 折叠的是内容，不只是追加' },
+          label: '第 6 批 · 4 处改动，全是改内容', sub: '一个块都没增删，只改内容' },
         { rev: 'r7-97883ebc964b', seq: 7, bound: 6, page: 'architecture', focus: 'loop',
-          label: '第 7 批 · 7 个 op', sub: '新开 architecture 页，这张图跟着这一批一起落板' },
+          label: '第 7 批 · 7 处改动', sub: '架构页开出来，这张图跟着落板' },
         { rev: 'r8-25b3ff2c81e8', seq: 8, bound: 7, page: 'architecture', focus: null,
-          label: '第 8 批 · 5 个 op', sub: '验收结论落进 architecture；第 5 页 issues 同时开出' },
+          label: '第 8 批 · 5 处改动', sub: '验收结论落进架构页，第五页一起开' },
         { rev: 'r28-c577192f84d9', seq: 28, bound: 27, page: 'roadmap', focus: null,
-          label: '第 28 批 · 6 个 op', sub: '65 个块 · 3 条边 · 5 页 —— 就是这条日志折叠出来的全部' },
+          label: '第 28 批 · 6 处改动', sub: '65 块 · 5 页 · 3 条连线，全程都在看板上' },
       ]
 
       const MAIN = {
@@ -471,7 +471,7 @@
         const line = document.createElement('span')
         line.className = 'line'
         const after = document.createElement('span')
-        after.textContent = '中间 20 批同样落板 ⋯'
+        after.textContent = '中间还写了很多 · 这里跳过 ⋯'
         gapRow.append(before, line, after)
         rail.append(gapRow)
         const last = buildRow(CALLS[LAST])

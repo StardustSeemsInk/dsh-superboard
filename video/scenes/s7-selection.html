@@ -137,7 +137,7 @@
     <div id="camera"><div id="mount"></div></div>
     <aside id="panel">
       <h3>结构化附件 · board-selection.json</h3>
-      <p class="hint">选区变成给 Agent 的附件：块的 slug，以及单独的一个 text 字段。</p>
+      <p class="hint">你选中的，变成给 Agent 的附件。</p>
       <pre id="payload">等待选区…</pre>
       <div id="steps"></div>
       <div id="copied">
@@ -223,12 +223,12 @@
       const ATTACH_AT = 9.4
 
       const CAPTIONS = [
-        { at: 0, label: '选中，就是把话说回去', sub: '同一个拖拽，起点决定它是框选还是选文字' },
-        { at: DOWN_AT, label: '框选：拖一个矩形', sub: '矩形与卡片相交即选中——高亮就是相交判定的结果，不是装饰' },
-        { at: UP_AT, label: '选完落进托盘', sub: '托盘是看板自己的组件，带块的 chip 和一句说明' },
-        { at: TEXT_AT, label: '起点落在文字上，就是文字选择', sub: '框到的块自动一起选上，允许跨块' },
-        { at: COPY_AT, label: 'Ctrl+C 复制的是原文', sub: '卡片标签是 user-select:none，所以 slug 不会混进正文' },
-        { at: ATTACH_AT, label: '选区变成结构化附件', sub: '块 slug 与单独的 text 字段：整块是答案，还是只有这一句' },
+        { at: 0, label: '选中，就是把话说回去', sub: '一拖，就能框选或选中文字' },
+        { at: DOWN_AT, label: '框选：拖一个矩形', sub: '扫过哪块，哪块就亮起来' },
+        { at: UP_AT, label: '选中的，落进托盘', sub: '托盘告诉你，选中了哪几块' },
+        { at: TEXT_AT, label: '点在文字上，就选中文字', sub: '选到的块，自动一起带上' },
+        { at: COPY_AT, label: 'Ctrl+C 复制的是原文', sub: '复制出来是干净正文，不带标签' },
+        { at: ATTACH_AT, label: '这几块，变成附件发给它', sub: '它分得清：你指整块，还是这一句' },
       ]
 
       let mounted = null

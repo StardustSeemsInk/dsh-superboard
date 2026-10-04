@@ -80,7 +80,7 @@
 
     <div class="caption" id="cap">
       <div class="kinds" id="kinds">
-        <span class="kindsLabel">模型里的块种类 · 8</span>
+        <span class="kindsLabel">能放的块 · 8 种</span>
       </div>
       <div class="line">
         <div>
@@ -132,19 +132,24 @@
       ]
 
       const BEATS = [
+        // The flow beat used to carry the region sentence, because the region's first half (f1)
+        // sits in the flow tile. That is a clash, not a shortcut: the ring is around `flow` while
+        // the caption talks about a tint that spans two tiles. Flow now says what flow is, and the
+        // region is explained on the masonry beat — where its *other* half (m1) is on screen, so
+        // both ends of the tint are visible while the caption points at it.
         { slug: 'flow', name: 'flow', what: '竖排，默认',
-          line: 'region 只做标注、不参与排版 —— 两块离得再远，也还是同一个标注。',
+          line: '没声明排版时，块就从上往下摞',
           calling: true },
         { slug: 'row', name: 'row', what: '横排，会换行',
           line: '给并列的小卡用：宽度不够就折到下一行。' },
-        { slug: 'cols', name: 'columns', what: 'N 等分列，行优先',
-          line: 'cols: 2 的四张卡是「两行两张」，不是「两列各两张」。' },
-        { slug: 'cells', name: 'grid + areas', what: '卡片填满，具名格',
-          line: '名字占一个实心矩形，于是这张卡能横跨两列。' },
+        { slug: 'cols', name: 'columns', what: '几列等分，按行填',
+          line: '四张卡排成两行两张，不是先填满一列' },
+        { slug: 'cells', name: 'grid + areas', what: '格子有名字，能跨列',
+          line: '给格子起个名，这张卡就横跨两列' },
         { slug: 'masonry', name: 'masonry', what: '瀑布流，各随高度',
-          line: '高度差得大就用它：短卡不留空，下一张流进最短的一列。' },
+          line: '琥珀色横跨两个容器：它只是标注，不参与排版' },
         { slug: 'canvas', name: 'canvas', what: '不排版，只做盒子',
-          line: '看板不是自由画布：每个块属于一个容器，容器决定排版。',
+          line: '不用你摆坐标，块自己各就各位',
           calling: true },
       ]
       const SPAN = DURATION / BEATS.length
@@ -204,7 +209,7 @@
       const c3 = prose('c-three', '3 · 不是先填满一列')
       const c4 = prose('c-four', '4 · 再下一行')
       const tCols = block('group', 'cols', {
-        title: 'N 等分列 · 行优先',
+        title: '几列等分 · 按行填',
         children: [c1.id, c2.id, c3.id, c4.id],
         layout: { template: 'columns', params: { cols: 2 } },
       })
@@ -215,7 +220,7 @@
       const a2 = prose('a-left', '左格')
       const a3 = prose('a-right', '右格')
       const tCells = block('group', 'cells', {
-        title: '具名格 · 跨列',
+        title: '格子有名字 · 能跨列',
         children: [a1.id, a2.id, a3.id],
         layout: {
           template: 'grid',
