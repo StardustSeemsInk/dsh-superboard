@@ -30,8 +30,14 @@
  * used to include it can no longer be produced. It was worth removing rather than leaving in place
  * — no tool could ever set it, so it was a field the document could not see, and a page count is a
  * fact about a file rather than about a board.
+ *
+ * Bumped to 5 by the I2 fix (§2.6.1): the revision gate now compares only the sequence half, never
+ * the hash. That is a change to *which batches a re-fold accepts* — a fold-semantics change — so it
+ * takes a bump like any other. The bump is also the recovery: version 4's checkpoint was truncated
+ * (the fold had been rejecting its own replayed history, so ten batches never landed), and
+ * discarding that row is what makes DSH re-fold the whole log and get them back.
  */
-export const BOARD_MODEL_VERSION = 4
+export const BOARD_MODEL_VERSION = 5
 
 /** Block kinds, in the order `board-model.md` §1.3 lists them. */
 export const BLOCK_KINDS = Object.freeze([
@@ -195,6 +201,27 @@ export function emptyBoardDoc(sessionId = '') {
  */
 export function composeRev(revSeq, revHash) {
   return `r${revSeq}-${revHash.slice(0, 12)}`
+}
+
+/**
+ * Read the sequence half back out of a revision string.
+ *
+ * The revision has two halves and they answer different questions. The **sequence** counts
+ * successfully folded op batches, so it says how far along the board is. The **hash** is a digest
+ * of the content encoding, so it says *which* board that is.
+ *
+ * Only the sequence is stable across a model-version bump: the encoding changes, so every hash
+ * already in an Agent's context becomes unproducible even though its board is current. That is why
+ * every staleness comparison goes through here rather than comparing `rev` strings whole — see the
+ * note in `applyOps` in `src/fold.js`.
+ *
+ * @param rev - a revision string, `r<seq>-<hash>`, or anything else.
+ * @returns the sequence number, or `-1` when the string is not a revision at all. An
+ *   unparseable value must never compare equal to a real one.
+ */
+export function parseRevSeq(rev) {
+  const match = /^r(\d+)-[0-9a-f]+$/.exec(String(rev ?? ''))
+  return match === null ? -1 : Number(match[1])
 }
 
 /**

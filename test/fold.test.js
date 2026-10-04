@@ -12,7 +12,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { foldBoard, applyOps, BoardOpError } from '../src/fold.js'
-import { emptyBoardDoc, encodeModelForHash, toSlug, uniqSlug, quantise } from '../src/model.js'
+import { emptyBoardDoc, encodeModelForHash, parseRevSeq, toSlug, uniqSlug, quantise } from '../src/model.js'
 import { boardDocSchema } from '../src/schema.js'
 
 const SESSION = 'sess-test'
@@ -185,6 +185,66 @@ test('a matching expected_revision applies', () => {
 
   assert.equal(second.model.revSeq, 2)
   assert.equal(second.model.pages[0].blocks.length, 2)
+})
+
+test('the sequence half is compared and the hash half is not', () => {
+  // This is the 2026-10-04 data-loss bug, pinned.
+  //
+  // A revision string has two halves: the sequence, which counts folded batches, and a hash of the
+  // content encoding. Bumping `BOARD_MODEL_VERSION` changes the encoding, so every revision an
+  // Agent is holding suddenly has a hash that can no longer be produced — while the board it names
+  // is perfectly current. Comparing whole strings then rejects honest writes, and the rejection is
+  // invisible from the Agent's side: the tool's dry run executes against the live in-memory model
+  // and reports success, while the fold drops the batch. Ten consecutive batches were lost that way.
+  const first = foldAll(applied(10, 'c1', addHeading))
+
+  // A same-sequence string with a hash from a previous model version must be accepted.
+  const staleHash = `r${first.model.revSeq}-000000000000`
+  const accepted = foldAll([
+    ...applied(10, 'c1', addHeading),
+    ...applied(20, 'c2', {
+      expected_revision: staleHash,
+      ops: [{ op: 'add_block', page: 'main', kind: 'prose', markdown: 'ok' }],
+    }),
+  ])
+  assert.equal(accepted.model.revSeq, 2, 'a same-sequence revision must still apply')
+  assert.equal(accepted.model.pages[0].blocks.length, 2)
+  assert.equal(accepted.lastOpError, undefined, 'and must not be recorded as a rejection')
+
+  // An older sequence is still refused: that is the failure mode the gate exists for.
+  const refused = foldAll([
+    ...applied(10, 'c1', addHeading),
+    ...applied(20, 'c2', {
+      expected_revision: 'r0-000000000000',
+      ops: [{ op: 'add_block', page: 'main', kind: 'prose', markdown: 'no' }],
+    }),
+  ])
+  assert.equal(refused.model.revSeq, 1, 'an older sequence must be refused')
+  assert.match(refused.lastOpError.message, /stale board revision/)
+
+  // A string that is not a revision at all must never compare equal to the empty board's `r0-…`.
+  const garbage = foldAll(
+    applied(10, 'c1', {
+      expected_revision: 'not-a-revision',
+      ops: [{ op: 'add_block', page: 'main', kind: 'prose', markdown: 'no' }],
+    }),
+  )
+  assert.equal(garbage.model.revSeq, 0, 'unparseable revisions must be refused on an empty board')
+  assert.match(garbage.lastOpError.message, /stale board revision/)
+})
+
+test('parseRevSeq reads the sequence and rejects anything else', () => {
+  assert.equal(parseRevSeq('r0-000000000000'), 0)
+  assert.equal(parseRevSeq('r17-a3f9c2b1d4e5'), 17)
+  assert.equal(parseRevSeq('r123-abc'), 123)
+  // `-1` for these, so an unrecognised value cannot collide with a real revision.
+  assert.equal(parseRevSeq(undefined), -1)
+  assert.equal(parseRevSeq(null), -1)
+  assert.equal(parseRevSeq(''), -1)
+  assert.equal(parseRevSeq('0'), -1)
+  assert.equal(parseRevSeq('r0'), -1, 'a bare sequence is not a revision')
+  assert.equal(parseRevSeq('x1-abc'), -1)
+  assert.equal(parseRevSeq('r0-'), -1, 'the hash half is not optional')
 })
 
 test('ignored events return the same reference', () => {

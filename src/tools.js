@@ -22,7 +22,7 @@
  */
 
 import { BoardOpError, applyOps, previewRevision, OP_NAMES } from './fold.js'
-import { EDGE_RELS, LAYOUT_TEMPLATES } from './model.js'
+import { EDGE_RELS, LAYOUT_TEMPLATES, parseRevSeq } from './model.js'
 import { renderTextTable } from './pdf.js'
 import { blockIndex } from './runtime.js'
 import {
@@ -847,7 +847,10 @@ const applyTool = defineBoardTool({
 function executeApply(doc, args) {
   const model = doc.model
 
-  if (args.expected_revision !== model.rev) {
+  // The same comparison the fold makes, and for the same reason: only the sequence half is stable
+  // across a model-version bump. Two gates that disagree are worse than one — the tool would report
+  // success and the fold would silently drop the batch. See `applyOps` in `src/fold.js`.
+  if (parseRevSeq(args.expected_revision) !== parseRevSeq(model.rev)) {
     throw new BoardOpError(
       `stale board revision: expected ${args.expected_revision} but the board is now ${model.rev}.\n` +
         'Nothing was applied. Call board_outline to see the current state, then re-issue the ops you still want.',

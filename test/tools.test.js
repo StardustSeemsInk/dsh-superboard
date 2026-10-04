@@ -349,6 +349,46 @@ test('a stale expected_revision is refused, with the current one quoted back', (
   )
 })
 
+test('a same-sequence revision with a foreign hash is accepted', () => {
+  // The 2026-10-04 data-loss shape. A model-version bump changes the content encoding, so every
+  // revision already in an Agent's context carries a hash that can no longer be produced while
+  // naming a board that is perfectly current. The gate compares the sequence half only, so this
+  // must be accepted — and it must be accepted *by both gates*. If the tool and the fold disagreed,
+  // the tool would report success while the fold silently dropped the batch, which is precisely
+  // how ten consecutive batches were lost.
+  const doc = seededDoc()
+  const foreignHash = `r${doc.model.revSeq}-ffffffffffff`
+  const result = callTool(
+    'board_apply',
+    {
+      expected_revision: foreignHash,
+      ops: [{ op: 'add_block', page: 'main', kind: 'prose', markdown: 'ok' }],
+    },
+    doc,
+  )
+  assert.equal(result.ok, true)
+
+  // And the fold, handed the same revision, must make the same decision on its own.
+  const folded = foldEvents([
+    ...applied(10, 'c1', {
+      ops: [
+        { op: 'add_block', page: 'main', kind: 'heading', level: 1, text: '架构总览' },
+        { op: 'add_block', page: 'main', kind: 'prose', markdown: '登录服务处理会话。' },
+      ],
+    }),
+    ...applied(20, 'c2', {
+      expected_revision: `r1-ffffffffffff`,
+      ops: [{ op: 'add_block', page: 'main', kind: 'prose', markdown: 'ok' }],
+    }),
+  ])
+  assert.equal(folded.model.revSeq, 2, 'the fold must accept a same-sequence revision too')
+  assert.equal(
+    folded.lastOpError,
+    undefined,
+    'and must not record a rejection the tool did not report',
+  )
+})
+
 test('a failing op is reported with its position, reason, and next step', () => {
   const doc = emptyBoardDoc('sess-tools')
   assert.throws(

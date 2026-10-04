@@ -571,14 +571,16 @@ edges[]           按数组顺序: id, slug, rel, label, style,
 
 **量化规则（D9）：** `rect/point` 的 `x/y/w/h` 在写入模型时按 `round(v*1e4)/1e4`；`at.x/y/w/h` 是整数像素，直接取整。
 
-**`rev` 的比对宽严：** `expected_revision` 接受：
+**`rev` 的比对宽严（已实现，见 §2.6）：** `expected_revision` **只比 `revSeq`**，不比 hash。这不是当初设计里写的（原文建议「只接受完整 rev」），而是 2026-10-04 一次真实数据丢失事故改出来的结论：
 
-- 完整 `rev`（`r17-a3f9c2b1d4e5`）——精确匹配；
-- 仅 `revSeq`（`r17`，或裸数字 `17`）——**UNVERIFIED：建议 v1 只接受完整 rev。** 放宽会掩盖「Agent 读的是旧大纲」这一真实故障。
+- **必须只比 `revSeq`。** `revHash` 是内容编码的摘要，而内容编码随 `BOARD_MODEL_VERSION` 变化。版本一涨，Agent 上下文里**所有**旧 rev 的 hash 就再也算不出来，可它们指向的看板完全是最新的。此时比整串会拒绝诚实的写入——而且**从 Agent 那侧看不见**：工具的 dry run 跑在内存里的活模型上、照样报成功，只有折叠把这一批丢掉。
+- **`revSeq` 是诚实信号**：它数的是成功折叠的 op 批数，所以一个报出当前 seq 的调用者就是见过当前看板的。报旧 seq 的仍然被拒——那正是这道闸存在的理由（Agent 拿着几轮前读的大纲来写）。
+- **两道闸必须一致**：`board_apply` 的 dry run 与折叠各有一份比对（`executeApply` 与 `applyOps`）。它们一旦不一致，就会出现「工具报成功、折叠静默丢弃」这种最难查的形状。两处都走 `parseRevSeq`，并有测试钉住它们做同一个决定。
+- 完整 rev 仍然照常作为**展示与识别**用途：seq 相同而内容不同的两块看板，靠 hash 区分。
 
 ### 2.6 旧写入（stale write）的行为
 
-**`board_apply` 带 `expected_revision`；不匹配时 `throw`**，于是模型看到（F5）：
+**`board_apply` 带 `expected_revision`；`revSeq` 不匹配时 `throw`**，于是模型看到（F5）：
 
 ```
 Error: stale board revision: expected r17-a3f9c2b1d4e5 but board is now r19-77c1e0ba9d34
@@ -592,6 +594,33 @@ state, then re-issue the ops you still want.
 2. **不做自动重试、不做自动变基。** 看板 op 是语义操作，自动变基可能把一个「删除风险-1」应用到一个已经不存在的块上，或者更糟——应用到一个**恰好复用了那个 slug 的新块**上。宁让 Agent 重读一次。
 3. **`expected_revision` 是可选还是必需？** 建议：**必填**。理由：可选就意味着模型会省略它，而省略后并发写没有任何保护；而 DSH 的工具调度允许并行（F15），看板必须显式 `isConcurrencySafe: () => false` 来串行化（见 §3.2）。两道防线都要有。
 4. **每个工具结果都回带当前 `rev`**，包括失败前读到的。这样模型即使不主动读大纲，也在对话里有最新版本号。
+5. **失败必须是响亮的。** 2026-10-04 的事故里，工具报了成功（dry run 通过）而折叠静默丢弃——十批写入凭空消失，用户看到的是看板「回滚」。所以：两处比对必须用同一个函数，且「折叠拒绝」与「工具接受」这两种结果的组合必须是不可能状态。
+
+### 2.6.1 I2 —— 一次因比整串 rev 而丢十批写入的事故（2026-10-04）
+
+**症状**：看板整体退回 `r11`，其后十次 `board_apply` 的成果全部消失；用户描述为「看板中途被回滚过一次」。更怪的是同一块看板出现过三个不同的 `r11-*`。
+
+**根因**：**重折会把日志里记录的 `expected_revision` 重新拿去比一遍，所以编码一变，重放会自己把自己截断。**
+
+具体链条：
+
+1. `7fe6a18` 把 `BOARD_MODEL_VERSION` 从 3 提到 4（删掉了 `pdf-page.pageCount` 那一段编码）。哈希是内容编码的摘要，于是同一块看板在新编码下算出**不同的 hash**。
+2. DSH 重启后载入新代码，投影发现 checkpoint 行的 `ver`（3）与注册的 `stateVersion`（4）不符，**整行丢弃、从 log 重折**——这是设计里的正常行为，也正是 log-native 的意义。
+3. 但重折不是「把 op 无条件重放」：它走的是同一个 `applyOps`，而那个函数会拿**日志里原文记录的 `expected_revision`** 去和当时算出的 `rev` 比。第 12 批（seq 9968）记录的是旧编码下的 `r11-bae2d898101b`，而重折到那一刻算出的是新编码下的 `r11-513c602416f3`——整串不等，于是**判为 stale、丢弃**。其后每一批的 `expected_revision` 都是旧编码的串，于是一路丢到底。
+
+结果是：**折叠在重折时截断了自己的历史。**十批内容仍然完好地躺在日志里，丢的只是「重折时要不要接受它们」这个判断。
+
+**证据链**（`session-b0e78947`，12998 条事件全量重折）：
+- 新编码重折：11 次 bump，停在 `r11-513c602416f3`；旧编码重折：21 次 bump，落到 `r21-19e7eba12d30`，与宿主在 seq 12285 的 runtime-context 里给出的 rev **完全一致**。
+- 十批被丢的 `tool/result`，`isError` 全是 `false`，文本都是「Board updated: N op(s) applied」——**工具报了成功**（dry run 跑在内存模型上），只有折叠丢弃。
+- 落地检查点 `session_projcache/sessions/session-b0e78947-….json` 的 `board.val.lastOpError` 原文写着：`stale board revision: expected r20-e1dbe4683e79 but the board is now r11-513c602416f3`。
+
+**修复**：两道闸都改为只比 `revSeq`（`parseRevSeq`，`src/model.js`）。修后同一条日志重新折出 **21 批**，五页块数回到 `10/10/21/12/3`，十个丢失的块（`q20`–`q25`、`r5`、`rg5`、`pdfparse`、`pdfwhy`）全部回来。
+
+**因此 `BOARD_MODEL_VERSION` 一并提到 5**：闸的宽严变了，就改变了「一次重折会接受哪些批」，这属于折叠语义变化——必须 +1，顺带让现存的截断 checkpoint 被丢弃、从日志重折出完整的看板。**这不只是修 bug，也是这次修复唯一能真正把内容找回来的路径。**
+
+**教训**：一个派生自内容编码的值，不能用来判断「调用者是否落后」。「落后」是**时间**属性，只有计数器说得清；hash 只能说「是不是同一块看板」。而且这道闸不只服务于在线写入——**它在重折时同样生效**，所以任何让它依赖编码的方案，都会让重放退化成一个随版本变化的函数。
+
 
 ### 2.7 与 `ctx.sessionProjections` 的结合（折叠入口）
 

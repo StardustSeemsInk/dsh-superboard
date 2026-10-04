@@ -69,12 +69,17 @@ test('the vocabulary is the CSS-shaped set, with `row` in and `tree` out', () =>
 })
 
 test('the model version moved, which is what forces an old checkpoint to re-fold', () => {
-  // 4 because the PDF parse **deleted** `pdf-page.pageCount`. Two reasons at once, and both are what
-  // the version exists for: a stored `pageCount` would still parse into a shape nothing reads, and
-  // the hash arm that used to encode it can no longer be produced — so every revision computed from
-  // one is stale. Removing a field is what forces this; adding one would not have needed it.
-  assert.equal(BOARD_MODEL_VERSION, 4)
-  assert.equal(emptyBoardDoc(SESSION).modelVersion, 4)
+  // 5 because the I2 fix changed *which batches a re-fold accepts*: the revision gate now compares
+  // only the sequence half, never the hash. A fold-semantics change takes a bump like any other —
+  // and here the bump is also the recovery, because version 4's checkpoint was truncated by the
+  // gate rejecting its own replayed history, so discarding it is what re-folds the ten lost
+  // batches back in.
+  //
+  // 4 was the PDF parse, which **deleted** `pdf-page.pageCount`: the stored field would parse into
+  // a shape nothing reads, and the hash arm that encoded it can no longer be produced. Removing a
+  // field forces a bump; adding one would not have needed it.
+  assert.equal(BOARD_MODEL_VERSION, 5)
+  assert.equal(emptyBoardDoc(SESSION).modelVersion, 5)
 })
 
 // ---------------------------------------------------------------------------

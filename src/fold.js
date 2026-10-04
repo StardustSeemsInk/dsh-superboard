@@ -32,6 +32,7 @@ import {
   encodeModelForHash,
   emptyBoardDoc,
   parseAreas,
+  parseRevSeq,
   pushAlias,
   quantise,
   resolveAreas,
@@ -243,9 +244,26 @@ function commit(state, callId, args, seq) {
 export function applyOps(model, ops, context) {
   if (context.expectedRevision !== undefined && context.expectedRevision !== null) {
     const expected = String(context.expectedRevision)
-    // v1 accepts only the full `r<seq>-<hash>` form: accepting a bare seq would hide the
-    // real failure mode, which is the Agent acting on an outline it read some turns ago.
-    if (expected !== context.callerRev) {
+    // Compare the **sequence number only**, never the hash half.
+    //
+    // That looks weaker than comparing the whole string, and it is deliberately weaker. The hash
+    // is a digest of the content encoding, and the content encoding changes whenever a model
+    // version does — so the day `BOARD_MODEL_VERSION` moves, every revision string already in an
+    // Agent's context has a hash that can no longer be produced, even though its board is
+    // perfectly current. Comparing whole strings then rejects writes whose caller is telling the
+    // truth, and the rejection is *silent from the Agent's side*: the tool result still reports
+    // success (the tool's dry run ran against the live in-memory model, which had not been
+    // re-folded), while the fold drops the batch. That is exactly how ten consecutive batches
+    // were lost on 2026-10-04 — see `docs/design/board-model.md` and board issue I2.
+    //
+    // The seq is the honest signal: it counts successful op batches, so a caller that names the
+    // current seq has seen the current board. A caller that names an older one is still refused,
+    // which is the failure mode this gate exists for (an Agent acting on an outline it read
+    // several turns ago). The hash keeps doing its real job: it makes `rev` change when content
+    // changes, so the Agent can tell two same-seq boards apart.
+    const expectedSeq = parseRevSeq(expected)
+    const currentSeq = parseRevSeq(context.callerRev)
+    if (expectedSeq !== currentSeq) {
       throw new BoardOpError(
         `stale board revision: expected ${expected} but the board is now ${context.callerRev}. ` +
           'Nothing was applied. Call board_outline to see the current state, then re-issue the ops you still want.',
