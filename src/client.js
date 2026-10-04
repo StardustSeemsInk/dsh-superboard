@@ -682,23 +682,612 @@ window.__ModuleLoader__.load({
       return document.body.hasAttribute('data-ds-dark-theme')
     }
 
+    // -----------------------------------------------------------------------
+    // Diagram theming
+    // -----------------------------------------------------------------------
+
+    /** Clamp a CSS colour channel to the integer mermaid's parser is happiest with. */
+    function channel(value) {
+      const n = Math.round(Number(value))
+      if (!Number.isFinite(n)) return undefined
+      return String(Math.max(0, Math.min(255, n)))
+    }
+
     /**
-     * Follow the shell's theme.
+     * Reduce a computed CSS colour to a form mermaid accepts.
      *
-     * A diagram drawn in the light palette on a dark page is unreadable in a way no amount of
-     * border styling fixes, and the user can flip the theme at any moment — so the render has to
-     * be redone, not just recoloured. This is the same signal `dsh-mermaid` watches.
+     * Two measured facts make this necessary, and both were probed in a real browser rather than
+     * assumed:
+     *
+     * 1. **`color-mix()` resolves to `color(srgb …)`, and mermaid rejects it.** Reading a mixed
+     *    token through a throwaway element yields `color(srgb 0.635294 0.466667 1 / 0.4)`, and
+     *    mermaid throws `Unsupported color format` on that string — the whole diagram fails to
+     *    draw. `color-mix` is not exotic: the shell's own light/dark sheets use it for
+     *    document-selection, deep-diving, tooltip-key and shimmer tokens. So the conversion is not
+     *    defensive padding; it is what makes a mixed token usable at all.
+     * 2. **Computed channels are fractional.** `color: #a277ff` computes to
+     *    `rgb(162, 119, 255)` but the derived `cluster-label` text computed to
+     *    `rgb(191.1413043478, 183.4782608695, 209.0217391304)`. Rounding keeps every value inside
+     *    the integer form mermaid is known to parse.
+     *
+     * @param value - a computed CSS colour.
+     * @returns a mermaid-safe colour, or `undefined` when the value is unusable.
      */
-    function useDarkTheme() {
-      const [dark, setDark] = React.useState(isDarkTheme)
+    function normaliseColour(value) {
+      if (typeof value !== 'string') return undefined
+      const text = value.trim()
+      if (text === '') return undefined
+      if (text === 'transparent') return 'transparent'
+
+      const srgb = /^color\(\s*srgb\s+([\d.]+)\s+([\d.]+)\s+([\d.]+)\s*(?:\/\s*([\d.]+)\s*)?\)$/i.exec(text)
+      if (srgb !== null) {
+        const r = channel(Number(srgb[1]) * 255)
+        const g = channel(Number(srgb[2]) * 255)
+        const b = channel(Number(srgb[3]) * 255)
+        if (r === undefined || g === undefined || b === undefined) return undefined
+        const a = srgb[4] === undefined ? '1' : String(Number(srgb[4]))
+        return `rgba(${r}, ${g}, ${b}, ${a})`
+      }
+
+      const rgb = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)$/i.exec(text)
+      if (rgb !== null) {
+        const r = channel(rgb[1])
+        const g = channel(rgb[2])
+        const b = channel(rgb[3])
+        if (r === undefined || g === undefined || b === undefined) return undefined
+        const a = rgb[4] === undefined ? '1' : String(Number(rgb[4]))
+        return `rgba(${r}, ${g}, ${b}, ${a})`
+      }
+
+      // Hex and `hsl()` pass through: mermaid parses both, and they need no rounding.
+      if (/^#[0-9a-f]{3,8}$/i.test(text)) return text
+      if (/^hsla?\(/i.test(text)) return text
+      return undefined
+    }
+
+    /**
+     * Resolve one CSS custom property to the colour the browser actually paints.
+     *
+     * `getComputedStyle(body).getPropertyValue('--x')` cannot be used directly: a token defined as
+     * `var(--other)` comes back as that literal text (a chain), not a colour. Assigning it to a
+     * throwaway element's `color` and reading *that* back makes the browser do the substitution,
+     * including `color-mix()`. Probed: `--chain` → `var(--plain)` reads through as
+     * `rgb(21, 20, 27)`, and an **absent** variable resolves to `rgb(0, 0, 0)` — indistinguishable
+     * from a real black — which is exactly why presence is tested first and separately.
+     */
+    function readTokenColour(name) {
+      if (typeof document === 'undefined' || document.body === null || document.body === undefined) return undefined
+      if (typeof window === 'undefined' || typeof window.getComputedStyle !== 'function') return undefined
+      const declared = window.getComputedStyle(document.body).getPropertyValue(name)
+      if (declared === null || declared === undefined || declared.trim() === '') return undefined
+      const probe = document.createElement('span')
+      probe.style.display = 'none'
+      try {
+        document.body.appendChild(probe)
+        probe.style.color = `var(${name})`
+        return normaliseColour(window.getComputedStyle(probe).color)
+      } catch {
+        return undefined
+      } finally {
+        probe.remove()
+      }
+    }
+
+    /**
+     * The board's own surfaces, in the order each mermaid variable should try them.
+     *
+     * Every entry is a DSH alias token rather than a literal, which is the whole point: a theme
+     * plugin registers its palette by overriding exactly these names — `@nonamelego/dsh-catppuccin`,
+     * for one, remaps 101 `--dsw-alias-*` tokens through the official `theme.register()` API — so a
+     * diagram built from them follows whatever the user picked without this file knowing that
+     * plugin exists.
+     */
+    const DIAGRAM_TOKEN_SOURCES = Object.freeze({
+      surface: ['--dsw-alias-bg-layer-2', '--dsw-alias-bg-base'],
+      raised: ['--dsw-alias-bg-module-platform', '--dsw-alias-bg-layer-3'],
+      overlay: ['--dsw-alias-bg-overlay', '--dsw-alias-bg-layer-3'],
+      accent: ['--dsw-alias-state-business-primary', '--dsw-alias-brand-primary'],
+      accentTint: ['--dsw-alias-state-business-tertiary'],
+      text: ['--dsw-alias-label-primary'],
+      textMuted: ['--dsw-alias-label-secondary', '--dsw-alias-label-tertiary'],
+      textFaint: ['--dsw-alias-label-tertiary', '--dsw-alias-label-caption'],
+      border: ['--dsw-alias-border-l2'],
+      borderStrong: ['--dsw-alias-border-l3', '--dsw-alias-border-l4'],
+      // The two ends of the palette's neutral ramp. Used as *candidates* for a label that has to sit
+      // on top of a category colour, never as a surface: a theme defines these as its darkest and
+      // lightest ink, so preferring them keeps a label on-brand when that already suffices.
+      extremeDark: ['--dsw-static-neutral-bluish-1000', '--dsw-static-neutral-1000'],
+      extremeLight: ['--dsw-static-neutral-bluish-00', '--dsw-static-neutral-00'],
+    })
+
+    /**
+     * A categorical palette, borrowed from the syntax-highlighting tokens.
+     *
+     * That is not a shortcut: shiki's token colours are the one set a theme is *expected* to
+     * define with distinct hues (`--shiki-token-*` are declared by the shell for light and dark,
+     * and a theme plugin re-maps them to its own palette — catppuccin supplies 11 of them). So pie
+     * slices and git commits come out in the user's own colours with no plugin-specific knowledge
+     * here.
+     *
+     * Duplicates are dropped rather than kept. Measured on catppuccin mocha, these eight names
+     * collapse to **six** distinct values — `--shiki-token-string` equals
+     * `--shiki-token-string-expression`, and `--shiki-token-function` equals `--shiki-token-link`.
+     * Keeping them would give two pie slices the same colour, which is worse than a shorter
+     * palette: the reader cannot tell the slices apart at all.
+     */
+    const DIAGRAM_CATEGORICAL = Object.freeze([
+      '--shiki-token-constant',
+      '--shiki-token-string',
+      '--shiki-token-keyword',
+      '--shiki-token-function',
+      '--shiki-token-parameter',
+      '--shiki-token-link',
+      '--shiki-token-string-expression',
+      '--shiki-token-comment',
+      '--shiki-token-punctuation',
+    ])
+
+    /**
+     * Fallbacks for the categorical palette, from the static hue ramp.
+     *
+     * A theme that declines to define `--shiki-token-*` at all would otherwise leave every pie
+     * slice and git branch one colour. These come from `--dsw-static-*`, the fixed hue ramp the
+     * shell always defines and which catppuccin *does* remap (77 entries), so they follow the theme
+     * as well as anything can when the theme offers no explicit categorical set. The ramp has only
+     * four chromatic families (amber/blue/green/red), which is still four distinguishable hues.
+     */
+    const DIAGRAM_CATEGORICAL_FALLBACK = Object.freeze([
+      '--dsw-static-blue-500',
+      '--dsw-static-green-500',
+      '--dsw-static-amber-500',
+      '--dsw-static-red-500',
+      '--dsw-static-deepseek-500',
+    ])
+
+    /** Read the first token of a group that resolves, so a missing one degrades instead of failing. */
+    function firstColour(read, names) {
+      for (const name of names) {
+        const value = read(name)
+        if (value !== undefined) return value
+      }
+      return undefined
+    }
+
+    /** Drop `undefined` entries so mermaid's own defaults show through instead of being blanked. */
+    function compact(source) {
+      const out = {}
+      for (const [key, value] of Object.entries(source)) {
+        if (value !== undefined) out[key] = value
+      }
+      return out
+    }
+
+    /**
+     * Distinguishable colours for pie slices, git branches and plot series.
+     *
+     * Reads the syntax-highlighting tokens first and the static hue ramp second, dropping
+     * duplicates across **both**. The dedupe is load-bearing rather than tidy: on catppuccin mocha
+     * the nine shiki names collapse to six values, and on any theme they are a *syntax* palette,
+     * whose two near-identical greens exist to distinguish a string from a template literal — a
+     * distinction a pie chart cannot show and should not pretend to.
+     *
+     * @param read - `(tokenName) => colour | undefined`.
+     * @returns the distinct colours that resolved, in preference order.
+     */
+    function categoricalPalette(read) {
+      const colours = []
+      for (const name of DIAGRAM_CATEGORICAL) {
+        const value = read(name)
+        if (value !== undefined && !colours.includes(value)) colours.push(value)
+      }
+      // Only widen when the theme gave us too little to tell slices apart.
+      if (colours.length < 4) {
+        for (const name of DIAGRAM_CATEGORICAL_FALLBACK) {
+          const value = read(name)
+          if (value !== undefined && !colours.includes(value)) colours.push(value)
+        }
+      }
+      if (colours.length > 0) return colours
+      // Nothing resolved. Returning `[undefined]` would be worse than returning nothing: `slice()`
+      // would hand mermaid `undefined` and `plotColorPalette` would join to the literal
+      // "undefined". An empty list lets every consumer fall back to mermaid's own defaults.
+      const accent = firstColour(read, DIAGRAM_TOKEN_SOURCES.accent)
+      return accent === undefined ? [] : [accent]
+    }
+
+    /**
+     * Blend one colour toward another, returning a colour mermaid accepts.
+     *
+     * Written as an `rgb()` string rather than `color-mix(in srgb, …)`, which is the form the shell
+     * itself would use, because **mermaid rejects `color-mix()`**: feeding the browser-resolved
+     * `color(srgb 0.63 0.47 1 / 0.4)` to `mermaid.render` throws
+     * `Unsupported color format` and loses the whole diagram, not just the one shape.
+     *
+     * `amount` is how far to move from `from` toward `to` (0 = `from`, 1 = `to`). An unresolved
+     * input yields `undefined`, so the variable is simply left out and mermaid keeps its default —
+     * the same degradation as everywhere else in this mapping. Only opaque colours are blended; a
+     * translucent input would need compositing, and the tokens used here are the opaque surface and
+     * text ladder.
+     */
+    function mix(from, to, amount) {
+      const a = parseColourChannels(from)
+      const b = parseColourChannels(to)
+      if (a === undefined || b === undefined) return undefined
+      const blend = (i) => channel(String(a[i] + (b[i] - a[i]) * amount))
+      const r = blend(0)
+      const g = blend(1)
+      const bl = blend(2)
+      if (r === undefined || g === undefined || bl === undefined) return undefined
+      return `rgb(${r}, ${g}, ${bl})`
+    }
+
+    /**
+     * `rgb()/rgba()` text to `[r, g, b]`, or `undefined` if it is not a readable colour.
+     *
+     * Only the forms `normaliseColour` emits reach here (it converts everything else to `rgba()`),
+     * so this deliberately does not re-implement hex or `hsl()`; a value it cannot read is a value
+     * `readTokenColour` already rejected.
+     */
+    function parseColourChannels(value) {
+      const m = /^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)\s*(?:,\s*([\d.]+)\s*)?\)$/i.exec(String(value ?? ''))
+      if (m === null) return undefined
+      // A translucent colour cannot be blended without knowing what is behind it, so it is refused
+      // rather than silently treated as opaque — which would overstate its weight.
+      if (m[4] !== undefined && Number(m[4]) < 1) return undefined
+      const channels = [m[1], m[2], m[3]].map((s) => Number(s))
+      return channels.some((c) => !Number.isFinite(c)) ? undefined : channels
+    }
+
+    /**
+     * mermaid's own default `pieOpacity`, restated because the label contrast depends on it.
+     *
+     * Read out of the vendored bundle's pie-defaults block. If that default ever changes, the
+     * contrast decision here changes with it — which is why it is a named constant rather than a
+     * literal buried in an expression.
+     */
+    const PIE_OPACITY = 0.7
+
+    /**
+     * Composite a possibly-translucent colour over an opaque one, as the browser paints it.
+     *
+     * @param colour - the foreground, `rgb()` or `rgba()` text.
+     * @param behind - the opaque background.
+     * @param alpha - overrides the foreground's own alpha (for a token with no alpha that mermaid
+     *   still draws at a reduced opacity).
+     * @returns `rgb(…)` text, or `undefined` when either side cannot be read.
+     */
+    function compositeOver(colour, behind, alpha) {
+      const fg = parseColourChannels(colour)
+      const bg = parseColourChannels(behind)
+      if (fg === undefined || bg === undefined) return undefined
+      const a = alpha === undefined ? Number(/,\s*([\d.]+)\s*\)$/.exec(colour)?.[1] ?? 1) : alpha
+      const blend = (i) => channel(String(fg[i] * a + bg[i] * (1 - a)))
+      const r = blend(0)
+      const g = blend(1)
+      const b = blend(2)
+      if (r === undefined || g === undefined || b === undefined) return undefined
+      return `rgb(${r}, ${g}, ${b})`
+    }
+
+    /**
+     * WCAG relative luminance of an opaque colour, or `undefined` for one that cannot be read.
+     *
+     * The sRGB→linear transfer is the standard one; the constants are from the WCAG 2.1 definition
+     * and are not tunable.
+     */
+    function luminance(channels) {
+      const linear = channels.map((value) => {
+        const s = value / 255
+        return s <= 0.03928 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4
+      })
+      return 0.2126 * linear[0] + 0.7152 * linear[1] + 0.0722 * linear[2]
+    }
+
+    /**
+     * WCAG contrast ratio between two opaque colours, from 1 (identical) to 21 (black on white).
+     *
+     * Used to choose a text colour, which is why it returns `undefined` rather than a default when
+     * either side is unreadable: a made-up ratio would silently pick a colour.
+     */
+    function contrastRatio(a, b) {
+      const ca = parseColourChannels(a)
+      const cb = parseColourChannels(b)
+      if (ca === undefined || cb === undefined) return undefined
+      const la = luminance(ca)
+      const lb = luminance(cb)
+      return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
+    }
+
+    /**
+     * The candidate that is most legible across **every** one of `backgrounds`.
+     *
+     * Maximising the *minimum* ratio, not the average: a label colour that is superb on five slices
+     * and invisible on the sixth is the failure being fixed, so the worst case is what decides.
+     * Candidates or backgrounds that cannot be read are skipped rather than guessed at.
+     *
+     * @param candidates - text colours to choose between, best-guess order.
+     * @param backgrounds - the fills the text will be painted on.
+     * @returns `{ colour, worst }` — the winner and its worst-case ratio, or `undefined`.
+     */
+    function mostLegible(candidates, backgrounds) {
+      const fills = backgrounds.filter((value) => value !== undefined)
+      if (fills.length === 0) return undefined
+      let best
+      for (const candidate of candidates) {
+        if (candidate === undefined) continue
+        let worst = Infinity
+        for (const fill of fills) {
+          const ratio = contrastRatio(candidate, fill)
+          if (ratio === undefined) { worst = undefined; break }
+          if (ratio < worst) worst = ratio
+        }
+        if (worst === undefined || worst === Infinity) continue
+        if (best === undefined || worst > best.worst) best = { colour: candidate, worst }
+      }
+      return best
+    }
+
+    /**
+     * The colour a pie's percentage labels are painted in.
+     *
+     * Three measured facts shape this, all from the vendored bundle and a real browser:
+     *
+     *   - mermaid paints one `pieSectionTextColor` on **every** slice, so a palette ranging light to
+     *     dark cannot be served by the theme's single label colour. Measured on dark Catppuccin
+     *     Mocha: the board's own text colour scored **1.03–1.95** across the six fills — the
+     *     percentages were essentially invisible while the chart itself looked fine.
+     *   - slices are drawn at mermaid's default `pieOpacity` of 0.7 (the path carries `opacity: 0.7`,
+     *     `fill-opacity: 1`), so the label sits on the **composite**, not on the token.
+     *   - the theme's own ladder is preferred, but it is not always enough. Measured on light
+     *     Catppuccin Latte the best theme-derived candidate reached **2.37** where an achromatic
+     *     extreme reached **6.23** — 38% of the achievable ceiling. A theme's slice colours are
+     *     chosen to be vivid against its background, which can leave every neutral it owns too close
+     *     to them.
+     *
+     * So: try the theme's own ladder and its neutral extremes first, and fall back to black or white
+     * only when even those cannot clear the floor. Legibility wins over hue purity, because a
+     * percentage nobody can read is a percentage that was not drawn — but on a palette that can
+     * supply a readable ink, that ink is used.
+     *
+     * @param candidates - the theme's own text colours, in preference order.
+     * @param surface - the diagram background.
+     * @param slices - the slice fills.
+     * @returns a colour mermaid accepts, or `undefined` to keep mermaid's default.
+     */
+    function pieLabelColour(candidates, surface, slices) {
+      const fills = slices.map((colour) => compositeOver(colour, surface, PIE_OPACITY))
+      const preferred = mostLegible(candidates, fills)
+      // See THEME_INK_MINIMUM: below the large-text bar an achromatic extreme displaces the palette.
+      if (preferred !== undefined && preferred.worst >= THEME_INK_MINIMUM) return preferred.colour
+      const extreme = mostLegible([BLACK, WHITE], fills)
+      if (extreme === undefined) return preferred === undefined ? undefined : preferred.colour
+      if (preferred === undefined) return extreme.colour
+      return extreme.worst > preferred.worst ? extreme.colour : preferred.colour
+    }
+
+    /**
+     * The ratio a *theme-supplied* label must clear before an achromatic extreme displaces it.
+     *
+     * 3.0 is WCAG AA for large text, and a pie's percentage labels are mermaid's `pieSectionTextSize`
+     * of 17px in a bold-ish face — closer to large text than to body copy. The bar matters because of
+     * what it prevents: on dark Catppuccin Mocha the palette's own darkest ink scores **3.83** where
+     * pure black scores **4.29**. Demanding 4.5 would throw away the user's palette for a 12% gain
+     * and paint every themed pie's labels in an unthemed black. Below 3.0 the trade flips — the label
+     * stops being readable at all — and an extreme takes over.
+     */
+    const THEME_INK_MINIMUM = 3
+
+    /**
+     * How far each quadrant's fill is blended from the surface toward the text colour.
+     *
+     * Four evenly spaced steps, starting where the *first* step is already visible rather than at
+     * zero: measured on dark Catppuccin Mocha the steps come out at contrast 1.07 between adjacent
+     * quadrants, which is legible as a boundary because the fill difference is deliberate. Starting
+     * the run at the surface itself would waste a step on an invisible difference.
+     *
+     * The last entry is `0` so the fourth quadrant is the true surface — the least busy cell is the
+     * one the chart's own points are most likely to land in.
+     */
+    const QUADRANT_WEIGHTS = Object.freeze([0.16, 0.10, 0.05, 0])
+
+    /** The two achromatic extremes, as the last resort for a label that cannot otherwise be read. */
+    const BLACK = 'rgb(0, 0, 0)'
+    const WHITE = 'rgb(255, 255, 255)'
+
+    /**
+     * Build mermaid's `themeVariables` from the shell's own colours.
+     *
+     * `theme: 'base'` is the only mermaid theme that honours a full variable set, and it is the
+     * reason every diagram kind can be themed at once. `darkMode` is set *inside* `themeVariables`:
+     * a top-level `darkMode` option was probed and does nothing, while this one flips the defaults
+     * for the variables not named here.
+     *
+     * @param read - `(tokenName) => colour | undefined`; a fake in tests, `readTokenColour` in use.
+     * @param dark - whether the shell is dark, which selects mermaid's derived defaults.
+     * @returns the `themeVariables` object.
+     */
+    function diagramThemeVariables(read, dark) {
+      const surface = firstColour(read, DIAGRAM_TOKEN_SOURCES.surface)
+      const raised = firstColour(read, DIAGRAM_TOKEN_SOURCES.raised)
+      const overlay = firstColour(read, DIAGRAM_TOKEN_SOURCES.overlay)
+      const accent = firstColour(read, DIAGRAM_TOKEN_SOURCES.accent)
+      const accentTint = firstColour(read, DIAGRAM_TOKEN_SOURCES.accentTint)
+      const text = firstColour(read, DIAGRAM_TOKEN_SOURCES.text)
+      const textMuted = firstColour(read, DIAGRAM_TOKEN_SOURCES.textMuted)
+      const textFaint = firstColour(read, DIAGRAM_TOKEN_SOURCES.textFaint)
+      const border = firstColour(read, DIAGRAM_TOKEN_SOURCES.border)
+      const borderStrong = firstColour(read, DIAGRAM_TOKEN_SOURCES.borderStrong)
+
+      const slices = categoricalPalette(read)
+      // `slices` can legitimately be empty (a theme that defines neither the shiki tokens nor the
+      // static ramp). Indexing into that would hand mermaid `undefined`, so fall back to a colour
+      // that is merely *present*; absent keys are dropped by `compact` and mermaid keeps its own.
+      const sliceAt = (index) => (slices.length === 0 ? undefined : slices[index % slices.length])
+
+      // The colour a pie's percentage label is painted in. See `pieLabelColour` for why the theme's
+      // ladder alone is not enough and when an achromatic extreme takes over. The theme's own neutral
+      // extremes come first, so a label stays on-brand whenever that is already legible enough.
+      const extremeDark = firstColour(read, DIAGRAM_TOKEN_SOURCES.extremeDark)
+      const extremeLight = firstColour(read, DIAGRAM_TOKEN_SOURCES.extremeLight)
+      const sectionLabel = pieLabelColour(
+        [extremeDark, extremeLight, text, textMuted, surface],
+        surface,
+        slices,
+      )
+
+      return compact({
+        darkMode: dark,
+        // Core: every diagram kind draws nodes or actors on this surface.
+        background: surface,
+        primaryColor: accentTint ?? raised,
+        primaryTextColor: text,
+        primaryBorderColor: accent ?? borderStrong,
+        secondaryColor: raised,
+        tertiaryColor: overlay,
+        lineColor: textFaint,
+        textColor: text,
+        edgeLabelBackground: surface,
+        clusterBkg: overlay,
+        clusterBorder: border,
+        // Sequence.
+        actorBkg: accentTint ?? raised,
+        actorBorder: accent ?? borderStrong,
+        actorTextColor: text,
+        actorLineColor: textFaint,
+        signalColor: text,
+        signalTextColor: text,
+        labelBoxBkgColor: raised,
+        labelBoxBorderColor: border,
+        labelTextColor: text,
+        loopTextColor: text,
+        noteBkgColor: raised,
+        noteBorderColor: borderStrong,
+        noteTextColor: text,
+        activationBkgColor: accent ?? raised,
+        activationBorderColor: accent ?? borderStrong,
+        sequenceNumberColor: surface,
+        // Pie: slices from the syntax palette, labels from the text ladder.
+        pie1: sliceAt(0),
+        pie2: sliceAt(1),
+        pie3: sliceAt(2),
+        pie4: sliceAt(3),
+        pie5: sliceAt(4),
+        pie6: sliceAt(5),
+        pie7: sliceAt(6),
+        pie8: sliceAt(7),
+        pieTitleTextColor: text,
+        // `pieSectionTextColor` is a *single* colour mermaid paints on every slice, so it cannot be
+        // right for a palette that ranges light to dark. Measured on dark Catppuccin Mocha: the
+        // board's own label colour scored **1.03–1.95** against the six slice fills, i.e. the
+        // percentages were near-invisible. So the label is picked as the candidate with the best
+        // *worst-case* contrast across all slices, compositing mermaid's own 0.7 `pieOpacity` first
+        // (the text sits on the blend of slice over background, not on the token value).
+        pieSectionTextColor: sectionLabel,
+        pieLegendTextColor: text,
+        pieStrokeColor: surface,
+        pieOuterStrokeColor: border,
+        // Git graph.
+        git0: sliceAt(0),
+        git1: sliceAt(1),
+        git2: sliceAt(2),
+        git3: sliceAt(3),
+        git4: sliceAt(4),
+        git5: sliceAt(5),
+        git6: sliceAt(6),
+        git7: sliceAt(7),
+        commitLabelColor: text,
+        commitLabelBackground: raised,
+        tagLabelColor: surface,
+        tagLabelBackground: accent ?? borderStrong,
+        tagLabelBorder: borderStrong,
+        branchLabelColor: textMuted,
+        // Quadrant: four fills that must be four *different* colours.
+        //
+        // Measured before this was written: mapping these to `raised`/`overlay`/`accentTint`/`surface`
+        // gave dark Catppuccin Mocha `49,50,68` twice (contrast ratio 1.00 between quadrant 1 and 2),
+        // because `--dsw-alias-bg-layer-3` and `--dsw-alias-bg-overlay` hold the same value in that
+        // theme. Two indistinguishable quadrants erase the only thing a quadrant chart says.
+        //
+        // So the fills are derived from one surface, blended toward the text colour by
+        // `QUADRANT_WEIGHTS`. Blending toward the *text* is what makes this safe: a surface and a
+        // text colour that are far enough apart to read text on are far enough apart to separate
+        // four steps between them, in either colour scheme and whatever the theme's hues.
+        quadrant1Fill: mix(surface, text, QUADRANT_WEIGHTS[0]),
+        quadrant2Fill: mix(surface, text, QUADRANT_WEIGHTS[1]),
+        quadrant3Fill: mix(surface, text, QUADRANT_WEIGHTS[2]),
+        quadrant4Fill: mix(surface, text, QUADRANT_WEIGHTS[3]) ?? surface,
+        quadrant1TextFill: text,
+        quadrant2TextFill: text,
+        quadrant3TextFill: text,
+        quadrant4TextFill: text,
+        quadrantPointFill: accent ?? borderStrong,
+        quadrantPointTextFill: text,
+        quadrantXAxisTextFill: textMuted,
+        quadrantYAxisTextFill: textMuted,
+        quadrantTitleFill: text,
+        quadrantInternalBorderStrokeFill: border,
+        quadrantExternalBorderStrokeFill: borderStrong,
+        // XY chart: `plotColorPalette` is a comma-joined list, not an indexed variable.
+        xyChart: compact({
+          backgroundColor: surface,
+          titleColor: text,
+          dataLabelColor: text,
+          legendTextColor: text,
+          xAxisLabelColor: textMuted,
+          xAxisTitleColor: textMuted,
+          xAxisLineColor: border,
+          xAxisTickColor: border,
+          yAxisLabelColor: textMuted,
+          yAxisTitleColor: textMuted,
+          yAxisLineColor: border,
+          yAxisTickColor: border,
+          plotColorPalette: slices.length === 0 ? undefined : slices.join(', '),
+        }),
+      })
+    }
+
+    /** The theme values a diagram is drawn with, re-read whenever the shell's theme moves. */
+    function readDiagramTheme() {
+      const dark = isDarkTheme()
+      return { dark, variables: diagramThemeVariables(readTokenColour, dark) }
+    }
+
+    /**
+     * Follow the shell's theme, including a palette swap that keeps the same color scheme.
+     *
+     * Two signals, because one is not enough. `data-ds-dark-theme` on `<body>` covers a light/dark
+     * flip — the same signal `dsh-mermaid` watches. It does **not** cover switching from one dark
+     * palette to another, which is now a normal thing to do: a theme plugin restyles the page by
+     * writing its tokens as inline custom properties on `<body>`, so the *style attribute* is what
+     * changes while the dark attribute stays put. Observing both is what makes a palette swap
+     * repaint the diagrams instead of waiting for a reload.
+     *
+     * The state holds a signature rather than the values, so an unrelated mutation on `<body>`
+     * does not tear down and re-render every diagram on the page.
+     *
+     * @returns `{ dark, variables, signature }`.
+     */
+    function useDiagramTheme() {
+      const [theme, setTheme] = React.useState(readDiagramTheme)
       React.useEffect(() => {
         if (typeof MutationObserver !== 'function' || typeof document === 'undefined') return undefined
-        const observer = new MutationObserver(() => setDark(isDarkTheme()))
-        observer.observe(document.body, { attributes: true, attributeFilter: ['data-ds-dark-theme'] })
-        setDark(isDarkTheme())
+        const sync = () => {
+          const next = readDiagramTheme()
+          const signature = `${next.dark ? 'dark' : 'light'}|${JSON.stringify(next.variables)}`
+          setTheme((current) =>
+            current.signature === signature ? current : { ...next, signature },
+          )
+        }
+        // Seed the signature so the first observer callback can compare against it.
+        sync()
+        const observer = new MutationObserver(sync)
+        observer.observe(document.body, {
+          attributes: true,
+          attributeFilter: ['style', 'data-ds-dark-theme'],
+        })
         return () => observer.disconnect()
       }, [])
-      return dark
+      return theme
     }
 
     /**
@@ -822,9 +1411,13 @@ window.__ModuleLoader__.load({
      * @param props - `{ block, sessionId }`.
      */
     function Diagram({ block, sessionId }) {
-      const dark = useDarkTheme()
+      const theme = useDiagramTheme()
       const [state, setState] = React.useState({ status: 'loading' })
       const source = block.source
+      // The variables, not the whole theme object: the effect must not re-run because a new but
+      // equivalent object was built. `variables` is itself rebuilt per render, so the signature is
+      // what actually gates the effect — an unchanged palette re-renders nothing.
+      const signature = theme.signature
 
       React.useEffect(() => {
         let cancelled = false
@@ -837,7 +1430,11 @@ window.__ModuleLoader__.load({
               // from the model, and strict is the level that encodes HTML in labels rather than
               // interpreting it.
               securityLevel: 'strict',
-              theme: dark ? 'dark' : 'default',
+              // `base` is the only mermaid theme that honours a full variable set; the built-in
+              // `default`/`dark` themes ignore most of `themeVariables`, which is why the shells
+              // own palette is passed through it instead of choosing between them.
+              theme: 'base',
+              themeVariables: theme.variables,
               fontFamily: pageFontFamily(),
               // SVG `<text>` rather than `<foreignObject>` labels. Nothing about the `<img>`
               // isolation requires it, but plain text elements are the form that renders
@@ -858,7 +1455,10 @@ window.__ModuleLoader__.load({
         return () => {
           cancelled = true
         }
-      }, [block.id, source, dark])
+        // `theme.variables` is deliberately absent: it is a fresh object every render, and the
+        // signature is the value that changes exactly when the palette does.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+      }, [block.id, source, signature])
 
       if (state.status === 'ready') {
         return h(
@@ -2503,6 +3103,23 @@ window.__ModuleLoader__.load({
       Diagram,
       codeClass,
       svgDataUrl,
+      // The diagram theming seam. `diagramThemeVariables` takes its reader as an argument so a
+      // test can drive it with a fake token table — the real one needs a browser, and the mapping
+      // is the part worth pinning.
+      diagramThemeVariables,
+      categoricalPalette,
+      normaliseColour,
+      // The colour arithmetic behind the two measured defects (collapsed quadrant fills, unreadable
+      // pie labels). Exported so the tests can pin the formula itself, not only its effect.
+      parseColourChannels,
+      compositeOver,
+      contrastRatio,
+      mostLegible,
+      pieLabelColour,
+      mix,
+      DIAGRAM_TOKEN_SOURCES,
+      DIAGRAM_CATEGORICAL,
+      DIAGRAM_CATEGORICAL_FALLBACK,
       // The picture card and the two things it shares with the host: the file URL and the key a
       // render report is retired by.
       Picture,

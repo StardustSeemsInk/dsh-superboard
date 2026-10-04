@@ -1279,6 +1279,36 @@ gestures yet. Ask the user which part they mean instead of guessing.
 | `columns` 的 `cols` 上限 4 | 现为 **6**（`masonry` 同上限）。两者都是「静默截断」——见 §4.3 的取舍说明 |
 | `grid` + `cols` 会让卡高等高 | **不再如此。** 等高只发生在 `areas`（命名格子是槽位）——`cols` 只决定列数，不改变卡高。这条偏差曾经存在并制造过「短卡变成大空盒」的真实问题 |
 
+### 4.6 图（`uml`）如何跟随主题（2026-10-04）
+
+图用 `<img src="data:image/svg+xml…">` 呈现，所以**主题必须在编码前就烘焙进 SVG**：CSS 进不了 `<img>` 内部，而且 mermaid 本来就把主题写进自己的 `<style>` 块。承担这件事的是 `diagramThemeVariables(read, dark)`（`src/client.js`）。
+
+三条已实测的事实决定了它的形状：
+
+| 事实 | 含义 |
+|---|---|
+| `theme: 'base'` 是 **唯一**尊重完整变量集的 mermaid 主题（`default`/`dark`/`neutral`/`forest`/`neo`/`redux` 忽略其中大部分） | 必须走 `base`，然后把 DSH 自己的配色喂进去，而不是在 mermaid 的几套内置主题之间选 |
+| 顶层 `darkMode` 选项**无效**，只有 `themeVariables.darkMode` 算数 | 放错层会静默地在深色背景上渲染浅色默认值——这正是最初的 bug |
+| **mermaid 拒绝 `color-mix()`**：喂给它浏览器解析出的 `color(srgb …)` 会抛 `Unsupported color format` 并**丢掉整张图**，而不只是一个形状 | 颜色一律经 `normaliseColour` 规约为 `rgb()/rgba()`；需要混合时用 `mix()` 自己算，绝不下传 `color-mix` |
+
+主题插件通过**官方 API** `theme.register({id, colorScheme, tokens})` 注册，由 `ThemePresenter` 把 token 写成 `<body>` 上的内联自定义属性（`dsh-client-ui-layout/lib/client.js:512-550`）。因此：
+
+- **必须读 DOM，不能只看 `data-ds-dark-theme`。** 在两个深色主题之间切换时，属性不动而 `style` 变——`useDiagramTheme` 因此同时观察 `style` 与 `data-ds-dark-theme` 两个属性，并用一个 signature 挡住无关的 `<body>` 变动，避免整页图重渲染。
+- **一个 token 缺席时解析为 `rgb(0, 0, 0)`**，与真正的黑色无法区分，所以 `readTokenColour` 先单独测存在性。这是本项目最容易踩的坑。
+
+映射中有两处是**派生值**而非直接取 token，两处都来自实测出来的真实缺陷（见 `test/diagram-theme.test.js`）：
+
+| 变量 | 曾经的取法 | 实测到的后果 | 现在的取法 |
+|---|---|---|---|
+| `quadrant1..4Fill` | `raised`/`overlay`/`accentTint`/`surface` | 深色 Mocha 下 `--dsw-alias-bg-layer-3` 与 `--dsw-alias-bg-overlay` **同值**，象限 1 与 2 对比度 **1.00**——图照样渲染，但象限图唯一要表达的东西没了 | 由 `surface` 向 `text` 按 `QUADRANT_WEIGHTS` 混合四档。表面与文字色既然足以读出文字，就足以分出四档 |
+| `pieSectionTextColor` | `text` | `pieSectionTextColor` 是**一个**颜色却要盖在深浅不一的切片上：深色 Mocha 下板块自身文字色只有 **1.03–1.95**，百分号近乎看不见；浅色 Latte 下最好的主题色只有 **2.37**，而消色差极值可达 **6.23**（仅 38%） | 取「最差切片上的对比度」最高的候选：先是主题自己的中性极值，再是黑/白。阈值 `THEME_INK_MINIMUM = 3`（大字号 AA）——若按正文 4.5 要求，深色 Mocha 会为了 3.83→4.29 的 12% 收益丢掉用户整个配色 |
+
+切片以 mermaid 默认的 `pieOpacity: 0.7` 绘制（是 CSS `opacity`，不是 `fill-opacity`），所以对比度必须对着**合成后**的颜色算，而不是 token 值。
+
+`pie1..8` 与 `git0..7` 取自 `--shiki-token-*`，并且**去重**：Catppuccin Mocha 的九个名字只落到**六个**不同颜色（`string` = `string-expression`、`function` = `link`、`comment` = `punctuation`），保留重复会让两块饼同色。主题完全不定义 `--shiki-token-*` 时退到 `--dsw-static-*` 色阶。
+
+**验证方式**：headless Edge 里加载真实的 `src/client.js`（走 stub module loader），把 catppuccin 真实注册的 201 个 token 按 `ThemePresenter` 的方式装到 `<body>` 上，渲染五种图，再用 `getComputedStyle` 量出来。**测量本身有三个坑，都踩过**：脱离文档的 SVG 所有计算样式都是 `''`（读成「无填充」而不是报错）；mermaid 把可见文字放在 `<tspan>` 里（`text.actor>tspan{fill:…}`）而父 `<text>` 带的是方框底色，量父节点等于量错对象；`<svg>` 自己没有背景，`getComputedStyle(svg).backgroundColor` 是透明并会被解析成黑色。证据图：`docs/assets/diagram-theme.png`。
+
 
 ---
 
