@@ -27,10 +27,20 @@ const DATA = {
 /** Flavour → the `data-ds-dark-theme` value ThemePresenter would set. */
 const DARK_FLAVOURS = new Set(['frappe', 'macchiato', 'mocha'])
 
+/** Fetches already in flight or done, so several mounts share one copy. */
+const JSON_CACHE = new Map()
+
 async function json(url) {
-  const response = await fetch(url)
-  if (!response.ok) throw new Error(`fetch ${url} → ${response.status}`)
-  return response.json()
+  // `s2` mounts five board states in one page; without this it would fetch the 78 KB wire
+  // value and four token tables five times over, which is most of its boot time.
+  const cached = JSON_CACHE.get(url)
+  if (cached !== undefined) return cached
+  const pending = fetch(url).then((response) => {
+    if (!response.ok) throw new Error(`fetch ${url} → ${response.status}`)
+    return response.json()
+  })
+  JSON_CACHE.set(url, pending)
+  return pending
 }
 
 /**
@@ -94,6 +104,82 @@ function clickElement(element) {
 }
 
 /**
+ * The reading column's conversation, as a real external store.
+ *
+ * `ReadingColumn` (`src/client.js:2476-2485`) calls `useChat(selector)` **during its own
+ * render** to pull `snapshot.order` and `snapshot.nodes`, so a stub that ignores the
+ * selector returns `undefined` for both and the column renders 「这段对话还没有消息。」
+ * forever — which is exactly what the first cut of the film did.
+ *
+ * Implementing it with `useSyncExternalStore` rather than "return a value" is what makes
+ * the column able to *change* mid-scene: publishing a longer conversation re-renders every
+ * subscriber, so a scene can add turns over `t` and watch the older ones scroll away.
+ */
+function createChatStore() {
+  const listeners = new Set()
+  return {
+    snapshot: { order: [], nodes: emptyNodeStore() },
+    subscribe(listener) {
+      listeners.add(listener)
+      return () => listeners.delete(listener)
+    },
+    publish(turns) {
+      const map = new Map()
+      turns.forEach((turn, index) => {
+        const key = `t${index}`
+        map.set(key, {
+          key,
+          id: key,
+          // Chat's own node kinds: `user` and `assistant-step` (`client.js:2387-2388`).
+          kind: turn.role === 'user' ? 'user' : 'assistant-step',
+          anchorSeq: index + 1,
+          visibility: 'visible',
+          data:
+            turn.role === 'user'
+              ? { content: [{ kind: 'text', text: turn.text }] }
+              : { blocks: [{ kind: 'text', text: turn.text }] },
+        })
+      })
+      // A NEW `order` array every time, deliberately: `ReadingColumn`'s memo depends on
+      // its identity, so handing back the same array would keep serving the old list
+      // out of cache even though the render happened.
+      this.snapshot = { order: [...map.keys()], nodes: nodeStore(map) }
+      for (const listener of listeners) listener()
+    },
+  }
+}
+
+/**
+ * The node store `useChat` hands to `dialogueFromChat`.
+ *
+ * **Measured, and the first attempt got it wrong**: the reader does
+ * `const nodes = chat?.nodes?.values?.()` followed by `if (!Array.isArray(nodes)) return []`.
+ * A real `Map`'s `values()` returns a *MapIterator*, so handing over a `Map` yields an
+ * empty column with no error anywhere — the same silent failure the stub had. `values()`
+ * must therefore return a genuine array.
+ */
+function nodeStore(map) {
+  return {
+    get size() {
+      return map.size
+    },
+    get(key) {
+      return map.get(key)
+    },
+    has(key) {
+      return map.has(key)
+    },
+    values() {
+      return [...map.values()]
+    },
+  }
+}
+
+function emptyNodeStore() {
+  return nodeStore(new Map())
+}
+
+/**
  * Mount the real `BoardView`.
  *
  * @param options.sessionId  session id the view binds to.
@@ -127,15 +213,37 @@ async function startBoard(options = {}) {
     throw new Error(`unexpected require(${name})`)
   })
 
-  // The real stylesheet, through the real component.
-  const styleHost = document.createElement('div')
-  document.head.appendChild(styleHost)
-  window.ReactDOM.createRoot(styleHost).render(window.React.createElement(mod.BoardStyles))
+  // The real stylesheet, through the real component — once per document. Several mounts
+  // coexist in a scene like `s2` (one per board state, toggled by visibility), and
+  // appending the same stylesheet five times is harmless but wasteful.
+  if (window.__sbStylesHost === undefined) {
+    const styleHost = document.createElement('div')
+    document.head.appendChild(styleHost)
+    window.__sbStylesHost = styleHost
+    window.ReactDOM.createRoot(styleHost).render(window.React.createElement(mod.BoardStyles))
+  }
 
   const mount = document.getElementById(options.mountId ?? 'mount')
   if (mount === null) throw new Error(`no #${options.mountId ?? 'mount'} element to mount into`)
+  /**
+   * Select **inside this mount**, never the document.
+   *
+   * Several board states live side by side, and they share every class name, so a
+   * document-wide `querySelector('.sb-pageOn')` answers for whichever mount happens to
+   * come first — which reads as "the click did nothing" rather than as a wrong query.
+   */
+  const scope = (selector) => mount.querySelector(selector)
+  const scopeAll = (selector) => [...mount.querySelectorAll(selector)]
   const useProjection = (key) => (key === 'board' ? board : undefined)
-  const useChat = () => window.__chat ?? { turns: [], loading: false }
+  const chatStore = createChatStore()
+  if (Array.isArray(options.chatTurns)) chatStore.publish(options.chatTurns)
+  const useChat = (selector) => {
+    const snapshot = window.React.useSyncExternalStore(
+      (listener) => chatStore.subscribe(listener),
+      () => chatStore.snapshot,
+    )
+    return typeof selector === 'function' ? selector(snapshot) : snapshot
+  }
   const useInput = () => window.__input ?? { value: '', attachments: [] }
   const inputActions = {
     setValue: () => {},
@@ -157,7 +265,10 @@ async function startBoard(options = {}) {
 
   const root = window.ReactDOM.createRoot(mount)
   root.render(element)
-  await until(() => document.querySelector('[data-superboard-canvas]') !== null, 'the board canvas')
+  await until(
+    () => scope('[data-superboard-canvas]') !== null,
+    `the board canvas inside #${options.mountId ?? 'mount'}`,
+  )
 
   const api = {
     mod,
@@ -171,21 +282,30 @@ async function startBoard(options = {}) {
       // Give mermaid-backed blocks a beat to re-render through their own observer.
       await new Promise((done) => setTimeout(done, 350))
     },
-    /** Click a page tab by slug, the way the user would. */
+    /**
+     * Click a page tab by slug, the way the user would.
+     *
+     * **Measured**: the client renders no tab strip at all when a board has a single page
+     * — so on a one-page board there is no tab to click, and the request is already
+     * satisfied. Throwing there would make a legitimate state look like a missing page.
+     */
     async selectPage(slug) {
-      const tab = [...document.querySelectorAll('.sb-page')].find(
-        (button) => button.textContent.startsWith(slug),
-      )
-      if (tab === undefined) throw new Error(`no page tab for ${slug}`)
+      const tabs = scopeAll('.sb-page')
+      if (tabs.length === 0) return undefined
+      const tab = tabs.find((button) => button.textContent.startsWith(slug))
+      if (tab === undefined) throw new Error(`no page tab for ${slug} in #${options.mountId ?? 'mount'}`)
       clickElement(tab)
-      await until(() => document.querySelector('.sb-pageOn')?.textContent.startsWith(slug), `page ${slug}`)
+      await until(
+        () => scope('.sb-pageOn')?.textContent.startsWith(slug),
+        `page ${slug} in #${options.mountId ?? 'mount'}`,
+      )
       return tab
     },
     activePage() {
-      return document.querySelector('.sb-pageOn')?.textContent.replace(/\d+$/, '') ?? ''
+      return scope('.sb-pageOn')?.textContent.replace(/\d+$/, '') ?? ''
     },
     blocks() {
-      return [...document.querySelectorAll('[data-block-id]')]
+      return scopeAll('[data-block-id]')
     },
     /**
      * Look a card up by the slug a reader would use.
@@ -197,6 +317,25 @@ async function startBoard(options = {}) {
      */
     blockBySlug(slug) {
       return document.querySelector(`[data-block-slug="${slug}"]`)
+    },
+    /**
+     * Publish a conversation into the reading column.
+     *
+     * `turns` is `[{ role: 'user' | 'assistant', text }]`, oldest first. Publishing a
+     * *longer* list is what makes the column scroll: `ReadingColumn` re-pins to the
+     * bottom whenever the turn count changes, so the turns that no longer fit leave the
+     * top of the view — which is the whole point of the shot.
+     */
+    setChat(turns) {
+      chatStore.publish(turns)
+      return until(
+        () => document.querySelectorAll('[data-superboard-reader] .sb-turn').length === turns.length,
+        'the reading column to catch up',
+      )
+    },
+    /** The reading column's scroller, for a scene that wants a specific scroll position. */
+    reader() {
+      return document.querySelector('[data-superboard-reader] .sb-readerBody')
     },
     until,
     clickElement,
