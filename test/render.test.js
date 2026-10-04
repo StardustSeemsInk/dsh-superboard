@@ -138,6 +138,40 @@ function richWire() {
 }
 
 /**
+ * A board whose prose carries a table, beside one that does not.
+ *
+ * The table is the case that broke: a card body only ran the inline parser, so the header, the
+ * separator and the body row all arrived in the paragraph branch and were printed with their pipes
+ * intact — which reads as a rendering fault rather than as a table.
+ */
+function tableWire() {
+  const doc = [
+    ...applied(10, 'c1', {
+      ops: [
+        { op: 'add_block', page: 'main', kind: 'prose', slug: 'plain', markdown: '一句普通话。' },
+        {
+          op: 'add_block',
+          page: 'main',
+          kind: 'prose',
+          slug: 'tabled',
+          markdown: '| 候选 | 为什么不行 |\n| --- | --- |\n| 槽位 | 拿不到 |',
+        },
+      ],
+    }),
+  ].reduce((state, event) => foldBoard(state, event), emptyBoardDoc('sess-render'))
+  return boardWireSchema.parse(toWire(doc))
+}
+
+/** The board above, rendered. */
+function tableView() {
+  return render(
+    client.BoardView(
+      props({ useProjection: (key) => (key === 'board' ? tableWire() : undefined) }),
+    ),
+  )
+}
+
+/**
  * A chat snapshot whose nodes are the two kinds the reading column keeps, plus two it drops.
  *
  * `nodes.values()` returning an **array** is the real shape, not a Map iterator: the shipped
@@ -464,4 +498,51 @@ test('the load-earlier button follows the session snapshot, not a one-time read'
 
   // The hook is the whole point, so the view must also survive not having one.
   assert.doesNotThrow(() => render(client.BoardView(props({ useSession: undefined }))))
+})
+
+test('a table written into a prose block renders as a table, not as pipes', () => {
+  const tree = tableView()
+
+  const tables = elements(tree).filter((node) => node.type === 'table')
+  assert.equal(tables.length, 1, 'the table must become a table element')
+  assert.ok(classes(tree).includes('sb-mdTable'), 'and carry the table class')
+
+  const text = textOf(tree).join(' ')
+  assert.match(text, /为什么不行/, 'a header cell must be visible')
+  assert.match(text, /拿不到/, 'a body cell must be visible')
+  assert.ok(!text.includes('| 候选 |'), `the pipes must not be shown literally: ${text}`)
+  assert.ok(!/\|\s*-{2,}/.test(text), `the separator row must not survive as text: ${text}`)
+})
+
+test('prose that is a single sentence keeps its plain paragraph', () => {
+  const tree = tableView()
+  const paragraphs = elements(tree).filter((node) => node.props.className === 'sb-p')
+
+  assert.equal(paragraphs.length, 1, 'only the prose with no block structure stays a paragraph')
+  assert.ok(
+    textOf(paragraphs[0]).join('').includes('一句普通话。'),
+    'and it is the one-line block',
+  )
+})
+
+test('a table in an assistant turn renders in the reading column too', () => {
+  // The card path and the transcript path share the block parser but not the call site, so the
+  // same source is asserted through both.
+  const snapshot = {
+    nodes: {
+      get: () => undefined,
+      values: () => [
+        {
+          key: 'n1',
+          kind: 'assistant-step',
+          anchorSeq: 1,
+          data: { blocks: [{ kind: 'text', text: '| 候选 | 为什么不行 |\n| --- | --- |\n| 槽位 | 拿不到 |' }] },
+        },
+      ],
+    },
+  }
+
+  const tree = render(client.BoardView(props({ useChat: (selector) => selector(snapshot) })))
+  assert.equal(elements(tree).filter((node) => node.type === 'table').length, 1)
+  assert.ok(!textOf(tree).join(' ').includes('| 候选 |'), 'the transcript must not show raw pipes')
 })

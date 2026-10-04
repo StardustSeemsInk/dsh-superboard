@@ -127,6 +127,7 @@ window.__ModuleLoader__.load({
       '.sb-turnBody{min-width:0;}',
       '.sb-md{display:flex;flex-direction:column;gap:6px;font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary);min-width:0;}',
       '.sb-mdP{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;}',
+      '.sb-mdProse{color:var(--dsw-alias-label-secondary);}',
       '.sb-mdH{margin:2px 0 0;font-weight:600;}',
       '.sb-mdH1{font-size:17px;line-height:24px;}',
       '.sb-mdH2{font-size:15px;line-height:22px;}',
@@ -456,8 +457,16 @@ window.__ModuleLoader__.load({
       switch (block.kind) {
         case 'heading':
           return h(`h${block.level}`, { className: `sb-h${block.level}` }, h(RichText, { text: block.text }))
-        case 'prose':
-          return h('p', { className: 'sb-p' }, h(RichText, { text: block.markdown }))
+        case 'prose': {
+          const blocks = parseMarkdownBlocks(block.markdown)
+          // A table is not a line shape — it takes a header row *and* a separator row — so it can
+          // only be found by parsing. Asking the parser rather than pattern-matching here keeps
+          // one definition of what block structure is.
+          if (blocks.length === 1 && blocks[0].type === 'paragraph') {
+            return h('p', { className: 'sb-p' }, h(RichText, { text: block.markdown }))
+          }
+          return h(Markdown, { text: block.markdown, className: 'sb-mdProse' })
+        }
         case 'list':
           return h(
             block.ordered ? 'ol' : 'ul',

@@ -9,3 +9,6 @@ dist/
 # Runtime output
 .scratch/
 *.log
+
+# Throwaway edit scripts: anchored swaps, run once, never needed again.
+.tmp-*
