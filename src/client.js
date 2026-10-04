@@ -1441,6 +1441,14 @@ window.__ModuleLoader__.load({
               // from the model, and strict is the level that encodes HTML in labels rather than
               // interpreting it.
               securityLevel: 'strict',
+              // **Measured**: with mermaid's own default (`false`), a diagram that fails to parse
+              // makes mermaid insert its "Syntax error in text" bomb graphic into `document.body`
+              // — not into the card. The catch below still runs and the card still shows the real
+              // reason, so the failure looks handled while a full-size graphic sits on top of the
+              // whole board. Turning this on makes mermaid throw *instead*, which is the behaviour
+              // the error path was always written against. It is in mermaid's `secure` list, so it
+              // is settable from here.
+              suppressErrorRendering: true,
               // `base` is the only mermaid theme that honours a full variable set; the built-in
               // `default`/`dark` themes ignore most of `themeVariables`, which is why the shells
               // own palette is passed through it instead of choosing between them.
