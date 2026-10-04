@@ -1166,12 +1166,33 @@ window.__ModuleLoader__.load({
      * It is read-only on purpose. The composer is right below it and is the place to type.
      */
     function ReadingColumn({ sessionId, useChat, loadOlder, hasOlder, width, onResize }) {
-      const chat = typeof useChat === 'function' ? useChat((snapshot) => snapshot?.nodes) : undefined
+      // Two selectors, and the split is load-bearing.
+      //
+      // `nodes` is a *stable* keyed store: the Chat builder hands back the same
+      // `MutableChatNodeStore` instance on every publication — `snapshot()` returns
+      // `{ order: this.order, nodes: this.store, … }` and `this.store` is created once in the
+      // constructor (`chat-snapshot-builder.ts:1172-1184`). So a selector over `nodes` compares
+      // equal forever, React bails out of the re-render, and the column only caught up when
+      // something *else* remounted it. That is the "switch tabs and come back" the user sees, and
+      // it is also why removing the old `generation` counter appeared to break nothing until now.
+      //
+      // `order` is rebuilt whenever the visible node set changes — prepending a page of history is
+      // exactly that (`replace()` at `chat-snapshot-builder.ts:1084-1090`), and the official chat
+      // view subscribes to it for the same reason (`ChatView.tsx:106`).
+      //
+      // The store is still read live through `values()`, which is why it does not need to change
+      // identity. The memo must depend on `order` as well, or it would keep serving the old list
+      // out of its cache even when the render does happen.
+      const order = typeof useChat === 'function' ? useChat((snapshot) => snapshot?.order) : undefined
+      const nodeStore = typeof useChat === 'function' ? useChat((snapshot) => snapshot?.nodes) : undefined
       const [loading, setLoading] = React.useState(false)
       const scrollRef = React.useRef(null)
       const pinnedRef = React.useRef(true)
 
-      const turns = React.useMemo(() => dialogueFromChat(chat === undefined ? undefined : { nodes: chat }), [chat])
+      const turns = React.useMemo(
+        () => dialogueFromChat(nodeStore === undefined ? undefined : { nodes: nodeStore }),
+        [nodeStore, order],
+      )
       void sessionId
 
       // A boolean, not a getter: the caller reads it from the session snapshot, so a page landing

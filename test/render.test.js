@@ -373,6 +373,72 @@ test('the reading column renders the dialogue from the chat snapshot', () => {
   assert.doesNotMatch(text, /# 结论/)
 })
 
+test('a landed page of history appears without a remount', () => {
+  // `nodes` is a *stable* keyed store: `ChatSnapshotBuilder.snapshot()` hands back the same
+  // `MutableChatNodeStore` instance on every publication (`chat-snapshot-builder.ts:1172-1184`),
+  // so subscribing to it compares equal forever and React bails out of the re-render. The column
+  // then only caught up when something else remounted it — the "switch tabs and come back" the
+  // user reported. A React stub whose `useMemo` ignores its dependency array cannot tell the
+  // difference, so this test installs one that honours deps, and drives two publications past a
+  // store whose identity deliberately never changes.
+  const earlier = {
+    key: 'n0',
+    kind: 'user',
+    anchorSeq: 0,
+    data: { content: [{ type: 'text', text: '更早的问题' }] },
+  }
+  let landed = false
+  const visible = chatSnapshot().nodes.values()
+  const store = {
+    get: () => undefined,
+    values: () => (landed ? [earlier, ...visible] : visible),
+  }
+  // Only `order` moves, which is exactly what a prepend does: the store instance is the same one.
+  const publication = () => ({ order: landed ? ['n0', ...visible.map((node) => node.key)] : visible.map((node) => node.key), nodes: store })
+  const column = () =>
+    client.ReadingColumn({
+      sessionId: 'sess-render',
+      useChat: (selector) => selector(publication()),
+      loadOlder: async () => true,
+      hasOlder: true,
+      width: 420,
+      onResize: () => {},
+    })
+
+  const originalMemo = fakeReact.useMemo
+  const cells = []
+  let next = 0
+  fakeReact.useMemo = (compute, deps) => {
+    const index = next++
+    const previous = cells[index]
+    const unchanged =
+      previous !== undefined &&
+      Array.isArray(deps) &&
+      Array.isArray(previous.deps) &&
+      deps.length === previous.deps.length &&
+      deps.every((value, at) => Object.is(value, previous.deps[at]))
+    if (unchanged) return previous.value
+    const value = compute()
+    cells[index] = { deps, value }
+    return value
+  }
+
+  try {
+    next = 0
+    assert.doesNotMatch(textOf(render(column())).join(' '), /更早的问题/)
+
+    landed = true
+    next = 0
+    assert.match(
+      textOf(render(column())).join(' '),
+      /更早的问题/,
+      'a page that landed must show without the user leaving the tab',
+    )
+  } finally {
+    fakeReact.useMemo = originalMemo
+  }
+})
+
 test('a view with no projection, no hooks and no history still renders', () => {
   // The three "nothing yet" states. Each renders a placeholder on purpose, so none of them may
   // throw — a blank pane would be indistinguishable from a crash.
