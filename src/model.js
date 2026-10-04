@@ -24,8 +24,14 @@
  * would still parse into a shape nothing reads any more, so those boards have to be re-folded. The
  * reverse case matters just as much: an `at` the fold used to produce can no longer be produced, so
  * any revision computed from one is stale.
+ *
+ * Bumped to 4 by the PDF parse, which **deleted** `pdf-page.pageCount` and changed that arm's
+ * encoding. Both halves of the same rule: a checkpoint may still hold the field, and the hash that
+ * used to include it can no longer be produced. It was worth removing rather than leaving in place
+ * — no tool could ever set it, so it was a field the document could not see, and a page count is a
+ * fact about a file rather than about a board.
  */
-export const BOARD_MODEL_VERSION = 3
+export const BOARD_MODEL_VERSION = 4
 
 /** Block kinds, in the order `board-model.md` §1.3 lists them. */
 export const BLOCK_KINDS = Object.freeze([
@@ -403,6 +409,9 @@ function encodeBlock(block) {
       )
       break
     case 'pdf-page':
+      // `pageCount` is not here because it is not a field any more: it needs a parse, a parse is
+      // I/O, and the fold is synchronous. It lives in the host's volatile `PdfFacts` (src/pdf.js)
+      // and is merged in when a tool reads the board. A block cannot carry a fact it cannot see.
       parts.push(
         block.src,
         FIELD_SEP,
@@ -413,8 +422,6 @@ function encodeBlock(block) {
           : `${quantise(block.crop.x)},${quantise(block.crop.y)},${quantise(block.crop.w)},${quantise(block.crop.h)}`,
         FIELD_SEP,
         block.caption ?? '',
-        FIELD_SEP,
-        block.pageCount === undefined ? '' : String(block.pageCount),
       )
       break
     case 'group':

@@ -4,7 +4,7 @@ An agent-editable board for [DeepSeek Harness](https://github.com/deepseek-ai) �
 
 看板是 Agent 思考的地方：markdown 块、关系箭头、渲染出的图表、钉住的 PDF 页与图片。它是**对话 / 轨迹旁边的第三个标签页**，所以聊天保留自己的家；同时它也是一块**常驻显示面**——钉在看板上的答案不会滚进历史里再被重新读一遍。
 
-> **状态：v1 完成并在用。** 230 个测试通过；模型版本 3；已以 `link:` 方式装进 `desktop` profile。
+> **状态：v1 完成并在用。** 328 个测试通过；模型版本 4；已以 `link:` 方式装进 `desktop` profile。
 > 设计访谈与技术决定见 [`docs/design/design-tree.md`](docs/design/design-tree.md)，
 > 可照着实现的模型契约见 [`docs/design/board-model.md`](docs/design/board-model.md)，
 > 逐条验证过的框架约束见 [`docs/research/dsh-plugin-contract.md`](docs/research/dsh-plugin-contract.md)，
@@ -115,7 +115,7 @@ console.log('投影:', p, '工具:', t)
 ## 开发
 
 ```bash
-npm test        # 230 个测试，node:test，无框架
+npm test        # 328 个测试，node:test，无框架
 npm run verify  # 测试 + 确认 host 半导出 apply()
 ```
 
@@ -129,19 +129,24 @@ src/schema.js       文档 schema 与 wire schema（投影到浏览器的形状�
 src/schema-dsl.js   手写的 JSON Schema 编译器（原因见下）
 src/tools.js        四个工具的定义与渲染
 src/activity.js     活动流投影
+src/uml.js          从 mermaid 源码里读出节点表（块内锚点用）
+src/diagnose.js     宿主侧的 mermaid 廉价校验（折叠时同步跑）
+src/runtime.js      浏览器侧运行时路由：mermaid、pdf.js、渲染失败上报
+src/pdf.js          宿主侧 PDF 解析：文本层与归一化坐标，供块内锚点使用
 src/client.js       client 半入口：看板视图、阅读栏、框选反馈，原样下发
 cordis.patch.yml    把本 bundle 插进 profile 的层栈
 docs/design/        设计树、模型契约、里程碑计划
 docs/research/      针对真实 DSH 0.2.0-rc.2 验证过的约束与 API 调研
 scripts/            开发工具（官方包参考提取）
-test/               230 个测试
+test/               328 个测试
 ```
 
-### 三条源码约束
+### 四条源码约束
 
 - **没有构建步骤，而且短期内不打算要。** client 半是手写的浏览器 JavaScript，用 `React.createElement` 构造元素——`dsh.client` 是**原样**下发 `src/client.js` 的，所以你改的就是跑的。只有需要代码分割（UML 那块）或类型检查时，打包器才变得必要。
 - **`.ref/` 不进版本库。** 它存放官方包的只读提取物，调研结论都是对着它验证的。用 `node scripts/extract-dsh-ref.mjs` 重新生成。
 - **`src/schema-dsl.js` 是手写的，不是偷懒。** `ctx.tools.register` 接收的是**已编译**的 JSON Schema，而官方的 `defineTool` 编译器在一个本插件不能导入的包里。所以这个 DSL 手工产出编译后的形状，测试再把每一份定义喂给 DSH 自己的 `assertSupportedJsonSchema` / `validateJsonSchemaValue`（直接从装好的应用里加载），确保它真的是 DSH 认的形状——包括它**不**支持的子集（`minItems`、`type` 数组等）。
+- **派生数据不进模型，只进投影或宿主侧易失存储。** `areas` 解析出的格子、`nodeHints` 读出的节点表都走前者；`RenderReports`（浏览器观测）与 `PdfFacts`（宿主解析出的文本层和页数）走后者。原因不是洁癖：投影的 `apply` 是**同步**的，而 PDF 解析是 I/O；就算异步算完写回 state，投影也只在 `apply` 返回新值时才重新发布，那个改动是隐形的。删掉 `pdf-page.pageCount` 就是为了这条——它是「模型里存了一个谁也写不进去的字段」。
 
 ## 文档索引
 

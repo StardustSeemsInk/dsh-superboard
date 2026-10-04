@@ -3,17 +3,17 @@
   "version": "6.3.289",
   "tree": {
     "files": 190,
-    "bytes": 4143384,
-    "sha256": "22b8126f8913db44c44a3d7abd0d7a0039a1ffeb0ac408461e98af43ed5fc1cb"
+    "bytes": 4254855,
+    "sha256": "d42071692191f6b1b2ab93dd5a6371318faa395a9ce4c4cc869046d827396883"
   },
   "core": {
     "pdf.min.mjs": {
-      "bytes": 458705,
-      "sha256": "f80490490320511e5df18c580b9edd6b5db8058dceebaf6f161992e0a964b9e2"
+      "bytes": 518555,
+      "sha256": "f401927e692efc7735e0cd528c490d0dd31b7f0972c122b7040df805be45cce4"
     },
     "pdf.worker.min.mjs": {
-      "bytes": 1265413,
-      "sha256": "8ab0e5e30031b4a06ecfddd5ae9562f0227f830ee7ec9ed1a968b134243d2386"
+      "bytes": 1317034,
+      "sha256": "a33cfe728c584fdba4fcc1fd54bcdc2f9f2f13889ddbb5b2bd1d0f8cbe49b84e"
     }
   },
   "assets": [

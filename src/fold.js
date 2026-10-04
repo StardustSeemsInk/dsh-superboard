@@ -645,7 +645,6 @@ function buildBlock(op, context, model, page, id) {
         page: requirePageNumber(op.pdfPage ?? op.page),
         ...(op.crop === undefined ? {} : { crop: normaliseCrop(op.crop) }),
         ...(typeof op.caption === 'string' ? { caption: op.caption } : {}),
-        ...(op.pageCount === undefined ? {} : { pageCount: Number(op.pageCount) }),
       }
     case 'group':
       return {
@@ -755,7 +754,6 @@ function opUpdateBlock(model, op, context) {
     'caption',
     'page',
     'crop',
-    'pageCount',
     'title',
     'collapsed',
   ]
@@ -767,7 +765,6 @@ function opUpdateBlock(model, op, context) {
     else if (field === 'items') patched.items = normaliseItems(op.items, context, model, page)
     else if (field === 'crop') patched.crop = normaliseCrop(op.crop)
     else if (field === 'page') patched.page = requirePageNumber(op.pdfPage ?? op.page)
-    else if (field === 'pageCount') patched.pageCount = Number(op.pageCount)
     else if (field === 'ordered') patched.ordered = op.ordered === true
     else if (field === 'collapsed') patched.collapsed = op.collapsed === true
     else patched[field] = typeof op[field] === 'string' ? op[field].normalize('NFC') : op[field]

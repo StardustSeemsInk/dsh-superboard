@@ -249,8 +249,6 @@ interface PdfPageBlock extends BlockBase {
   /** 页内裁剪（PDF 用户空间单位）。省略 = 整页。 */
   crop?: { x: number; y: number; w: number; h: number }
   caption?: string
-  /** 该 PDF 的页数；由宿主读取后回填，用于校验 page 越界。 */
-  pageCount?: number
 }
 
 interface GroupBlock extends BlockBase {
@@ -314,6 +312,11 @@ type AnchorAt =
 1. `Anchor.blockId` 必须存在于同一看板；否则该 Anchor 所属的 Edge 被标 `dangling: true`（**不删除**，见 §2.3 规则 D4）。
 2. `at.kind` 必须与目标块的 `kind` 兼容：`lines` 仅 `code`；`item` 仅 `list`；`rect`/`point` 仅 `image`/`pdf-page`；`node` 仅 `uml`；`text` 仅 `prose`/`heading`；`child` 仅 `group`。
 3. `text.start <= text.end`，且 `quote` 若存在，应与该区间当前内容相等——不相等意味着正文被改过，校验器把该锚点标 `staleHint`（进 diag，不改模型）。
+
+**`rect`/`point` 的坐标从哪来：宿主解析 PDF 文本层。** Agent 看不到像素，所以一个「第 4 页左边那栏的表」的矩形它自己算不出来。`src/pdf.js` 用自带的 pdf.js 在宿主侧解析每一页，把文本框按视觉行归并，并在 `board_read` 里连同**每行的归一化矩形**一起打印出来——Agent 复制那四个数就能写 `rect`。这就是「宿主侧 PDF 解析」存在的唯一理由：**文档理解不是本插件的活，锚点与高亮才是**。因此：
+
+- **扫描件与图片没有页内锚点，这是设计而非缺陷。** 它们没有文本层，所以没有矩形可给。`rect`/`point` 留在模型里是因为将来接上分块识别（OCR）就能启用，不需要改模型——但那是另一轮的事。
+- 解析结果**不进模型**。它是宿主侧的易失存储（`PdfFacts`），和浏览器上报的渲染失败同类：投影的 `apply` 是同步的，而解析是 I/O。块上曾经声明过一个 `pageCount`，谁也写不进去，已经删除（模型版本 3 → 4）。
 
 ### 1.5 `Edge`
 
@@ -477,7 +480,7 @@ interface OpBase {
 | `reorder_pages` | `order: string[]` | 必须是**当前全部页 id/slug 的一个排列**；长度不符或缺项即失败（不做「只移动一页」的模糊语义——那会造出两种实现）。 |
 | `delete_page` | `page`, `force?` | 若该页有块或有边端点在页内块上，且 `force !== true`，失败并回报计数；`force` 时删除该页及其块，相关边标 `dangling`。删最后一页失败（`pages.length >= 1` 是不变量）。 |
 | `add_block` | `page`, `kind`, `slug?`, `after?`, `region?` + **该 kind 的内容字段（同层平铺，不是嵌套的 `block` 对象）** | slug 经 `uniqSlug`；`kind:'group'` 时 `children` 必须引用**同页已存在**的块，且每个子块至多属于一个 group。 |
-| `update_block` | `block` + **要改的内容字段（同层平铺，至少一个）** | 允许改的字段：`text/markdown/items/ordered/level/code/lang/filename/source/engine/diagram/src/alt/caption/page/crop/pageCount/title/collapsed/anchors`。禁止改 `kind`/`id`/`slug`（slug 走 `rename_block` 语义时仍用本 op 的 `slug` 字段）。改 `kind` 是「删+加」，刻意不给 op。 |
+| `update_block` | `block` + **要改的内容字段（同层平铺，至少一个）** | 允许改的字段：`text/markdown/items/ordered/level/code/lang/filename/source/engine/diagram/src/alt/caption/page/crop/title/collapsed/anchors`。禁止改 `kind`/`id`/`slug`（slug 走 `rename_block` 语义时仍用本 op 的 `slug` 字段）。改 `kind` 是「删+加」，刻意不给 op。 |
 | `move_block` | `block`, `page`, 可选 `after` | 跨页移动时块内的 `AnchorAt.rect` 归一化坐标**保持原值**（它是相对该块自己的媒体，不是相对页面）；`regionId` 若指向的 region 不含新页块，region 的 `blockIds` 自动同步。 |
 | `delete_block` | `block`, `recursive?` | 删块；指向它的边标 `dangling`。`kind:'group'` 默认只解组（保留子块），`recursive:true` 连子块一起删。 |
 | `add_edge` | `from`, `to`, `rel?`, `label?`, `style?`, `slug?` | 两端锚点按 §1.4 校验（kind 兼容性）；重复边（同 from、同 to、同 rel、同 label）被**拒绝**并回报已存在的 edge slug —— 防模型重复画同一支箭。 |
@@ -544,7 +547,7 @@ pages[]           按数组顺序:
       code    : lang, code, filename
       uml     : engine, diagram, source          ← renderedHash 不参与
       image   : src, alt, caption, naturalSize
-      pdf-page: src, page, crop, caption, pageCount
+      pdf-page: src, page, crop, caption
       group   : title, children[], collapsed
     anchors[]     按数组顺序: blockId, at(kind + 该 kind 的字段)
 regions[]         按数组顺序: id, slug, blockIds[], label, layout, tone

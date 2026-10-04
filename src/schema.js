@@ -96,7 +96,6 @@ const block = z.discriminatedUnion('kind', [
     page: z.number(),
     crop: z.object({ x: z.number(), y: z.number(), w: z.number(), h: z.number() }).optional(),
     caption: z.string().optional(),
-    pageCount: z.number().optional(),
   }),
   z.object({
     ...baseBlock,

@@ -32,8 +32,24 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const source = join(root, 'node_modules', 'pdfjs-dist')
 const target = join(root, 'vendor', 'pdf')
 
-/** The two files the browser loads as modules. Everything else is fetched on demand. */
-const CORE = ['build/pdf.min.mjs', 'build/pdf.worker.min.mjs']
+/**
+ * The two files loaded as modules. Everything else is fetched on demand.
+ *
+ * **`legacy/`, not the modern build, and this is load-bearing.** The host parses PDFs too — that
+ * is how a `rect` anchor gets its coordinates and how a path that does not exist is noticed
+ * without anyone opening the board — and the modern build cannot run in Node: it calls
+ * `Uint8Array.prototype.toHex`, which Node v24 does not have (nor `toBase64`/`fromHex`, and there
+ * is no flag that adds them). The failure is `n.toHex is not a function`, thrown from inside the
+ * bundle's own exception machinery, which reads as a corrupt document rather than as a missing
+ * platform method.
+ *
+ * The legacy build is the one pdf.js publishes for exactly this environment: it polyfills those
+ * methods and picks its code paths at load time. Measured, in a real browser: it imports in 31 ms
+ * and rasterises the Chinese test page correctly, CMap glyphs and all. So it serves both halves,
+ * one copy, one parser — rather than 1.84 MB of duplicated bytes and two engines that could
+ * disagree about the same file.
+ */
+const CORE = ['legacy/build/pdf.min.mjs', 'legacy/build/pdf.worker.min.mjs']
 
 /**
  * The trees copied into `vendor/pdf/assets/`, and the subdirectory each lands in.
@@ -67,7 +83,7 @@ for (const name of CORE) {
   // The worker is the bigger of the two and the one a wrong file would break silently: a
   // non-module worker loads without complaint and then fails on every document.
   if (bytes.byteLength < 200_000) fail(`${name} is only ${bytes.byteLength} bytes — wrong build?`)
-  const flat = name.replace(/^build\//, '')
+  const flat = name.replace(/^(?:legacy\/)?build\//, '')
   writeFileSync(join(target, flat), bytes)
   core[flat] = { bytes: bytes.byteLength, sha256: sha256(bytes) }
 }

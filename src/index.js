@@ -34,6 +34,7 @@ import {
   foldActivity,
 } from './activity.js'
 import { emptyBoardDoc, BOARD_MODEL_VERSION } from './model.js'
+import { PdfFacts } from './pdf.js'
 import { boardDocSchema, boardWireSchema, toWire } from './schema.js'
 import { blockIndex, registerRuntimeRoutes, RenderReports } from './runtime.js'
 import { registerBoardTools, renderOutlineText } from './tools.js'
@@ -73,6 +74,12 @@ export function apply(ctx) {
   // because a report describes DOM that no longer exists.
   const reports = new RenderReports()
 
+  // What the host last read out of a PDF's text layer. Volatile for the same reason reports are,
+  // and one step firmer: a parse is I/O, the fold is synchronous, and a projection only republishes
+  // when `apply` returns a new value — so a parse result could not be stored in the board state even
+  // if it were written there. See `PdfFacts` in `src/pdf.js`.
+  const pdfFacts = new PdfFacts()
+
   // Optional: a profile without a web server still gets the whole board, just without diagrams —
   // `ctx.inject` keeps the plugin inactive for services it does not have rather than throwing.
   ctx.inject(['webServer'], (scope) => {
@@ -108,14 +115,14 @@ export function apply(ctx) {
     })
 
     ctx.inject(['tools'], (scope) => {
-      registerBoardTools(scope, projections, reports)
+      registerBoardTools(scope, projections, reports, pdfFacts)
     })
 
     ctx.inject(['systemPrompt'], (scope) => {
       scope.systemPrompt.context({
         name: `${PLUGIN_NAME}:board`,
         order: BOARD_CONTEXT_ORDER,
-        text: (context) => renderStandingOutline(projections, context, reports),
+        text: (context) => renderStandingOutline(projections, context, reports, pdfFacts),
       })
     })
   })
@@ -135,9 +142,10 @@ export function apply(ctx) {
  * @param projections - the session-projection registry.
  * @param context - the assembly context for this step.
  * @param reports - the board view's render reports, if the web server is up.
+ * @param pdfFacts - the host's PDF parse facts, if any.
  * @returns the prompt line, or `''` while the board has nothing to say.
  */
-function renderStandingOutline(projections, context, reports) {
+function renderStandingOutline(projections, context, reports, pdfFacts) {
   const session = context?.agent?.session
   if (session === undefined) return ''
   const state = safeStateOf(projections, session)
@@ -146,9 +154,19 @@ function renderStandingOutline(projections, context, reports) {
   const model = state.model
   const hasContent = model.pages.some((page) => page.blocks.length > 0) || model.edges.length > 0
   const renderReports = reports?.live?.(session.id, blockIndex(model)) ?? []
+  // Read-only here, never `ensure`: this runs synchronously on every request. Whatever parse facts
+  // already exist are used; a PDF whose page the Agent has not asked about yet simply has none, and
+  // the outline says nothing about it rather than blocking the step on a file read.
+  const liveFacts = pdfFacts?.live?.(session.id, blockIndex(model)) ?? []
   if (!hasContent && state.lastOpError === undefined) return ''
 
-  const { text } = renderOutlineText(state, { maxChars: STANDING_OUTLINE_CHARS, renderReports })
+  const { text } = renderOutlineText(state, {
+    maxChars: STANDING_OUTLINE_CHARS,
+    renderReports,
+    // Only the failures. A text table is exactly the thing that must not ride every request, and
+    // the outline is a map of the board, not a reading surface.
+    pdfFacts: liveFacts.filter((fact) => fact.status === 'failed'),
+  })
   return [
     text,
     '',

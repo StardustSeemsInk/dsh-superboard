@@ -69,11 +69,12 @@ test('the vocabulary is the CSS-shaped set, with `row` in and `tree` out', () =>
 })
 
 test('the model version moved, which is what forces an old checkpoint to re-fold', () => {
-  // 3 because the areas grill **deleted** the block-level `at`: a stored position would still parse
-  // into a shape nothing reads, so those boards have to be re-folded from the log rather than
-  // trusted. Removing a field is what the version exists for; adding one would not have needed it.
-  assert.equal(BOARD_MODEL_VERSION, 3)
-  assert.equal(emptyBoardDoc(SESSION).modelVersion, 3)
+  // 4 because the PDF parse **deleted** `pdf-page.pageCount`. Two reasons at once, and both are what
+  // the version exists for: a stored `pageCount` would still parse into a shape nothing reads, and
+  // the hash arm that used to encode it can no longer be produced — so every revision computed from
+  // one is stale. Removing a field is what forces this; adding one would not have needed it.
+  assert.equal(BOARD_MODEL_VERSION, 4)
+  assert.equal(emptyBoardDoc(SESSION).modelVersion, 4)
 })
 
 // ---------------------------------------------------------------------------

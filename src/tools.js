@@ -23,6 +23,7 @@
 
 import { BoardOpError, applyOps, previewRevision, OP_NAMES } from './fold.js'
 import { EDGE_RELS, LAYOUT_TEMPLATES } from './model.js'
+import { renderTextTable } from './pdf.js'
 import { blockIndex } from './runtime.js'
 import {
   arrayOf,
@@ -265,15 +266,22 @@ export function renderOutlineText(doc, options = {}) {
     }
   }
 
-  // Two ways a diagram is known to be broken, printed in one section: the host lint predicted it
-  // while folding, or the browser reported it after trying. The Agent is told the same thing
-  // either way — the diagram is not on the board, and why.
+  // Three ways an element is known to be broken, printed in one section. The Agent is told the
+  // same thing either way — the element is not on the board, and why.
   const renderReports = options.renderReports ?? []
-  if ((include === 'all' || include === 'diag') && (Object.keys(doc.diag ?? {}).length > 0 || renderReports.length > 0)) {
+  const pdfFacts = options.pdfFacts ?? []
+  const failedFacts = pdfFacts.filter((fact) => fact.status === 'failed')
+  if (
+    (include === 'all' || include === 'diag') &&
+    (Object.keys(doc.diag ?? {}).length > 0 || renderReports.length > 0 || failedFacts.length > 0)
+  ) {
     lines.push('')
     lines.push('render failures:')
     for (const report of renderReports) {
       lines.push(`  ${report.blockSlug}  RENDERER: ${report.message}`)
+    }
+    for (const fact of failedFacts) {
+      lines.push(`  ${fact.blockSlug}  ${fact.code}: ${fact.message}`)
     }
     for (const diagnostic of Object.values(doc.diag)) {
       lines.push(`  ${diagnostic.blockSlug}  ${diagnostic.code}: ${diagnostic.message}`)
@@ -456,17 +464,23 @@ const readTool = defineBoardTool({
 /**
  * Collect every reason a block is known to be broken, for the Agent.
  *
- * Two sources, presented identically, because to the Agent they are one thing — *this diagram is
- * not on the board*. They differ in how they were found: the host lint is a prediction made
- * while folding (and is therefore part of the projection, surviving replay), while a render
- * report is an observation the browser sent after actually trying. The renderer's message is
- * listed first when both exist, because it is the more specific of the two.
+ * Three sources, presented identically, because to the Agent they are one thing — *this element is
+ * not on the board, and here is why*. They differ only in how the reason was found:
+ *
+ *   - the **host lint** is a prediction made while folding, so it is part of the projection and
+ *     survives replay;
+ *   - a **render report** is an observation the browser sent after actually trying, which is the
+ *     more specific of the two and is therefore listed first;
+ *   - a **parse fact** is the host's own asynchronous look at a file on disk (`src/pdf.js`), which
+ *     is the only one of the three that can tell a password-protected PDF from a missing file, or
+ *     say how many pages a document has.
  *
  * @param doc - the board document.
  * @param renderReports - live reports from the board view, if any.
+ * @param pdfFacts - live parse facts, if any.
  * @returns `(blockId) => string[]`.
  */
-function failureNotes(doc, renderReports) {
+function failureNotes(doc, renderReports, pdfFacts = []) {
   const notes = new Map()
   const push = (blockId, line) => {
     const list = notes.get(blockId)
@@ -475,6 +489,10 @@ function failureNotes(doc, renderReports) {
   }
   for (const report of renderReports ?? []) {
     push(report.blockId, `⚠ the board renderer reported a failure: ${report.message}`)
+  }
+  for (const fact of pdfFacts ?? []) {
+    if (fact.status !== 'failed') continue
+    push(fact.blockId, `⚠ this PDF page cannot be read (${fact.code}): ${fact.message}`)
   }
   for (const diagnostic of Object.values(doc.diag ?? {})) {
     push(
@@ -486,19 +504,19 @@ function failureNotes(doc, renderReports) {
 }
 
 /** Render one resolved element as markdown, at the requested depth. */
-function renderElementMarkdown(model, found, depth, noteFor = () => []) {
+function renderElementMarkdown(model, found, depth, noteFor = () => [], factFor = () => undefined) {
   const element = found.element
   switch (found.kind) {
     case 'page': {
       const header = `# page ${element.slug}  (${element.id})`
       if (depth === 'page' || depth === 'region') {
-        const blocks = element.blocks.map((block) => renderBlock(block, noteFor(block.id))).join('\n\n')
+        const blocks = element.blocks.map((block) => renderBlock(block, noteFor(block.id), factFor(block.id))).join('\n\n')
         return `${header}\n\n${blocks}`
       }
       return `${header}\n\n${element.blocks.length} block(s): ${element.blocks.map((block) => block.slug).join(', ')}`
     }
     case 'block':
-      return renderBlock(element, noteFor(element.id))
+      return renderBlock(element, noteFor(element.id), factFor(element.id))
     case 'edge':
       return [
         `edge ${element.slug}  (${element.id})`,
@@ -516,7 +534,7 @@ function renderElementMarkdown(model, found, depth, noteFor = () => []) {
         const bodies = element.blockIds
           .map((id) => model.pages.flatMap((page) => page.blocks).find((block) => block.id === id))
           .filter((block) => block !== undefined)
-          .map((block) => renderBlock(block, noteFor(block.id)))
+          .map((block) => renderBlock(block, noteFor(block.id), factFor(block.id)))
           .join('\n\n')
         return `${header}\nmembers: ${members}\n\n${bodies}`
       }
@@ -528,7 +546,7 @@ function renderElementMarkdown(model, found, depth, noteFor = () => []) {
 }
 
 /** Render one block as markdown, with its address so the Agent can patch it. */
-function renderBlock(block, notes = []) {
+function renderBlock(block, notes = [], fact = undefined) {
   const head = `▸ ${block.slug}  [${block.kind}]  (${block.id})`
   const tail = notes.length === 0 ? '' : `\n${notes.join('\n')}`
   switch (block.kind) {
@@ -553,9 +571,16 @@ function renderBlock(block, notes = []) {
     }
     case 'image':
       return `${head}\nsrc: ${block.src}\nalt: ${block.alt}${block.caption === undefined ? '' : `\ncaption: ${block.caption}`}${tail}`
-    case 'pdf-page':
-      return `${head}\nsrc: ${block.src}\npage: ${block.page}${block.caption === undefined ? '' : `\ncaption: ${block.caption}`}${tail}`
-    case 'group':
+    case 'pdf-page': {
+      // The text layer, with each line's rectangle. This is the whole point of the host parsing
+      // the file at all: the Agent has to name a rectangle to highlight, and it cannot see the
+      // page. `board_read` is where it goes to find one, because the outline rides every request
+      // and a page of text would swamp it.
+      const table = fact === undefined ? '' : renderTextTable(fact)
+      return `${head}\nsrc: ${block.src}\npage: ${block.page}${block.caption === undefined ? '' : `\ncaption: ${block.caption}`}${
+        table === '' ? '' : `\n${table}`
+      }${tail}`
+    }    case 'group':
       return `${head}\ntitle: ${block.title ?? '(none)'}\nchildren: ${block.children.join(', ')}${tail}`
     default:
       return `${head}\n${JSON.stringify(block, null, 2)}${tail}`
@@ -1261,24 +1286,82 @@ export const BOARD_TOOLS = Object.freeze([outlineTool, readTool, applyTool, quer
  *
  * @param ctx - the plugin context.
  * @param projections - the session-projection registry, from `ctx.inject`.
+ * @param reports - the browser's render reports, or `undefined` without a web server.
+ * @param pdfFacts - the host's parse facts, or `undefined`.
  * @returns the disposers, so the caller can own them in its own effect.
  */
-export function registerBoardTools(ctx, projections, reports) {
+export function registerBoardTools(ctx, projections, reports, pdfFacts) {
   const read = (exec) => readBoard(projections, exec)
   // Reports are volatile and per-session, so they are resolved at call time rather than held in
   // the projection — see `RenderReports` for why an observation about the DOM cannot live there.
   const reportsFor = (exec, doc) =>
     reports === undefined ? [] : reports.live(exec?.agent?.session?.id, blockIndex(doc.model))
 
-  outlineTool.execute = (args, exec) => {
-    const doc = read(exec)
-    return executeOutline(doc, args, reportsFor(exec, doc))
+  /**
+   * Parse whatever PDF pages are new or stale, then read the facts back.
+   *
+   * Awaited, because a tool call can afford to wait and the Agent that just placed a page is the one
+   * that most needs to hear "that file is a scan with no text layer". The parse is cached by input,
+   * so the common case is a map lookup.
+   *
+   * Failures are swallowed into "no facts". A board whose PDF cannot be parsed is still a board, and
+   * an outline that throws because a file moved would be a worse board than one that says so.
+   */
+  const factsFor = async (exec, doc) => {
+    const sessionId = exec?.agent?.session?.id
+    try {
+      await pdfFacts.ensure(sessionId, doc.model)
+    } catch {
+      // `ensure` records per-block failures itself; a throw here is a bug in the store, not a fact.
+      return []
+    }
+    return pdfFacts.live(sessionId, blockIndex(doc.model))
   }
-  readTool.execute = (args, exec) => {
-    const doc = read(exec)
-    return executeRead(doc, args, reportsFor(exec, doc))
-  }
-  applyTool.execute = (args, exec) => executeApply(read(exec), args)
+
+  // Without a facts store there is nothing to await, and the tool returns its value directly rather
+  // than a promise that resolves to it. `pdfFacts` is optional the same way `reports` is: a profile
+  // that never vendored pdf.js, or a test that only cares about the board, gets a working tool.
+  const through = (sync, withFacts) =>
+    pdfFacts === undefined ? sync : withFacts
+
+  outlineTool.execute = through(
+    (args, exec) => executeOutline(read(exec), args, reportsFor(exec, read(exec))),
+    async (args, exec) => {
+      const doc = read(exec)
+      return executeOutline(doc, args, reportsFor(exec, doc), await factsFor(exec, doc))
+    },
+  )
+  readTool.execute = through(
+    (args, exec) => executeRead(read(exec), args, reportsFor(exec, read(exec))),
+    async (args, exec) => {
+      const doc = read(exec)
+      return executeRead(doc, args, reportsFor(exec, doc), await factsFor(exec, doc))
+    },
+  )
+  // `board_apply` parses too, and it is the call that most needs to. The dry run's block ids are
+  // indicative only, which is why this goes through `ensureInputs` — keyed by the file, not a block.
+  applyTool.execute = through(
+    (args, exec) => executeApply(read(exec), args),
+    async (args, exec) => {
+      const result = executeApply(read(exec), args)
+      const placed = args.ops
+        .filter((op) => op.kind === 'pdf-page' && typeof op.src === 'string' && Number.isInteger(op.pdfPage ?? op.page))
+        .map((op) => ({ src: op.src, page: op.pdfPage ?? op.page }))
+      if (placed.length === 0) return result
+      try {
+        const results = await pdfFacts.ensureInputs(placed)
+        const problems = [...results.values()].filter((fact) => fact.status === 'failed')
+        if (problems.length > 0) {
+          // Appended, not thrown: the ops *were* applied, and an unreadable file does not undo them.
+          result.warnings = [...result.warnings, ...problems.map((fact) => `⚠ PDF: ${fact.message}`)]
+          result.text = `${result.text}\n\n${problems.map((fact) => `⚠ ${fact.message}`).join('\n')}`
+        }
+      } catch {
+        // The board write stands regardless of whether the file could be inspected.
+      }
+      return result
+    },
+  )
   queryTool.execute = (args, exec) => executeQuery(read(exec), args)
   return BOARD_TOOLS.map((tool) => ctx.tools.register(tool))
 }
@@ -1311,9 +1394,11 @@ function readBoard(projections, exec) {
 }
 
 /** `board_outline`. */
-function executeOutline(doc, args, renderReports = []) {
-  const rendered = renderOutlineText(doc, { ...args, renderReports })
+function executeOutline(doc, args, renderReports = [], pdfFacts = []) {
+  const rendered = renderOutlineText(doc, { ...args, renderReports, pdfFacts })
   const model = doc.model
+
+  const failedFacts = pdfFacts.filter((fact) => fact.status === 'failed')
 
   return {
     rev: model.rev,
@@ -1339,13 +1424,20 @@ function executeOutline(doc, args, renderReports = []) {
       ...(edge.label === undefined ? {} : { label: edge.label }),
       ...(isDangling(model, edge) ? { dangling: true } : {}),
     })),
-    // One list, two origins. `RENDERER` means the browser tried and failed, which is a stronger
-    // statement than any prediction the host can make — so it is listed first.
+    // One list, three origins. `RENDERER` means the browser tried and failed, which is a stronger
+    // statement than any prediction the host can make — so it is listed first. `PDF` facts are the
+    // host's own asynchronous look at a file, which is the only source that can say "this file has
+    // three pages" or "this file is a scan with no text layer".
     diag: [
       ...renderReports.map((report) => ({
         block: report.blockSlug,
         code: 'RENDERER',
         message: report.message,
+      })),
+      ...failedFacts.map((fact) => ({
+        block: fact.blockSlug,
+        code: fact.code,
+        message: fact.message,
       })),
       ...Object.values(doc.diag ?? {}).map((diagnostic) => ({
         block: diagnostic.blockSlug,
@@ -1360,11 +1452,13 @@ function executeOutline(doc, args, renderReports = []) {
 }
 
 /** `board_read`. */
-function executeRead(doc, args, renderReports = []) {
+function executeRead(doc, args, renderReports = [], pdfFacts = []) {
   const model = doc.model
   const format = args.format ?? 'markdown'
   const depth = args.depth ?? 'block'
-  const noteFor = failureNotes(doc, renderReports)
+  const noteFor = failureNotes(doc, renderReports, pdfFacts)
+  const byBlock = new Map(pdfFacts.map((fact) => [fact.blockId, fact]))
+  const factFor = (blockId) => byBlock.get(blockId)
   const resolved = []
   const sections = []
 
@@ -1380,7 +1474,7 @@ function executeRead(doc, args, renderReports = []) {
     sections.push(
       format === 'json'
         ? JSON.stringify(found.element, null, 2)
-        : renderElementMarkdown(model, found, depth, noteFor),
+        : renderElementMarkdown(model, found, depth, noteFor, factFor),
     )
   }
 
