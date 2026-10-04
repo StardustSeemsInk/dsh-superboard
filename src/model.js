@@ -432,6 +432,11 @@ function encodeBlock(block) {
 /**
  * Encode a layout spec with its params and hints in a fixed key order.
  *
+ * `params` is an open record, so enumerating the keys that matter is the only way a param reaches
+ * the hash — a param that is not listed here can be changed without the revision moving, which is
+ * how a layout edit once became invisible to the Agent. `areas` is listed for that reason even
+ * though resolving it is the projection's job: the *template* is authored, so it is content.
+ *
  * @param layout - the layout spec.
  * @returns the encoded fragment.
  */
@@ -451,10 +456,213 @@ function encodeLayout(layout) {
     ':',
     params.root ?? '',
     ':',
+    (params.areas ?? []).join(';'),
+    ':',
     (hints.bands ?? []).map((band) => band.join(',')).join(';'),
     ':',
     hints.titleBlock === undefined ? '' : hints.titleBlock ? '1' : '0',
   ].join('')
+}
+
+/** The cell token that means "nothing sits here". */
+const AREA_HOLE = '.'
+
+/**
+ * Parse a layout's `areas` template into a rectangular grid of cell tokens.
+ *
+ * A token is a **child reference** — the same vocabulary `children` already uses — so naming a cell
+ * introduces no new concept for the Agent to learn. Whitespace separates cells, which is safe
+ * because a slug can never contain whitespace (`toSlug` collapses it to `-`), and `.` is a hole,
+ * which is safe because `toSlug` strips leading and trailing dots and `.` is never a slug alone.
+ *
+ * Only the *shape* is checked here; the *names* are checked by the caller, which is the only place
+ * that has the container's children. Keeping that split is what lets this stay pure.
+ *
+ * @param value - an array of row strings, or one string with rows separated by `/` or a newline.
+ * @returns `{ ok: true, rows }` with canonical rows, or `{ ok: false, error }`.
+ */
+export function parseAreas(value) {
+  let raw
+  if (Array.isArray(value)) raw = value.map((row) => String(row))
+  else if (typeof value === 'string') raw = value.split(/\r?\n|\//u)
+  else return { ok: false, error: 'areas must be an array of row strings, or one string' }
+
+  const rows = raw.map((row) => row.trim().split(/\s+/u).filter((cell) => cell !== ''))
+  if (rows.every((row) => row.length === 0)) return { ok: false, error: 'areas is empty' }
+
+  const width = rows[0].length
+  if (width === 0) return { ok: false, error: 'areas row 1 has no cells' }
+  for (let index = 0; index < rows.length; index += 1) {
+    if (rows[index].length !== width) {
+      return {
+        ok: false,
+        error: `areas row ${index + 1} has ${rows[index].length} cells; row 1 has ${width}`,
+      }
+    }
+  }
+  return { ok: true, rows }
+}
+
+/**
+ * Resolve parsed `areas` against a container's children.
+ *
+ * The template says *which child goes where*, by name. Resolving it here rather than in the browser
+ * is deliberate: CSS `grid-template-areas` needs CSS identifiers, so a CJK slug would have to be
+ * escaped, and an invalid declaration is dropped in silence — the layout would simply collapse with
+ * nothing to report. Computing line numbers ourselves keeps every slug legal and keeps every failure
+ * in a validator that can say what went wrong.
+ *
+ * @param rows - canonical rows from {@link parseAreas}.
+ * @param children - the container's child blocks, in order.
+ * @returns `{ ok: true, cols, rows, cells }` or `{ ok: false, error }`, with `cells` keyed by block id.
+ */
+export function resolveAreas(rows, children) {
+  const byToken = new Map()
+  for (const child of children) {
+    for (const token of [child.id, child.slug, ...(child.alias ?? [])]) {
+      if (typeof token === 'string' && token !== '') byToken.set(token, child.id)
+    }
+  }
+
+  /** token → the cells it occupies, in reading order. */
+  const occupied = new Map()
+  for (let row = 0; row < rows.length; row += 1) {
+    for (let col = 0; col < rows[row].length; col += 1) {
+      const token = rows[row][col]
+      if (token === AREA_HOLE) continue
+      const seen = occupied.get(token)
+      if (seen === undefined) occupied.set(token, [{ row, col }])
+      else seen.push({ row, col })
+    }
+  }
+
+  const cells = {}
+  for (const [token, list] of occupied) {
+    const id = byToken.get(token)
+    if (id === undefined) {
+      const known = children.map((child) => child.slug).join(', ')
+      return {
+        ok: false,
+        error:
+          `areas names ${JSON.stringify(token)}, which is not a child of this container; ` +
+          `its children are ${known === '' ? '(none)' : known}`,
+      }
+    }
+    if (cells[id] !== undefined) {
+      return {
+        ok: false,
+        error: `areas names ${JSON.stringify(token)} for a block that already has a region; one name per block`,
+      }
+    }
+
+    const top = Math.min(...list.map((cell) => cell.row))
+    const bottom = Math.max(...list.map((cell) => cell.row))
+    const left = Math.min(...list.map((cell) => cell.col))
+    const right = Math.max(...list.map((cell) => cell.col))
+    // A name's cells have to fill its own bounding box. Otherwise "the region" is a guess, and the
+    // browser would silently place the block in the first cell of a shape nobody can see.
+    if (list.length !== (bottom - top + 1) * (right - left + 1)) {
+      const columns = [...new Set(list.map((cell) => cell.col + 1))].sort((a, b) => a - b)
+      return {
+        ok: false,
+        error:
+          `areas gives ${JSON.stringify(token)} a region that is not a rectangle: ` +
+          `rows ${top + 1}-${bottom + 1}, columns ${columns.join(' and ')}`,
+      }
+    }
+    cells[id] = {
+      row: top + 1,
+      col: left + 1,
+      rowSpan: bottom - top + 1,
+      colSpan: right - left + 1,
+    }
+  }
+
+  return { ok: true, cols: rows[0].length, rows: rows.length, cells }
+}
+
+/**
+ * Resolve every `areas` template in a model into explicit placements.
+ *
+ * This is the projection half of the split: the fold validates a template while it still has the
+ * page, and this turns the surviving templates into the line numbers the renderer needs. The result
+ * lands in `layout.params` because that record is already open on both the doc and the wire, so no
+ * schema changes and — more importantly — **the document never carries derived data**. Only the
+ * authored template reaches the hash.
+ *
+ * A template that fails to resolve here is skipped so the container falls back to auto-flow. It
+ * cannot legitimately fail — the fold rejected anything malformed — but a throw in the projection
+ * blanks the entire board, which is a failure this project has already paid for once.
+ *
+ * @param model - the board model.
+ * @returns the model with resolved placements, or the same object when there is nothing to resolve.
+ */
+export function applyAreas(model) {
+  let changed = false
+
+  const pages = model.pages.map((page) => {
+    const placements = new Map()
+    const layoutOf = (layout, children) => {
+      const areas = layout?.params?.areas
+      if (areas === undefined) return undefined
+      const parsed = parseAreas(areas)
+      if (!parsed.ok) return undefined
+      const resolved = resolveAreas(parsed.rows, children)
+      return resolved.ok ? resolved : undefined
+    }
+
+    const pagePlacement = layoutOf(page.layout, rootBlocksOf(page.blocks))
+    if (pagePlacement !== undefined) placements.set(page.id, pagePlacement)
+
+    for (const block of page.blocks) {
+      if (block.kind !== 'group') continue
+      const byId = new Map(page.blocks.map((candidate) => [candidate.id, candidate]))
+      const children = (block.children ?? []).map((id) => byId.get(id)).filter((child) => child !== undefined)
+      const placement = layoutOf(block.layout, children)
+      if (placement !== undefined) placements.set(block.id, placement)
+    }
+
+    if (placements.size === 0) return page
+    changed = true
+
+    const withPlacement = (holder) => {
+      const placement = placements.get(holder.id)
+      if (placement === undefined) return holder
+      return {
+        ...holder,
+        layout: {
+          ...holder.layout,
+          params: { ...holder.layout.params, cols: placement.cols, rows: placement.rows, cells: placement.cells },
+        },
+      }
+    }
+
+    return {
+      ...page,
+      blocks: page.blocks.map(withPlacement),
+      ...(placements.has(page.id) ? withPlacement(page) : {}),
+    }
+  })
+
+  return changed ? { ...model, pages } : model
+}
+
+/**
+ * The blocks no container claims.
+ *
+ * The client has its own copy, because the client half is a standalone bundle with no imports. Both
+ * derive the top level instead of storing it, so the tree cannot disagree with the page order.
+ *
+ * @param blocks - a page's blocks.
+ * @returns the blocks that sit at the top level.
+ */
+function rootBlocksOf(blocks) {
+  const claimed = new Set()
+  for (const block of blocks) {
+    if (block.kind !== 'group') continue
+    for (const child of block.children ?? []) claimed.add(child)
+  }
+  return blocks.filter((block) => !claimed.has(block.id))
 }
 
 /**

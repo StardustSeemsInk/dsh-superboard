@@ -14,7 +14,7 @@
  */
 
 import { z } from 'zod'
-import { BLOCK_KINDS, BOARD_MODEL_VERSION, EDGE_RELS, LAYOUT_TEMPLATES } from './model.js'
+import { BLOCK_KINDS, BOARD_MODEL_VERSION, EDGE_RELS, LAYOUT_TEMPLATES, applyAreas } from './model.js'
 
 const anchorAt = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('block') }),
@@ -211,9 +211,15 @@ export const boardWireSchema = z.object({
 /**
  * Project the full document down to the client-facing value.
  *
+ * This is where an `areas` template becomes the line numbers the renderer uses. The host validated
+ * the template while folding, but only the projection spans host and client, so resolving here
+ * means one implementation decides the geometry and the two halves cannot drift. The derived values
+ * live in `layout.params`, which is an open record on both schemas — so the document never carries
+ * them and the revision never sees them.
+ *
  * @param state - the board document.
- * @returns the wire value: the model and diagnostics, without host bookkeeping.
+ * @returns the wire value: the model, with placements resolved, and diagnostics.
  */
 export function toWire(state) {
-  return { modelVersion: state.modelVersion, model: state.model, diag: state.diag }
+  return { modelVersion: state.modelVersion, model: applyAreas(state.model), diag: state.diag }
 }

@@ -526,7 +526,13 @@ function operationSchema() {
     layout: closedObject(
       {
         template: oneOfStrings('How this group arranges its children.', [...LAYOUT_TEMPLATES]),
-        params: openObject('Template parameters, such as { cols: 2 } or { minCardWidth: 240 }.'),
+        params: openObject(
+          'Template parameters, such as { cols: 2 } or { minCardWidth: 240 }. A grid also takes ' +
+            '{ areas }: named cells, one string per row, whitespace-separated. A cell is a child ' +
+            'slug, or "." for an empty cell. "arch arch|tests ." puts arch across the top and tests ' +
+            'below it. Every row needs the same number of cells, and one name must fill a solid ' +
+            'rectangle. areas replaces cols and minCardWidth rather than combining with them.',
+        ),
       },
       ['template'],
       'group: how this container arranges its children. Omit to use the default flow.',
@@ -615,7 +621,15 @@ function operationSchema() {
             cols: int('columns: how many equal columns.'),
             gap: int('Spacing between cards, in pixels.'),
             direction: oneOfStrings('row: wrap direction.', ['down', 'right']),
-            minCardWidth: int('grid: minimum card width, in pixels.'),
+            minCardWidth: int('grid: minimum card width, in pixels. Not with areas.'),
+            // One string per row. The fold also accepts a single string with rows separated by `/`
+            // or newline, but DSH's validator rejects a `type` array, so the schema declares the one
+            // shape and the fold stays the more permissive of the two.
+            areas: arrayOf(
+              'grid: named cells, one string per row, whitespace-separated. A cell is a child slug ' +
+                'or "." for empty. All rows need the same cell count, and one name must fill a solid ' +
+                'rectangle. Not with cols or minCardWidth.',
+            ),
           },
           ['scope', 'template'],
         ),

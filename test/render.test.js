@@ -138,6 +138,35 @@ function richWire() {
 }
 
 /**
+ * A board whose grid container names its cells.
+ *
+ * `areas` is resolved by `toWire`, so this fixture is also the check that the resolution survives
+ * the wire schema — the placement arrives as `layout.params.cells`, and the renderer reads it from
+ * the parent, not from the block.
+ */
+function areasWire() {
+  const doc = [
+    ...applied(10, 'c1', {
+      ops: [
+        { op: 'add_block', page: 'main', kind: 'heading', slug: 'arch', level: 2, text: '架构总览' },
+        { op: 'add_block', page: 'main', kind: 'prose', slug: 'intro', markdown: '导语。' },
+        {
+          op: 'add_block',
+          page: 'main',
+          kind: 'group',
+          slug: 'pipeline',
+          title: '管线',
+          children: ['arch', 'intro'],
+          layout: { template: 'grid', params: { areas: ['arch arch', 'intro .'] } },
+        },
+      ],
+    }),
+  ].reduce((state, event) => foldBoard(state, event), emptyBoardDoc('sess-render'))
+
+  return boardWireSchema.parse(toWire(doc))
+}
+
+/**
  * A board whose prose carries a table, beside one that does not.
  *
  * The table is the case that broke: a card body only ran the inline parser, so the header, the
@@ -307,6 +336,28 @@ test('the container and tone classes all reach the output', () => {
   // classes that carried it are gone rather than merely unused.
   assert.ok(!found.includes('sb-pinned'), 'block-level positioning was deleted')
   assert.ok(!found.includes('sb-anchored'), 'the anchor container existed only for block-level at')
+})
+
+test('a resolved cell reaches the card as grid line numbers', () => {
+  // The whole `areas` path, end to end: authored on the host, resolved by the projection, and turned
+  // into a style here. A card that lost its cell would flow into the next free one, which looks like
+  // a layout choice rather than a bug — so the assertion is on the line numbers themselves.
+  const tree = render(client.BoardView(props({ useProjection: (key) => (key === 'board' ? areasWire() : undefined) })))
+  const cards = elements(tree).filter((node) => node.props.className === 'sb-card')
+  const pinned = cards.find((card) => card.props['data-block-slug'] === 'arch')
+  const inner = cards.find((card) => card.props['data-block-slug'] === 'intro')
+
+  assert.equal(pinned.props.style.gridRow, '1 / span 1')
+  assert.equal(pinned.props.style.gridColumn, '1 / span 2')
+  assert.equal(inner.props.style.gridRow, '2 / span 1')
+  assert.equal(inner.props.style.gridColumn, '1 / span 1')
+  // A cell is placement, never position.
+  assert.equal(pinned.props.style.position, undefined)
+
+  // And the container's own template follows the resolved column count instead of auto-filling.
+  const bodies = elements(tree).filter((node) => node.props.className?.includes('sb-groupBody'))
+  const gridBody = bodies.find((body) => body.props.style?.gridTemplateColumns !== undefined)
+  assert.equal(gridBody.props.style.gridTemplateColumns, 'repeat(2, minmax(0, 1fr))')
 })
 
 test('the reading column renders the dialogue from the chat snapshot', () => {

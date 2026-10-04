@@ -242,6 +242,17 @@ test('the grid template is responsive by construction, not by breakpoint', () =>
   )
 })
 
+test('a grid with a fixed column count stops auto-filling', () => {
+  // `areas` fixes the columns, and the host resolves the template into `cols` so the named placement
+  // and the grid's own width cannot disagree. Auto-filling would silently reflow a named layout.
+  const style = client.layoutStyle({ template: 'grid', params: { cols: 2 } }, 1200)
+  assert.equal(style.gridTemplateColumns, 'repeat(2, minmax(0, 1fr))')
+  // A named cell is a slot, so a card spanning two rows fills them instead of sitting at the top.
+  assert.equal(style.alignItems, 'stretch')
+  // Auto-fill keeps the default alignment, which is what makes a short card in a tall row stay short.
+  assert.equal(client.layoutStyle({ template: 'grid' }, 1200).alignItems, undefined)
+})
+
 test('gap is honoured on any template, and clamped', () => {
   assert.equal(client.layoutStyle({ template: 'flow', params: { gap: 20 } }, 900).gap, '20px')
   assert.equal(client.layoutStyle({ template: 'flow', params: { gap: 9999 } }, 900).gap, '64px')

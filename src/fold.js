@@ -31,8 +31,10 @@ import {
   deriveIdBody,
   encodeModelForHash,
   emptyBoardDoc,
+  parseAreas,
   pushAlias,
   quantise,
+  resolveAreas,
   toSlug,
   uniqSlug,
   BLOCK_KINDS,
@@ -635,7 +637,16 @@ function buildBlock(op, context, model, page, id) {
         ...(typeof op.title === 'string' ? { title: op.title } : {}),
         children: normaliseChildren(op.children, page, id),
         ...collapsed(op.collapsed),
-        ...(op.layout === undefined ? {} : { layout: normaliseLayout(op.layout) }),
+        // The label is best-effort here: a new group has no slug until `add_block` allocates one, so
+        // the `areas` *names* are checked there instead, once the slug and the child list are final.
+        ...(op.layout === undefined
+          ? {}
+          : {
+              layout: normaliseLayout(
+                op.layout,
+                typeof op.slug === 'string' && op.slug.trim() !== '' ? `group ${JSON.stringify(op.slug)}` : 'this new group',
+              ),
+            }),
       }
     default:
       throw new BoardOpError(`unsupported block kind ${JSON.stringify(kind)}`)
@@ -675,6 +686,9 @@ function opAddBlock(model, op, context) {
   const explicit = typeof op.slug === 'string' && op.slug.trim() !== ''
   const base = toSlug(explicit ? op.slug : slugSource(block), block.kind === 'list' ? 'item' : block.kind, page.blocks.length + 1)
   block.slug = uniqSlug(base, takenBlockSlugs(page, id))
+  // Now that the group has its final slug and child list, a template's names can be checked against
+  // them — the message can name the container the Agent just created.
+  if (block.kind === 'group') validateAreas(block.layout, childBlocksOf(block, page))
 
   const blocks = [...page.blocks]
   if (op.after === undefined) blocks.push(block)
@@ -766,7 +780,7 @@ function opUpdateBlock(model, op, context) {
       )
     }
     touched = true
-    patched.layout = normaliseLayout(op.layout)
+    patched.layout = normaliseLayout(op.layout, `group ${JSON.stringify(block.slug)}`)
   }
   if (typeof op.slug === 'string' && op.slug.trim() !== '') {
     touched = true
@@ -780,6 +794,9 @@ function opUpdateBlock(model, op, context) {
         `field (${patchable.join(', ')}, slug, or anchors).`,
     )
   }
+  // After the slug branch, so a template naming a child is checked against the final child list and
+  // the final slug.
+  if (patched.kind === 'group') validateAreas(patched.layout, childBlocksOf(patched, page))
   return replacePage(model, page.id, (current) => ({
     ...current,
     blocks: current.blocks.map((candidate) => (candidate.id === block.id ? patched : candidate)),
@@ -972,9 +989,9 @@ function opDeleteEdge(model, op) {
 /**
  * `set_layout` — replace a page's or group's layout wholesale; `null` restores the default.
  *
- * The scope arrives as a plain reference string (the tool schema says `scope` is a page or region
+ * The scope arrives as a plain reference string (the tool schema says `scope` is a page or group
  * reference, and that is what a model sends), but the op form also accepts the explicit
- * `{ page }` / `{ region }` object. Both are honoured: the schema is the model's interface, so it
+ * `{ page }` / `{ group }` object. Both are honoured: the schema is the model's interface, so it
  * is the one that has to work.
  */
 function opSetLayout(model, op) {
@@ -995,12 +1012,20 @@ function opSetLayout(model, op) {
           }
   if (spec === undefined) {
     throw new BoardOpError(
-      'set_layout needs a "template" (flow, columns, grid, tree, canvas), or layout: null to restore the default',
+      `set_layout needs a "template" (${LAYOUT_TEMPLATES.join(', ')}), or layout: null to restore the default`,
     )
   }
 
   const target = resolveLayoutScope(model, op.scope)
-  return withLayout(model, target, normaliseLayout(spec))
+  const label =
+    target.kind === 'page'
+      ? `page ${JSON.stringify(target.element.slug)}`
+      : `group ${JSON.stringify(target.element.slug)}`
+  const layout = normaliseLayout(spec, label)
+  // Neither a page's roots nor a group's children change in `set_layout`, so the template's names can
+  // be checked against the container as it already stands.
+  validateAreas(layout, arrangedBy(target, model))
+  return withLayout(model, target, layout)
 }
 
 /** Collect the flattened layout parameters the tool schema declares. */
@@ -1011,6 +1036,7 @@ function collectLayoutParams(op) {
   if (op.root !== undefined) params.root = String(op.root)
   if (op.direction !== undefined) params.direction = op.direction
   if (op.minCardWidth !== undefined) params.minCardWidth = Number(op.minCardWidth)
+  if (op.areas !== undefined) params.areas = op.areas
   return Object.keys(params).length === 0 ? undefined : params
 }
 
@@ -1373,14 +1399,86 @@ function requireText(value, what) {
   return value
 }
 
-/** Normalise a layout spec (Q-E: the Agent names a template, the engine does the geometry). */
-function normaliseLayout(value) {
+/**
+ * Normalise a layout spec (Q-E: the Agent names a template, the engine does the geometry).
+ *
+ * An `areas` template is checked for shape here — that it is a rectangle of cells, that it is on a
+ * `grid`, and that it is not contradicted by `cols` or `minCardWidth`. Those are all properties of
+ * the spec the Agent wrote. The *names* in it are checked separately, once the container's children
+ * are known and the container has a slug to name in the error.
+ *
+ * The two contradicting forms are refused rather than reconciled: silently dropping one of two
+ * instructions is how a board ends up looking like neither.
+ *
+ * @param value - the layout spec.
+ * @param label - how to name the container in an error, when the caller knows.
+ * @returns the normalised layout.
+ */
+function normaliseLayout(value, label = 'the container') {
   if (typeof value !== 'object' || value === null) throw new BoardOpError('"layout" must be an object')
   const template = requireOneOf(value.template, LAYOUT_TEMPLATES, 'layout template')
   const layout = { template }
   if (value.params !== undefined) layout.params = { ...value.params }
   if (value.hints !== undefined) layout.hints = { ...value.hints }
+
+  const areas = layout.params?.areas
+  if (areas !== undefined) {
+    if (template !== 'grid') {
+      throw new BoardOpError(`areas is a grid parameter, but ${label} is ${JSON.stringify(template)}`)
+    }
+    if (layout.params.cols !== undefined || layout.params.minCardWidth !== undefined) {
+      throw new BoardOpError('areas already fixes the column count; drop cols and minCardWidth')
+    }
+    const parsed = parseAreas(areas)
+    if (!parsed.ok) throw new BoardOpError(parsed.error)
+    // Store the canonical rows so the hash sees one spelling of a template, however it was written.
+    layout.params.areas = parsed.rows.map((row) => row.join(' '))
+  }
   return layout
+}
+
+/**
+ * Check an `areas` template against the blocks it names.
+ *
+ * The *shape* was already checked by {@link normaliseLayout}, which is the only place that knows the
+ * template. Names need the children, so they are checked here — and this runs late, after a new
+ * group has its allocated slug, so the error can name the container the Agent just created.
+ *
+ * @param layout - the normalised layout, or none.
+ * @param children - the blocks the container arranges.
+ */
+function validateAreas(layout, children) {
+  const areas = layout?.params?.areas
+  if (areas === undefined) return
+  const parsed = parseAreas(areas)
+  if (!parsed.ok) throw new BoardOpError(parsed.error)
+  const resolved = resolveAreas(parsed.rows, children)
+  if (!resolved.ok) throw new BoardOpError(resolved.error)
+}
+
+/** The blocks no container claims, which is what a page-level template arranges. */
+function rootBlocksOf(page) {
+  const claimed = new Set()
+  for (const block of page.blocks) {
+    if (block.kind !== 'group') continue
+    for (const child of block.children ?? []) claimed.add(child)
+  }
+  return page.blocks.filter((block) => !claimed.has(block.id))
+}
+
+/** A group's children, resolved from ids to blocks; a dangling id is skipped, not invented. */
+function childBlocksOf(block, page) {
+  return (block.children ?? [])
+    .map((id) => page.blocks.find((candidate) => candidate.id === id))
+    .filter((child) => child !== undefined)
+}
+
+/** The blocks a resolved layout scope arranges: a page's roots, or a group's children. */
+function arrangedBy(target, model) {
+  if (target.kind === 'page') return rootBlocksOf(target.element)
+  const page =
+    target.page ?? model.pages.find((candidate) => candidate.blocks.some((block) => block.id === target.element.id))
+  return page === undefined ? [] : childBlocksOf(target.element, page)
 }
 
 /** Quantise a crop rectangle so float noise cannot reach the hash. */
