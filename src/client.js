@@ -99,11 +99,42 @@ window.__ModuleLoader__.load({
       '.sb-marquee{position:absolute;border:1px solid var(--dsw-alias-brand-primary);background:var(--dsw-alias-brand-primary);opacity:.12;pointer-events:none;border-radius:2px;}',
       '.sb-cardSel{border-color:var(--dsw-alias-brand-primary);box-shadow:0 0 0 1px var(--dsw-alias-brand-primary);}',
       // A single row, only while something is selected. No idle state at all.
-      '.sb-selbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;border-top:1px solid var(--dsw-alias-border-l2);padding-top:8px;}',
-      '.sb-selbarCount{font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary);white-space:nowrap;}',
-      '.sb-selbarSlugs{color:var(--dsw-alias-label-tertiary);margin-left:6px;}',
-      '.sb-selbarError{font-size:11px;line-height:16px;color:var(--dsw-alias-state-error-primary,var(--dsw-alias-label-secondary));}',
-      '.sb-buttonPrimary{color:var(--dsw-alias-brand-primary);border-color:var(--dsw-alias-brand-primary);font-weight:600;}',
+      //
+      // The bar is the one thing on this view that is not the board, so it is assembled from the
+      // same primitives every other surface in DSH uses, with the geometry copied from them rather
+      // than invented: Pill for the chips (Pill.module.css:1-14), Input for the field
+      // (Input.module.css:1-38), Button for the actions (Button.module.css:1-77). It used to be
+      // bare `button` and `input` elements with no rules at all, so the chrome was the browser's —
+      // which is exactly why it read as a form bolted onto the board. Elevation is what separates
+      // it from the board underneath; a top border was doing that job badly. The fill is the
+      // composer's own surface (`bg-layer-1`), not the popover grey, so the bar sits in the same
+      // plane as the composer directly below it.
+      '.sb-selbar{display:flex;align-items:center;gap:8px;flex-wrap:wrap;flex:0 0 auto;padding:10px 12px;border:0.5px solid var(--dsw-alias-border-l3);border-radius:var(--dsw-radius-lg);background:var(--dsw-alias-bg-layer-1);box-shadow:var(--dsw-elevation-panel);}',
+      '.sb-selbarCount{font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);white-space:nowrap;}',
+      '.sb-selbarChips{display:flex;align-items:center;gap:4px;flex-wrap:wrap;min-width:0;}',
+      // The chip fill is the framework's translucent neutral tint, not `bg-layer-2`. In light mode
+      // `bg-layer-1` and `bg-layer-2` are *both* pure white, so a Pill-shaped chip on this bar was
+      // invisible — the geometry copied from Pill.module.css survived, the fill did not.
+      '.sb-chip{display:inline-flex;align-items:center;height:24px;max-width:160px;padding:0 8px;border-radius:999px;corner-shape:round;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);background:var(--dsw-alias-interactive-bg-hover);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}',
+      '.sb-selbarField{display:inline-flex;align-items:center;flex:1 1 220px;min-width:0;height:32px;padding:0 8px;border:0.5px solid var(--dsw-alias-border-l4);border-radius:var(--dsw-radius-md);background:var(--dsw-alias-bg-layer-1);}',
+      '.sb-selbarField:focus-within{border-color:var(--dsw-alias-state-business-primary);}',
+      '.sb-input{flex:1;min-width:0;border:none;outline:none;background:transparent;font:inherit;font-size:13px;line-height:20px;color:var(--dsw-alias-label-primary);}',
+      '.sb-input::placeholder{color:var(--dsw-alias-label-dimmed);}',
+      // Shared with the reading column's "加载更早", which had the same problem: an unstyled native
+      // button sized by its own text.
+      '.sb-button{display:inline-flex;align-items:center;justify-content:center;gap:4px;box-sizing:border-box;height:28px;padding:0 10px;border:none;border-radius:var(--dsw-radius-sm);font:inherit;font-size:12px;line-height:18px;color:var(--dsw-alias-label-primary);background:transparent;cursor:pointer;white-space:nowrap;}',
+      '.sb-button:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover);}',
+      '.sb-button:disabled{cursor:not-allowed;opacity:.4;}',
+      // Filled with the blue the composer's own send control uses, not with the Button primitive's
+      // `primary` fill: that one resolves to `brand-primary`, which is near-black in light and
+      // near-white in dark — right for a dialog's confirm, wrong for an action sitting inside a
+      // text row, where the interface's one saturated blue is what reads as "this does something".
+      // A static hover shade cannot work here because the fill itself flips between themes, so the
+      // hover darkens whatever is currently there.
+      '.sb-buttonPrimary{background:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-label-primary-foreground);font-weight:500;}',
+      '.sb-buttonPrimary:hover:not(:disabled){filter:brightness(.92);}',
+      '.sb-buttonOutline{border:0.5px solid var(--dsw-alias-border-l3);}',
+      '.sb-selbarError{flex:1 0 100%;font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary);}',
       '.sb-hint{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);}',
       // The board and the reading column share the tab. They have to: only the active
       // conversation.view renders, so while the board is open the transcript is nowhere else.
@@ -1247,7 +1278,7 @@ window.__ModuleLoader__.load({
               'button',
               {
                 type: 'button',
-                className: 'sb-button sb-readerMore',
+                className: 'sb-button sb-buttonOutline sb-readerMore',
                 onClick: () => void requestOlder(),
                 disabled: loading,
               },
@@ -1792,29 +1823,41 @@ window.__ModuleLoader__.load({
     function SelectionBar({ count, slugs, note, setNote, sending, error, onSend, onCancel }) {
       if (count === 0) return null
 
+      // A long selection must not turn the bar into a wall of chips. The overflow count keeps the
+      // summary honest and the full list stays reachable through the title.
+      const CHIP_LIMIT = 4
+      const shown = slugs.slice(0, CHIP_LIMIT)
+      const hidden = slugs.length - shown.length
+
       return h(
         'div',
         { className: 'sb-selbar', 'data-superboard-selection': '' },
+        h('span', { className: 'sb-selbarCount' }, `已选 ${count} 个块`),
         h(
-          'span',
-          { className: 'sb-selbarCount' },
-          `已选 ${count} 个块`,
-          h('span', { className: 'sb-selbarSlugs' }, slugs.join('、')),
+          'div',
+          { className: 'sb-selbarChips', title: slugs.join('、') },
+          shown.map((slug) => h('span', { key: slug, className: 'sb-chip' }, slug)),
+          hidden > 0 && h('span', { className: 'sb-chip' }, `+${hidden}`),
         ),
-        h('input', {
-          className: 'sb-input',
-          value: note,
-          placeholder: '对这个选区提问或说明（可留空）',
-          disabled: sending,
-          onChange: (event) => setNote(event.target.value),
-          onKeyDown: (event) => {
-            if (event.key === 'Enter' && !event.shiftKey) {
-              event.preventDefault()
-              onSend()
-            }
-            if (event.key === 'Escape') onCancel()
-          },
-        }),
+        h(
+          'label',
+          { className: 'sb-selbarField' },
+          h('input', {
+            className: 'sb-input',
+            value: note,
+            'aria-label': '对这个选区提问或说明',
+            placeholder: '对这个选区提问或说明（可留空）',
+            disabled: sending,
+            onChange: (event) => setNote(event.target.value),
+            onKeyDown: (event) => {
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault()
+                onSend()
+              }
+              if (event.key === 'Escape') onCancel()
+            },
+          }),
+        ),
         h(
           'button',
           { className: 'sb-button sb-buttonPrimary', type: 'button', onClick: onSend, disabled: sending },

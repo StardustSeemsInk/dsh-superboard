@@ -560,6 +560,45 @@ test('the selection bar is absent until something is selected', () => {
   assert.match(text, /2/)
   assert.match(text, /arch/)
   assert.match(text, /intro/)
+
+  // The controls are the shared primitives, not bare elements. `sb-input` and `sb-button` used to
+  // have no rules anywhere in the stylesheet, so the browser drew them and the bar read as a form
+  // bolted onto the board rather than a control belonging to it.
+  const names = elements(tree).flatMap((node) => String(node.props.className ?? '').split(/\s+/))
+  assert.ok(names.includes('sb-selbarField'), 'the field must be the wrapper that owns the border and the focus ring')
+  assert.ok(names.includes('sb-buttonPrimary'), 'the primary action must be a styled Button')
+  const field = elements(tree).find((node) => String(node.props.className ?? '').split(/\s+/).includes('sb-selbarField'))
+  assert.equal(elements(field).filter((node) => node.type === 'input').length, 1)
+})
+
+test('a long selection collapses into an overflow count instead of a wall of chips', () => {
+  // The bar has to stay one row. It used to print every selected slug inline, which pushed the
+  // field and both buttons off the end of the line — the controls you needed were the ones that
+  // scrolled away.
+  const slugs = ['dash-status', 'dash-next', 'dash-materials', 'dash-power', 'dash-blackhide', 'dash-pitfalls']
+  const tree = render(
+    client.SelectionBar({
+      count: slugs.length,
+      slugs,
+      note: '',
+      setNote: () => {},
+      sending: false,
+      error: null,
+      onSend: () => {},
+      onCancel: () => {},
+    }),
+  )
+
+  const byClass = (wanted) => (node) => String(node.props.className ?? '').split(/\s+/).includes(wanted)
+  const chips = elements(tree).filter(byClass('sb-chip'))
+  assert.deepEqual(
+    chips.map((chip) => textOf(chip).join('')),
+    ['dash-status', 'dash-next', 'dash-materials', 'dash-power', '+2'],
+  )
+
+  // The collapse hides nothing: the whole selection is still named, and the count still counts it.
+  assert.equal(elements(tree).find(byClass('sb-selbarChips')).props.title, slugs.join('、'))
+  assert.match(textOf(tree).join(' '), /已选 6 个块/)
 })
 
 test('exactly one element per group carries that group\'s layout', () => {
