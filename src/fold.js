@@ -218,8 +218,14 @@ function commit(state, callId, args, seq) {
   // Diagnostics are recomputed here rather than at read time: the fold is the only place that
   // knows a write happened, and a broken diagram has to reach the Agent even if nobody ever
   // opens the board. See `src/diagnose.js`.
+  //
+  // `lastOpError` is *cleared*, not carried: a written batch supersedes the previous rejection, and
+  // leaving it in place would have `board_outline` announce that "the last board_apply was rejected
+  // and changed nothing" about a board that batch just changed. A stale failure report is worse than
+  // no failure report — it sends the Agent to re-read the board for a reason that is no longer true.
+  const { lastOpError: _superseded, ...restWithoutError } = rest
   const next = {
-    ...rest,
+    ...restWithoutError,
     model,
     modelVersion: BOARD_MODEL_VERSION,
     diag: diagnoseModel(model, rest.diag, model.rev),

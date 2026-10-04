@@ -146,6 +146,34 @@ test('a rejected batch leaves the diagnostics exactly as they were', () => {
   assert.match(after.lastOpError.message, /no page matches "nope"/, 'the reason is recorded')
 })
 
+test('a batch that lands clears the previous rejection', () => {
+  // `lastOpError` drives a line in `board_outline`: "the last board_apply was rejected and changed
+  // nothing". A written batch supersedes that, so carrying it forward would have the outline
+  // announce a rejection about a board the batch just changed — sending the Agent to re-read for a
+  // reason that is no longer true. A stale failure report is worse than none.
+  const rejected = foldAll(
+    applied(10, 'c1', {
+      expected_revision: 'r9-deadbeef0000',
+      ops: [{ op: 'add_block', page: 'main', kind: 'prose', markdown: 'x' }],
+    }),
+  )
+  assert.match(rejected.lastOpError.message, /stale board revision/, 'the rejection is on record')
+
+  const settled = applied(20, 'c2', {
+    expected_revision: rejected.model.rev,
+    ops: [{ op: 'add_block', page: 'main', kind: 'prose', markdown: 'ok' }],
+  }).reduce((state, event) => foldBoard(state, event), rejected)
+
+  assert.equal(settled.model.revSeq, 1, 'the batch landed')
+  assert.equal(settled.lastOpError, undefined, 'and the old rejection is gone')
+
+  // A *newer* rejection must still be reported, so the clearing is not simply "never record".
+  const rejectedAgain = applied(30, 'c3', {
+    ops: [{ op: 'add_block', page: 'nope', kind: 'prose', markdown: 'x' }],
+  }).reduce((state, event) => foldBoard(state, event), settled)
+  assert.match(rejectedAgain.lastOpError.message, /no page matches "nope"/)
+})
+
 test('the same log always folds to the same board', () => {
   const events = [
     ...applied(10, 'c1', addHeading),
