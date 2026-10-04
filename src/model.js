@@ -61,11 +61,22 @@ export const EDGE_RELS = Object.freeze([
  *   `flow`    — a vertical stack; the default.
  *   `row`     — a horizontal run that wraps when it runs out of width.
  *   `columns` — a grid of `cols` equal columns.
- *   `grid`    — a grid that fits as many `minCardWidth` cards per row as the width allows.
- *   `canvas`  — no arrangement at all; children place themselves with `at`.
+ *   `grid`    — a grid that fits as many `minCardWidth` cards per row as the width allows, or a
+ *               named-cell grid when `params.areas` says which child occupies which cells.
+ *   `canvas`  — no arrangement at all: a plain box, for sectioning rather than for position.
+ *
+ * **There is no coordinate template.** Free placement was `canvas` plus a per-block `at`, and both
+ * are gone: a position the Agent can neither see nor verify has no channel through which it could
+ * report "the model thinks A and the rendering says B", so the arrangement has to be something
+ * that can be *declared* — a template and a tree. What remains spatially free is the arrow layer,
+ * whose geometry is measured rather than authored.
  *
  * The former `tree` template is gone: nesting a `group` inside a `group` *is* a tree, and having
  * both would be two ways to say one thing.
+ *
+ * Whatever this list contains must also appear in `TEMPLATE_MEANING` in `tools.js` — the Agent
+ * never reads this comment, so the description string is where a template actually gets explained.
+ * The suite checks the two lists agree.
  */
 export const LAYOUT_TEMPLATES = Object.freeze(['flow', 'row', 'columns', 'grid', 'canvas'])
 

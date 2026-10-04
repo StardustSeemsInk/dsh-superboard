@@ -17,9 +17,10 @@ import { existsSync } from 'node:fs'
 import { test } from 'node:test'
 
 import { foldBoard } from '../src/fold.js'
-import { emptyBoardDoc } from '../src/model.js'
+import { LAYOUT_TEMPLATES, emptyBoardDoc } from '../src/model.js'
 import {
   BOARD_TOOLS,
+  TEMPLATE_MEANING,
   blockPreview,
   isDangling,
   registerBoardTools,
@@ -124,6 +125,48 @@ test('every board tool has the shape ctx.tools.register requires', () => {
     assert.equal(typeof tool.description, 'string')
     assert.ok(tool.description.length > 80, `${tool.name} should teach the model when to use it`)
     assert.notEqual(tool.name, 'run_code')
+  }
+})
+
+test('every value the model may pick is named in the description it reads', () => {
+  // The tool descriptions are the *entire* documentation surface. There is no skill and no
+  // agent-instructions injection (both are disabled in the profile's plugin list), and
+  // `docs/design/board-model.md` never reaches the Agent. So an enum whose values are bare names
+  // is a vocabulary the model has to guess at — which is exactly what `flow` / `row` / `columns` /
+  // `grid` / `canvas` were until this test existed. `oneOfStrings` carries the legal values in
+  // `enum`, and a model reads the description, not the shape of the schema.
+  assert.deepEqual(
+    Object.keys(TEMPLATE_MEANING).sort(),
+    [...LAYOUT_TEMPLATES].sort(),
+    'TEMPLATE_MEANING must cover exactly the templates the model can choose, no more and no less',
+  )
+
+  const branches = BOARD_TOOLS.find((tool) => tool.name === 'board_apply').parameters.properties.ops.items
+    .oneOf
+  const branch = (op) => branches.find((each) => each.properties.op.const === op)
+
+  // A template reachable through either path must be explained on both, or the model learns it
+  // from one op and guesses at the other.
+  for (const description of [
+    branch('add_block').properties.layout.properties.template.description,
+    branch('set_layout').properties.template.description,
+  ]) {
+    for (const template of LAYOUT_TEMPLATES) {
+      assert.ok(
+        description.includes(`${template}:`),
+        `a template description must say what ${template} does, or the model picks blind`,
+      )
+    }
+  }
+
+  // Nine anchor kinds, none of them guessable from `{ blockId, at }` — which is all the field
+  // used to say, making "aim this arrow at line 12 of that code" a capability the Agent could
+  // not know existed.
+  for (const endpoint of ['from', 'to']) {
+    const description = branch('add_edge').properties[endpoint].description
+    for (const kind of ['block', 'field', 'item', 'lines', 'text', 'child', 'node', 'rect', 'point']) {
+      assert.ok(description.includes(`'${kind}'`), `${endpoint} must name the ${kind} anchor kind`)
+    }
   }
 })
 

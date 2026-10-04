@@ -43,6 +43,44 @@ const OUTLINE_MAX_CHARS = 24000
 /** How many blocks a single page may contribute to the outline before it summarises. */
 const OUTLINE_BLOCKS_PER_PAGE = 24
 
+/**
+ * What each layout template means, in the words the Agent gets.
+ *
+ * This table exists because the templates were, until now, bare names in an enum: the only
+ * statement of what `row` or `columns` did lived in a source comment in `model.js`, which the
+ * Agent never reads. A model that cannot tell those two apart picks one and learns from the
+ * rendering — a round trip spent on something a sentence prevents.
+ *
+ * The keys are checked against `LAYOUT_TEMPLATES` by the suite, so a template cannot be added,
+ * renamed or removed without this text following it.
+ */
+export const TEMPLATE_MEANING = Object.freeze({
+  flow: 'a vertical stack, the default',
+  row: 'a horizontal run that wraps',
+  columns: 'a fixed number of equal columns (set cols)',
+  grid: 'cards that fill the width (set minCardWidth), or named cells with spans (set areas)',
+  canvas: 'a plain box that arranges nothing — a section, not a surface to position in',
+})
+
+/** The template list spelled out for a description string, e.g. `flow: a vertical stack, the default`. */
+const TEMPLATE_HELP = LAYOUT_TEMPLATES.map((name) => `${name}: ${TEMPLATE_MEANING[name]}`).join('; ')
+
+/**
+ * The in-block half of an edge endpoint.
+ *
+ * Nine kinds, none of them guessable from `{ blockId, at }` alone — which is all the field used
+ * to say, so "point this arrow at line 12 of that code block" was a capability the Agent could
+ * not know existed. The fold already rejects a kind that does not suit the target's block kind
+ * and names what would (`validateAnchor` in `fold.js`), so this text only has to make the
+ * vocabulary visible; after that, a wrong guess is instructive instead of mysterious.
+ */
+const ANCHOR_HELP =
+  'A block reference, or { blockId, at } to aim at a part of it. at is ' +
+  "{ kind: 'block' } for the whole block, or { kind: 'field', field }, " +
+  "{ kind: 'item', itemId }, { kind: 'lines', from, to }, { kind: 'text', start, end }, " +
+  "{ kind: 'child', childId }, { kind: 'node', key }, { kind: 'rect', x, y, w, h } or " +
+  "{ kind: 'point', x, y }."
+
 // ---------------------------------------------------------------------------
 // Reading the board
 // ---------------------------------------------------------------------------
@@ -525,7 +563,7 @@ function operationSchema() {
     children: arrayOf('group: block references on the same page. Groups may nest.'),
     layout: closedObject(
       {
-        template: oneOfStrings('How this group arranges its children.', [...LAYOUT_TEMPLATES]),
+        template: oneOfStrings(`How this group arranges its children. ${TEMPLATE_HELP}.`, [...LAYOUT_TEMPLATES]),
         params: openObject(
           'Template parameters, such as { cols: 2 } or { minCardWidth: 240 }. A grid also takes ' +
             '{ areas }: named cells, one string per row, whitespace-separated. A cell is a child ' +
@@ -565,7 +603,7 @@ function operationSchema() {
             ]),
             slug: str('Preferred address. A suffix is added when taken.'),
             after: str('Insert after this block.'),
-            region: str('Region to join.'),
+            region: str('Region to join. A region is a label and a border over blocks; it arranges nothing. Use a group to arrange.'),
             note: str('Short human-readable note; not part of the board content.'),
             ...kindFields,
           },
@@ -591,8 +629,8 @@ function operationSchema() {
         opBranch(
           'add_edge',
           {
-            from: str('Source block reference, or { blockId, at }.'),
-            to: str('Target block reference, or { blockId, at }.'),
+            from: str(`Source endpoint. ${ANCHOR_HELP}`),
+            to: str(`Target endpoint. ${ANCHOR_HELP}`),
             rel: oneOfStrings('Relationship type. Omit for a plain visual arrow.', [...EDGE_RELS]),
             label: str('Free-text label, shown on the arrow.'),
             style: oneOfStrings('Arrow style.', ['solid', 'dashed', 'dotted']),
@@ -616,8 +654,8 @@ function operationSchema() {
         opBranch(
           'set_layout',
           {
-            scope: str('Page or group reference. A region carries no layout.'),
-            template: oneOfStrings('Layout template.', [...LAYOUT_TEMPLATES]),
+            scope: str('Page or group reference. A region carries no layout — it only labels blocks.'),
+            template: oneOfStrings(`Layout template. ${TEMPLATE_HELP}.`, [...LAYOUT_TEMPLATES]),
             cols: int('columns: how many equal columns.'),
             gap: int('Spacing between cards, in pixels.'),
             direction: oneOfStrings('row: wrap direction.', ['down', 'right']),
@@ -637,7 +675,10 @@ function operationSchema() {
           'set_region',
           {
             region: str('Region to update. Omit to create one.'),
-            blockIds: arrayOf('The complete membership list.'),
+            blockIds: arrayOf(
+              'The complete membership list. A block belongs to at most one region, so this ' +
+                'replaces the previous membership rather than adding to it.',
+            ),
             label: str('Region label.'),
             tone: oneOfStrings('Visual tone.', ['neutral', 'warn', 'danger', 'ok']),
           },
@@ -660,8 +701,9 @@ const applyTool = defineBoardTool({
     'board_read, or board_apply result; if another write landed since, nothing is applied and ' +
     'you get the current revision back, so re-read and re-issue.\n\n' +
     'Ops run in array order and the first failure aborts the whole batch with no state change. ' +
-    'Reference pages and blocks by slug or id. Layout is the engine\'s job: do not set ' +
-    'coordinates unless no template can express the arrangement.',
+    'Reference pages and blocks by slug or id. Layout is the engine\'s job, and it is the ' +
+    'container\'s job rather than the block\'s: a page or a group declares how it arranges its ' +
+    'children, and no block carries a coordinate.',
   parameters: closedObject(
     {
       expected_revision: str("The rev string from your most recent board_* result, e.g. 'r17-a3f9c2b1d4e5'."),
