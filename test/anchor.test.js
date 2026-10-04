@@ -128,6 +128,17 @@ test('an explicit block anchor stays a plain block target', () => {
   assert.equal(edgeOf(state).from.at, undefined)
 })
 
+test('a node key the diagram does not name is still an anchor', () => {
+  // The node table is what a diagram says its parts are, not a set of restrictions on what may be
+  // anchored. A parser that reads one mermaid version too narrowly must cost a missing line in a
+  // listing; refusing the write would turn a display detail into a blocked edit.
+  const state = edgeFrom(boardWithTargets(), {
+    blockId: 'diagram',
+    at: { kind: 'node', key: 'not-in-this-diagram' },
+  })
+  assert.deepEqual(edgeOf(state).from.at, { kind: 'node', key: 'not-in-this-diagram' })
+})
+
 test('an anchor without at is unchanged', () => {
   const state = edgeFrom(boardWithTargets(), 'snippet')
   assert.equal(edgeOf(state).from.at, undefined)

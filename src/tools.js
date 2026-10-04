@@ -80,7 +80,10 @@ const ANCHOR_HELP =
   "{ kind: 'block' } for the whole block, or { kind: 'field', field }, " +
   "{ kind: 'item', itemId }, { kind: 'lines', from, to }, { kind: 'text', start, end }, " +
   "{ kind: 'child', childId }, { kind: 'node', key }, { kind: 'rect', x, y, w, h } or " +
-  "{ kind: 'point', x, y }."
+  "{ kind: 'point', x, y }. " +
+  "A `node` key is one the diagram itself names: board_read of a `uml` block lists them after " +
+  'the source, and a key that is not on that list is still accepted — the list is what the block ' +
+  'says its parts are, not a set of restrictions.'
 
 // ---------------------------------------------------------------------------
 // Reading the board
@@ -539,8 +542,15 @@ function renderBlock(block, notes = []) {
         .join('\n')}${tail}`
     case 'code':
       return `${head}\n\`\`\`${block.lang}${block.filename === undefined ? '' : ` ${block.filename}`}\n${block.code}\n\`\`\`${tail}`
-    case 'uml':
-      return `${head}\n\`\`\`${block.engine} (${block.diagram})\n${block.source}\n\`\`\`${tail}`
+    case 'uml': {
+      // The node table, when this file could read one out of the source. It is the whole reason a
+      // diagram is not a black box: `{kind: 'node', key}` anchors name one of these, and without
+      // the list the model would be guessing at keys it wrote several turns ago.
+      const nodes = Array.isArray(block.nodeHints) && block.nodeHints.length > 0
+        ? `\nnodes: ${block.nodeHints.map((node) => (node.label === node.key ? node.key : `${node.key}=${node.label}`)).join(' · ')}`
+        : ''
+      return `${head}\n\`\`\`${block.engine} (${block.diagram})\n${block.source}\n\`\`\`${nodes}${tail}`
+    }
     case 'image':
       return `${head}\nsrc: ${block.src}\nalt: ${block.alt}${block.caption === undefined ? '' : `\ncaption: ${block.caption}`}${tail}`
     case 'pdf-page':

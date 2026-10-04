@@ -442,3 +442,51 @@ test('a report about a version of the block that no longer exists is not repeate
   const fresh = drive('board_outline', {}, doc, reports)
   assert.match(fresh.content[0].text, /good\s+RENDERER: Parse error on line 3/)
 })
+
+/** A board whose one diagram is readable by the host's parser. */
+function readableDiagramDoc() {
+  return foldEvents([
+    ...applied(10, 'c1', {
+      ops: [
+        {
+          op: 'add_block',
+          page: 'main',
+          kind: 'uml',
+          slug: 'flow',
+          diagram: 'flowchart',
+          source: 'flowchart TD\n  A[开始] --> B{判断}\n  B -- 是 --> C[收尾]',
+        },
+      ],
+    }),
+  ])
+}
+
+test('reading a diagram lists the parts the diagram itself names', () => {
+  // This table is the only way an Agent can learn what a `node` anchor could point at — the source
+  // is a diagram language, and nothing else on the board speaks it. `key=label` only when the two
+  // differ, so a diagram that never renames anything stays narrow.
+  const { content } = drive('board_read', { refs: ['flow'] }, readableDiagramDoc())
+  assert.match(content[0].text, /nodes: A=开始 · B=判断 · C=收尾/)
+})
+
+test('a diagram the host cannot parse reads as a diagram with no parts named', () => {
+  // `undefined` and `[]` are different answers and the difference is load-bearing: a pie chart has
+  // no nodes, but saying so would be a claim this parser cannot make. Absent means absent.
+  const doc = foldEvents([
+    ...applied(10, 'c1', {
+      ops: [
+        {
+          op: 'add_block',
+          page: 'main',
+          kind: 'uml',
+          slug: 'pie',
+          diagram: 'other',
+          source: 'pie title 去向\n  "甲" : 3\n  "乙" : 2',
+        },
+      ],
+    }),
+  ])
+
+  const { content } = drive('board_read', { refs: ['pie'] }, doc)
+  assert.ok(!content[0].text.includes('nodes:'), 'no table, and no empty one either')
+})

@@ -43,6 +43,7 @@ import {
   ID_PREFIX,
 } from './model.js'
 import { diagnoseModel } from './diagnose.js'
+import { attachNodeHints } from './uml.js'
 
 /** The tool whose calls this fold consumes. */
 export const BOARD_TOOL_NAME = 'board_apply'
@@ -208,7 +209,11 @@ function commit(state, callId, args, seq) {
 
   const revSeq = state.model.revSeq + 1
   const revHash = sha256Hex(encodeModelForHash(draft)).slice(0, 16)
-  const model = { ...draft, revSeq, revHash, rev: composeRev(revSeq, revHash) }
+  // `attachNodeHints` is derived data on the same footing as `areas` cells: it is read out of the
+  // diagram's own source, it is excluded from the hash above, and it stops the moment the source
+  // does. Recomputed here for the same reason diagnostics are — the fold is the only place that
+  // knows a write happened.
+  const model = attachNodeHints({ ...draft, revSeq, revHash, rev: composeRev(revSeq, revHash) })
   // Diagnostics are recomputed here rather than at read time: the fold is the only place that
   // knows a write happened, and a broken diagram has to reach the Agent even if nobody ever
   // opens the board. See `src/diagnose.js`.
@@ -619,7 +624,9 @@ function buildBlock(op, context, model, page, id) {
           'uml diagram',
         ),
         source: text(op.source, 'source'),
-        ...(Array.isArray(op.nodeHints) ? { nodeHints: op.nodeHints } : {}),
+        // No `nodeHints` here: the node table is read out of `source` by `attachNodeHints` at
+        // commit time. Accepting it from an op would make the document a second, staler source for
+        // something the source already decides.
       }
     case 'image':
       return {
