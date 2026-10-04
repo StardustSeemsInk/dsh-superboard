@@ -20,10 +20,66 @@
         position: absolute; top: 34px; left: 50%; transform: translateX(-50%);
         display: flex; gap: 14px;
       }
+
+      /* The comparison panel for the theme beat.
+       *
+       * Sliced along the anti-diagonal — light above the cut, dark below — so the SAME
+       * diagram is visible in both flavours at the same time. Both halves are the real
+       * thing: the light half is the live board, and the dark half is the SVG the
+       * product itself produced one moment earlier (it is a standalone data URL, so it
+       * can be pinned without inventing anything).
+       *
+       * **The panel is portrait because the diagram is.** Measured off the live DOM:
+       * `naturalWidth/naturalHeight` is 112x150 for both flavours — aspect 0.75, a tall
+       * flowchart. A landscape panel was chosen first and simply wasted most of itself.
+       *
+       * The seam is a gradient rather than a rotated bar: `to bottom right` makes the
+       * 50% line fall exactly on the corner-to-corner anti-diagonal for any box shape,
+       * so the seam can never drift out of agreement with the `clip-path` above it as
+       * the panel is resized. A hardcoded `rotate()` angle cannot promise that. */
+      #split {
+        position: absolute; left: 50%; top: 470px;
+        width: 700px; height: 820px;
+        transform: translate(-50%, -50%);
+        border-radius: 18px; overflow: hidden; opacity: 0;
+        box-shadow: 0 40px 140px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.08);
+      }
+      #split .half { position: absolute; inset: 0; display: grid; place-items: center; }
+      #split .half.light { clip-path: polygon(0 0, 100% 0, 0 100%); }
+      #split .half.dark { clip-path: polygon(100% 0, 100% 100%, 0 100%); }
+      #split .half img { width: 84%; height: auto; }
+      #split .seam {
+        position: absolute; inset: 0; pointer-events: none;
+        background: linear-gradient(
+          to bottom right,
+          transparent calc(50% - 1px),
+          var(--accent) calc(50% - 1px),
+          var(--accent) calc(50% + 1px),
+          transparent calc(50% + 1px)
+        );
+      }
+      #split .tag {
+        position: absolute; z-index: 2;
+        padding: 5px 12px; border-radius: 999px;
+        font: 600 15px/1 var(--sans, system-ui, sans-serif);
+        letter-spacing: 0.02em;
+      }
+      /* Each tag sits in its own triangle, well away from the cut. */
+      #split .tag.light { left: 26px; top: 22px; }
+      #split .tag.dark { right: 26px; bottom: 22px; }
+      #scrim { position: absolute; inset: 0; background: #11111b; opacity: 0; }
     </style>
   </head>
   <body data-ds-dark-theme="true">
     <div id="mount"></div>
+    <div id="scrim"></div>
+    <div id="split">
+      <div class="half light"><img id="split-light" alt="浅色主题下的同一张图" /></div>
+      <div class="half dark"><img id="split-dark" alt="深色主题下的同一张图" /></div>
+      <div class="seam"></div>
+      <div class="tag light" id="tag-light">浅色主题</div>
+      <div class="tag dark" id="tag-dark">深色主题</div>
+    </div>
     <div id="spot"></div>
     <div id="chips"></div>
     <div class="caption">
@@ -42,8 +98,10 @@
     <script>
       // 47–60s. Three beats:
       //   0–3.5   the real architecture page, magnified on the real flowchart
-      //   3.5–8.5 the SAME board switched to the light flavour — the diagram repaints
-      //           from the new tokens, which is the whole point of the theme work
+      //   3.5–8.5 a diagonal comparison of the SAME diagram: light above the cut, dark
+      //           below it, in one frame. Sequential dark-then-light made the viewer hold
+      //           the first picture in memory to compare it; a split shows the change
+      //           itself, which is the actual claim being made.
       //   8.5–13  a diagram that fails: the card keeps its source and names the reason
       //
       // **One mount only, and that is forced by the architecture, not a style choice.**
@@ -90,6 +148,105 @@
           window.__diag.error = String((error && error.stack) || error)
         })
         return queue
+      }
+
+      /**
+       * The flavour this scene believes is live.
+       *
+       * Tracked here rather than read back from the DOM, because the switch is async: a
+       * frame that renders immediately after `setFlavour` still sees the old `src`, so
+       * "did it change?" is not answerable at that instant. The scene issues every switch
+       * itself, so it knows — and knowing is what makes the beats independent of the
+       * order the frames happen to be captured in.
+       */
+      let flavour = 'mocha'
+
+      /** Switch flavour only when it is not already live, then wait for the real repaint. */
+      async function setFlavourAndSettle(next) {
+        if (flavour === next) return
+        const before = document.querySelector('.sb-diagramImage')?.src ?? ''
+        flavour = next
+        await api.setFlavour(next)
+        await waitForRepaint(before, next)
+      }
+
+      /** The first opaque background at or above `element` — i.e. what the product paints. */
+      function opaqueBackground(element) {
+        for (let node = element; node !== null; node = node.parentElement) {
+          const value = getComputedStyle(node).backgroundColor
+          const match = /rgba?\((\d+),\s*(\d+),\s*(\d+)(?:,\s*([\d.]+))?\)/.exec(value)
+          if (match !== null && (match[4] === undefined || Number(match[4]) > 0.5)) return value
+        }
+        return '#11111b'
+      }
+
+      /** Readable ink for a background, so neither label can land invisible. */
+      function inkOn(background) {
+        const match = /rgba?\((\d+),\s*(\d+),\s*(\d+)/.exec(background)
+        if (match === null) return '#ffffff'
+        const [r, g, b] = [1, 2, 3].map((i) => Number(match[i]) / 255)
+        return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.55 ? '#11111b' : '#ffffff'
+      }
+
+      /**
+       * Build the comparison panel for the theme beat.
+       *
+       * It is a slice of ONE card, not a redraw. The dark half is the SVG the product
+       * produced under mocha, pinned as a data URL; the light half is the same SVG after
+       * the real `setFlavour('latte')` re-baked it. The card backgrounds are read off the
+       * live card under each flavour — so the panel is made of the product's own output
+       * and the product's own colours, and the only thing this scene adds is the cut.
+       */
+      async function prepareSplit() {
+        const card = () => document.querySelector('[data-block-slug="loop"]')
+        const first = card()
+        if (first === null) return
+        const darkSrc = first.querySelector('.sb-diagramImage')?.src ?? ''
+        const darkBg = opaqueBackground(first)
+
+        await setFlavourAndSettle('latte')
+
+        const light = card()
+        if (light === null) return
+        const lightSrc = light.querySelector('.sb-diagramImage')?.src ?? ''
+        const lightBg = opaqueBackground(light)
+
+        document.querySelector('#split .half.light').style.background = lightBg
+        document.querySelector('#split .half.dark').style.background = darkBg
+        document.getElementById('split-light').src = lightSrc
+        document.getElementById('split-dark').src = darkSrc
+        for (const [id, own, other] of [
+          ['tag-light', lightBg, darkBg],
+          ['tag-dark', darkBg, lightBg],
+        ]) {
+          const tag = document.getElementById(id)
+          tag.style.background = own
+          tag.style.color = inkOn(own)
+          tag.style.boxShadow = `0 0 0 1px ${other}`
+        }
+        const lightImage = document.getElementById('split-light')
+        const darkImage = document.getElementById('split-dark')
+        const rectOf = (element) => {
+          const box = element.getBoundingClientRect()
+          return [Math.round(box.left), Math.round(box.top), Math.round(box.width), Math.round(box.height)]
+        }
+        window.__diag.split = {
+          distinct: lightSrc !== darkSrc,
+          lightBg,
+          darkBg,
+          svgBytes: [lightSrc.length, darkSrc.length],
+          natural: [
+            [lightImage.naturalWidth, lightImage.naturalHeight],
+            [darkImage.naturalWidth, darkImage.naturalHeight],
+          ],
+          rect: [rectOf(lightImage), rectOf(darkImage)],
+        }
+      }
+
+      /** The panel and its scrim belong to the theme beat only. */
+      function showSplit(visible) {
+        document.getElementById('split').style.opacity = visible ? '1' : '0'
+        document.getElementById('scrim').style.opacity = visible ? '0.86' : '0'
       }
 
       /** Wait for the diagram to actually repaint, rather than guessing a delay. */
@@ -252,9 +409,7 @@
         // tick later, and the spot was measured against a layout that then changed.
         if (inFix) {
           once('fix-view', async () => {
-            const before = document.querySelector('.sb-diagramImage')?.src ?? ''
-            await api.setFlavour('mocha')
-            await waitForRepaint(before, 'mocha')
+            await setFlavourAndSettle('mocha')
             // The failing card is the whole point of this beat, and it does not exist
             // until mermaid has actually tried and thrown — which is asynchronous, and
             // happens well after the flavour switch settles. Measured: arming the
@@ -271,18 +426,19 @@
           })
         } else if (inTheme) {
           once('theme-view', async () => {
-            const before = document.querySelector('.sb-diagramImage')?.src ?? ''
-            await api.setFlavour('latte')
-            await waitForRepaint(before, 'latte')
+            await prepareSplit()
             scrollToBlock('loop', 40)
             spotOn(null)
           })
         } else {
           once('open-view', async () => {
+            await setFlavourAndSettle('mocha')
             scrollToBlock('loop', 40)
             spotOn(null)
           })
         }
+
+        showSplit(inTheme)
 
         // --- copy -------------------------------------------------------------
         const label = document.getElementById('cap-label')
