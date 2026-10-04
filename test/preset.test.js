@@ -394,3 +394,70 @@ test('the YAML anchors expand, so no preset is missing a shared block', async ()
     assert.ok(!persona.config.complete, 'complete would suppress the harness tool guidance')
   }
 })
+
+test('preset roster copy is Chinese, because the roster is read by a Chinese-speaking user', async () => {
+  if (!haveDsh) return
+  const { doc } = await loadPatch()
+  const rows = insertedRows(doc)
+  // The roster renders `config.name`/`config.description` verbatim: `presetDisplayText` in
+  // dsh-agent-preset-registry/lib/types/display.js only consults the locale dictionary for the four
+  // SHIPPED ids, and user-authored metadata is explicitly "never translated". So a name left in
+  // English stays in English no matter what locale is active, and the copy has to be Chinese here.
+  const cjk = /[\u4e00-\u9fff]/
+  for (const preset of PRESETS) {
+    const row = rows.find((candidate) => candidate.id === preset.rowId)
+    assert.match(
+      row.config.name,
+      cjk,
+      `${preset.rowId} name must be Chinese, since the roster cannot translate it`,
+    )
+    assert.match(row.config.description, cjk, `${preset.rowId} description must be Chinese`)
+    // A name that is Chinese plus the English role word would be the worst of both.
+    assert.ok(
+      !/engineer|teacher|researcher/i.test(row.config.name),
+      `${preset.rowId} name should not also carry the English role word`,
+    )
+  }
+})
+
+test('the engineer and researcher look for stale board content before replying', async () => {
+  if (!haveDsh) return
+  const { doc } = await loadPatch()
+  const rows = insertedRows(doc)
+  const sectionOf = (rowId) =>
+    rows
+      .find((row) => row.id === rowId)
+      .config.plugins.find((plugin) => plugin.id === 'board-guidance').config.section
+  // The user asked for this on exactly these two roles. The teacher was deliberately left out: its
+  // lesson is delivered live and its board is not a standing claim about the world, and the user
+  // wants to revisit it only once the TTS module lands.
+  for (const rowId of ['preset-engineer', 'preset-researcher']) {
+    const section = sectionOf(rowId)
+    assert.match(section, /board_outline/, `${rowId} needs the outline as the first step of the check`)
+    assert.match(
+      section,
+      /stale|expired|supersed/i,
+      `${rowId} should name the failure it is guarding against`,
+    )
+    // The check must be scoped to substantive replies, not every turn: reviewing the whole board
+    // before a one-line acknowledgement is pure cost, and a rule that expensive gets ignored.
+    assert.match(
+      section,
+      /substantive/i,
+      `${rowId} should scope the check to substantive replies rather than every turn`,
+    )
+    assert.match(
+      section,
+      /before/i,
+      `${rowId} should place the check before the reply, not after it`,
+    )
+  }
+  // The teacher is excluded on purpose; if a later change adds it, that is a deliberate decision
+  // that should have to update this assertion. Matched on the whole-board review phrase rather than
+  // on "stale": the teacher's mechanics already say "a stale-revision error means the board moved
+  // under you", which is about a rejected write, not about staleness of content.
+  assert.ok(
+    !/re-read the whole board/i.test(sectionOf('preset-teacher')),
+    'the teacher was left out of the stale-board check until its teaching design is revisited',
+  )
+})

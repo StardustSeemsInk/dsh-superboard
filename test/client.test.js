@@ -484,6 +484,215 @@ test('a payload with no note still names what was selected', () => {
 })
 
 // ---------------------------------------------------------------------------
+// What a drag means
+// ---------------------------------------------------------------------------
+
+/**
+ * A DOM stand-in good enough for `originAt`.
+ *
+ * `originAt` is the one classifier in this file that cannot be pure: "is the pointer on rendered
+ * text" is a question only the browser can answer. So it is tested against a fake that records
+ * *which* of the four reads happened, because the failure mode worth pinning is not a thrown error
+ * but reading the wrong thing — `caretRangeFromPoint` always snaps to the nearest text node, so a
+ * point in a card's padding reports real prose.
+ *
+ * @param options - `{ caretNode, lineRects, userSelect, card, chrome }`.
+ * @returns `{ document, getComputedStyle }` for the sandbox.
+ */
+function fakeDom({ caretNode = null, lineRects = [], userSelect = 'auto', card = 'bl_1', chrome = false, point = true } = {}) {
+  const calls = []
+  const cardElement = { getAttribute: () => card }
+  const chromeElement = { closest: () => ({}) }
+  const target = {
+    closest: (selector) => {
+      if (selector === '[data-block-id]') return point ? cardElement : null
+      if (selector === '.sb-cardHead, .sb-groupHead') return chrome ? chromeElement : null
+      return null
+    },
+  }
+  const document = {
+    elementFromPoint: () => (point ? target : null),
+    caretRangeFromPoint: () => (caretNode === null ? null : { startContainer: caretNode }),
+    createRange: () => ({
+      selectNodeContents: () => {},
+      // A live `Range` is what the browser laid out, so the fake serves whatever was configured.
+      getClientRects: () => lineRects,
+    }),
+  }
+  return {
+    calls,
+    document,
+    getComputedStyle: () => ({ userSelect }),
+  }
+}
+
+/** A text node in the sandbox's terms: `nodeType` 3 with data. */
+const textNode = (data, parent = {}) => ({ nodeType: 3, data, parentElement: parent })
+
+test('a drag on rendered text is the browser selection, not a marquee', () => {
+  const dom = fakeDom({
+    caretNode: textNode('hello world'),
+    lineRects: [{ top: 100, bottom: 120, left: 50, right: 200 }],
+  })
+  const origin = client.originAt(80, 110, dom)
+  assert.equal(origin.mode, 'text')
+})
+
+test('the whole card is not text just because a caret can be found in it', () => {
+  // Measured in Edge: a point 3px inside a card's bottom edge, left of its paragraph, and past the
+  // end of a line all report a caret sitting in that paragraph's text node. Believing the caret is
+  // what would make the marquee impossible to start on a board full of prose.
+  const lineRects = [{ top: 100, bottom: 120, left: 50, right: 200 }]
+  const cases = [
+    { name: 'below the line box', x: 80, y: 140 },
+    { name: 'left of the line box', x: 20, y: 110 },
+    { name: 'past the end of the line', x: 400, y: 110 },
+    { name: 'above the line box', x: 80, y: 60 },
+  ]
+  for (const point of cases) {
+    const dom = fakeDom({ caretNode: textNode('hello world'), lineRects })
+    assert.equal(client.originAt(point.x, point.y, dom).mode, 'marquee', `should be marquee: ${point.name}`)
+  }
+})
+
+test('one rect per wrapped line, so the gap between two lines is blank', () => {
+  // A wrapped paragraph lays out as two rects. Between them is a lead-gap the browser reports no
+  // line box for, and a drag starting there has to be a marquee.
+  const dom = fakeDom({
+    caretNode: textNode('a long wrapped paragraph'),
+    lineRects: [
+      { top: 100, bottom: 120, left: 50, right: 300 },
+      { top: 120, bottom: 140, left: 50, right: 180 },
+    ],
+  })
+  assert.equal(client.originAt(80, 110, dom).mode, 'text', 'inside the first line')
+  assert.equal(client.originAt(80, 130, dom).mode, 'text', 'inside the second line')
+  assert.equal(client.originAt(280, 130, dom).mode, 'marquee', 'past the end of the second line')
+})
+
+test('an image, a diagram frame or the gap between cards is marquee area', () => {
+  // No caret at all.
+  assert.equal(client.originAt(10, 10, fakeDom({ caretNode: null })).mode, 'marquee')
+  // A caret in an element rather than a text node: there is no character under the pointer.
+  const elementCaret = fakeDom({ caretNode: { nodeType: 1 }, lineRects: [{ top: 0, bottom: 999, left: 0, right: 999 }] })
+  assert.equal(client.originAt(10, 10, elementCaret).mode, 'marquee')
+  // Whitespace-only text is not something a user means to select.
+  const blank = fakeDom({ caretNode: textNode('   '), lineRects: [{ top: 0, bottom: 999, left: 0, right: 999 }] })
+  assert.equal(client.originAt(10, 10, blank).mode, 'marquee')
+})
+
+test('a point outside every card is marquee area, and says so', () => {
+  const dom = fakeDom({ point: false })
+  const origin = client.originAt(5, 5, dom)
+  assert.equal(origin.mode, 'marquee')
+  assert.equal(origin.card, null)
+})
+
+test('deliberately unselectable chrome is marquee area by construction', () => {
+  // The card's slug and kind are `user-select:none`, so a drag beginning there cannot have been
+  // meant as a text selection. This is what gives the marquee a large, predictable set of grab
+  // targets on a board whose every card is full of prose.
+  const dom = fakeDom({ chrome: true, caretNode: textNode('prose'), lineRects: [{ top: 0, bottom: 999, left: 0, right: 999 }] })
+  assert.equal(client.originAt(10, 10, dom).mode, 'chrome')
+})
+
+test('a user-select:none ancestor vetoes the line-box test', () => {
+  const dom = fakeDom({
+    caretNode: textNode('prose'),
+    lineRects: [{ top: 0, bottom: 999, left: 0, right: 999 }],
+    userSelect: 'none',
+  })
+  assert.equal(client.originAt(10, 10, dom).mode, 'marquee')
+})
+
+test('no DOM at all degrades to a marquee rather than throwing', () => {
+  // The host half loads this file's exports in a context with no document; a throw here would take
+  // the whole pane down.
+  assert.equal(client.originAt(10, 10, undefined).mode, 'marquee')
+})
+
+// ---------------------------------------------------------------------------
+// Reading the browser's own selection
+// ---------------------------------------------------------------------------
+
+test('the selected text is normalised, because a cross-card selection is full of layout', () => {
+  // Measured: dragging from one card into another yields "…copy.\n\nbeta\nBeta…" — the second card's
+  // slug and its newlines come along. Collapsing the runs keeps the characters the user meant.
+  const sel = (text) => ({ rangeCount: 1, toString: () => text })
+  assert.equal(client.textSelectionText(sel('a\n\n\n\nb')), 'a\n\nb')
+  assert.equal(client.textSelectionText(sel('trailing   \nnext')), 'trailing\nnext')
+  assert.equal(client.textSelectionText(sel('  padded  ')), 'padded')
+})
+
+test('a selection that does not exist reads as empty rather than throwing', () => {
+  assert.equal(client.textSelectionText(null), '')
+  assert.equal(client.textSelectionText(undefined), '')
+  // A plain object inherits `Object.prototype.toString`, which returns the genuine string
+  // "[object Object]" — so this would otherwise reach the Agent as a phantom selection.
+  assert.equal(client.textSelectionText({}), '')
+  assert.equal(client.textSelectionText({ toString: () => 'text without a rangeCount' }), '')
+})
+
+test('the blocks a text selection covers are exactly the ones it touches', () => {
+  const elements = [
+    { getAttribute: () => 'bl_1' },
+    { getAttribute: () => 'bl_2' },
+    { getAttribute: () => 'bl_3' },
+  ]
+  const selection = {
+    rangeCount: 1,
+    isCollapsed: false,
+    getRangeAt: () => ({
+      // The first two cards; the third is untouched.
+      intersectsNode: (element) => element !== elements[2],
+    }),
+  }
+  const root = { querySelectorAll: () => elements }
+  assert.deepEqual(plain([...client.textSelectionBlocks(selection, root)]), ['bl_1', 'bl_2'])
+})
+
+test('a collapsed caret selects no blocks, so a click is not a selection', () => {
+  const root = { querySelectorAll: () => [{ getAttribute: () => 'bl_1' }] }
+  for (const selection of [
+    null,
+    undefined,
+    { rangeCount: 0, isCollapsed: true },
+    { rangeCount: 1, isCollapsed: true, getRangeAt: () => ({ intersectsNode: () => true }) },
+  ]) {
+    assert.equal(client.textSelectionBlocks(selection, root).size, 0)
+  }
+  // And no root means nothing to search.
+  assert.equal(client.textSelectionBlocks({ rangeCount: 1, isCollapsed: false, getRangeAt: () => ({}) }, null).size, 0)
+})
+
+// ---------------------------------------------------------------------------
+// The feedback payload, now carrying the user's characters
+// ---------------------------------------------------------------------------
+
+test('the exact selected characters reach the Agent, quoted', () => {
+  const text = client.formatFeedback({
+    pageSlug: 'issues',
+    rev: 'r27-abc',
+    blocks: ['prose', 'beta'],
+    edges: [],
+    note: '',
+    text: 'Prose a human would\nselect and copy.',
+  })
+  // Quoted per line so a multi-line selection cannot be mistaken for the payload's own structure.
+  assert.match(text, /> Prose a human would/)
+  assert.match(text, /> select and copy\./)
+  // The blocks are still named: the text says which sentence, the blocks say where it lives.
+  assert.match(text, /选中块：prose、beta/)
+})
+
+test('a block-only selection is unchanged, with no empty text section', () => {
+  for (const value of [undefined, '', '   ']) {
+    const text = client.formatFeedback({ pageSlug: 'p', rev: 'r1-0', blocks: ['a'], edges: [], note: '', text: value })
+    assert.doesNotMatch(text, /选中文字/, `no text section for ${JSON.stringify(value)}`)
+  }
+})
+
+// ---------------------------------------------------------------------------
 // Inline markdown
 // ---------------------------------------------------------------------------
 

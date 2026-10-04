@@ -114,9 +114,20 @@ window.__ModuleLoader__.load({
       '.sb-group{border-style:dashed;padding-left:14px;}',
       '.sb-edges{position:absolute;inset:0;pointer-events:none;overflow:visible;}',
       '.sb-empty{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px;padding:12px 0;}',
-      // Marquee: the canvas owns the drag, so text selection inside it must be suppressed while
-      // a selection gesture is in flight, or dragging would select the board's own prose.
+      // Marquee: while a rectangle drag is in flight the canvas owns the gesture, so the browser's
+      // text selection must be suppressed or the drag would select the board's own prose.
+      //
+      // This class is applied ONLY to a drag that began somewhere that is not rendered text (see
+      // `originAt`). That distinction is the whole feature: the rule used to go on at every
+      // pointerdown, which is why not one word on the board could be selected or copied. It also
+      // has to be added imperatively, at pointerdown, and never during a drag — putting
+      // `user-select:none` on an element whose text is already selected deletes that selection.
       '.sb-picking,.sb-picking *{user-select:none;cursor:crosshair;}',
+      // The card's chrome — slug, kind, region tag — is a label, not content. Without this it is
+      // included in whatever gets copied, so a three-word selection arrives with the block's slug
+      // glued to it. It doubles as marquee area: chrome that cannot be selected is chrome a
+      // rectangle drag may start on.
+      '.sb-cardHead,.sb-groupHead{user-select:none;}',
       '.sb-marquee{position:absolute;border:1px solid var(--dsw-alias-brand-primary);background:var(--dsw-alias-brand-primary);opacity:.12;pointer-events:none;border-radius:2px;}',
       '.sb-cardSel{border-color:var(--dsw-alias-brand-primary);box-shadow:0 0 0 1px var(--dsw-alias-brand-primary);}',
       // A single row, only while something is selected. No idle state at all.
@@ -1890,6 +1901,111 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Which gesture a drag that starts here should mean: text, or a marquee.
+     *
+     * The user asked for origin dispatch — start on text and you get a text selection, start
+     * anywhere else and you get the rectangle. Getting "on text" right is the whole problem,
+     * because the obvious test is wrong twice over:
+     *
+     *   1. `caretRangeFromPoint` **always snaps to the nearest text node**, so a card's padding,
+     *      its gutter and the blank run below it all report a caret sitting in real prose. Measured
+     *      on a card whose paragraph is one line: a point 3px inside the card's bottom edge
+     *      classified as text.
+     *   2. The caret's node is not the thing being hit. A point 4px to the left of a paragraph
+     *      reported that paragraph's own text node.
+     *
+     * So the answer has to be "is this point inside a *rendered line box* of that text", not "is
+     * there text nearby". The line boxes come from a `Range` over the text node's host element,
+     * which is what the browser actually laid out — no font metrics are guessed, and a wrapped
+     * paragraph contributes one rect per line, so the gap between two wrapped lines correctly
+     * counts as blank.
+     *
+     * Three outcomes, and the middle one is why this returns a reason rather than a boolean:
+     * `text` starts the browser's selection, `marquee` draws the rectangle, and `chrome` is a
+     * marquee whose pointer is over a card's label — the same thing, but it says so.
+     *
+     * @param clientX - pointer x in viewport coordinates.
+     * @param clientY - pointer y in viewport coordinates.
+     * @param env - the DOM to read, defaulting to the real one. Injected because this is the one
+     *   classifier here that cannot be pure, and the failure worth pinning is reading the *wrong*
+     *   thing rather than throwing — a fake that records which reads happened is the only way to
+     *   test that without a browser.
+     * @returns `{ mode, card }` where mode is `'text' | 'marquee' | 'chrome'`.
+     */
+    function originAt(clientX, clientY, env) {
+      const doc = env?.document ?? (typeof document === 'undefined' ? undefined : document)
+      const styles = env?.getComputedStyle ?? (typeof getComputedStyle === 'undefined' ? undefined : getComputedStyle)
+      if (doc === undefined) return { mode: 'marquee', card: null }
+      const target = doc.elementFromPoint(clientX, clientY)
+      const card = target?.closest?.('[data-block-id]') ?? null
+      if (card === null) return { mode: 'marquee', card: null }
+      // Chrome that is deliberately unselectable is marquee area by construction.
+      if (target.closest?.('.sb-cardHead, .sb-groupHead') != null) return { mode: 'chrome', card }
+      const caret = doc.caretRangeFromPoint?.(clientX, clientY) ?? null
+      if (caret === null) return { mode: 'marquee', card }
+      const node = caret.startContainer
+      // A caret in an element rather than a text node means there is no character under the
+      // pointer — an image, a diagram's frame, the gap between two cards.
+      if (node.nodeType !== 3 || String(node.data).trim() === '') return { mode: 'marquee', card }
+      const host = node.parentElement
+      if (host === null) return { mode: 'marquee', card }
+      if (styles(host).userSelect === 'none') return { mode: 'marquee', card }
+      const line = doc.createRange()
+      line.selectNodeContents(host)
+      for (const rect of line.getClientRects()) {
+        // The 1px slack absorbs sub-pixel rounding at the ends of a line; without it a click on
+        // the very first character could fall outside the rect it belongs to.
+        if (clientY >= rect.top && clientY <= rect.bottom && clientX >= rect.left - 1 && clientX <= rect.right + 1) {
+          return { mode: 'text', card }
+        }
+      }
+      return { mode: 'marquee', card }
+    }
+
+    /**
+     * The blocks a live selection covers, for the bar and the payload.
+     *
+     * `Range.intersectsNode` is the honest test: it is true when the range touches any part of the
+     * element, including a bare newline between two cards. That is what "selecting text auto-selects
+     * the blocks it touches" means, and across cards it is exactly the behaviour asked for.
+     *
+     * @param selection - a `Selection`, or null.
+     * @param root - the element to search within.
+     * @returns the set of block ids the selection touches.
+     */
+    function textSelectionBlocks(selection, root) {
+      const hits = new Set()
+      if (selection === null || selection === undefined) return hits
+      if (selection.rangeCount === 0 || selection.isCollapsed || root === null) return hits
+      const range = selection.getRangeAt(0)
+      for (const element of root.querySelectorAll('[data-block-id]')) {
+        if (range.intersectsNode(element)) hits.add(element.getAttribute('data-block-id'))
+      }
+      return hits
+    }
+
+    /**
+     * Read the live selection as text, normalised.
+     *
+     * `toString()` on a selection that crosses two cards yields the newline-and-indent soup between
+     * them, so the whitespace is collapsed as it is read. The exact characters matter — this text is
+     * what a copy puts on the clipboard and what the Agent is told the user pointed at.
+     *
+     * @param selection - a `Selection`, or null.
+     * @returns the selected text, or `''`.
+     */
+    function textSelectionText(selection) {
+      // Anything that is not a real selection still has an inherited `Object.prototype.toString`,
+      // which returns the genuine string "[object Object]" — so checking the *result* is not enough
+      // to keep that literal text out of the Agent's feedback. The interface is checked instead:
+      // `rangeCount` is what a `Selection` has and a stray object does not.
+      if (typeof selection?.rangeCount !== 'number') return ''
+      const raw = selection.toString()
+      if (typeof raw !== 'string') return ''
+      return raw.replace(/[ \t]+\n/gu, '\n').replace(/\n{3,}/gu, '\n\n').trim()
+    }
+
+    /**
      * Build the structured payload the user hands to the Agent (Q-H).
      *
      * Deliberately the *structure*, not a bitmap: the Agent reads the board model directly, so
@@ -1902,6 +2018,19 @@ window.__ModuleLoader__.load({
     function formatFeedback(item) {
       const lines = [`[看板反馈 · ${item.pageSlug} · ${item.rev}]`]
       lines.push(`选中块：${item.blocks.join('、')}`)
+      // The exact characters, when the user dragged over text. This is the whole point of the text
+      // gesture: the Agent otherwise has to guess which sentence inside a block was meant, and a
+      // one-line block is the only case where the block *is* the answer.
+      if (typeof item.text === 'string' && item.text.trim() !== '') {
+        lines.push('选中文字：')
+        lines.push(
+          item.text
+            .trim()
+            .split('\n')
+            .map((line) => `> ${line}`)
+            .join('\n'),
+        )
+      }
       if (item.edges.length > 0) {
         lines.push(`其间关系：${item.edges.join('；')}`)
       }
@@ -2489,6 +2618,34 @@ window.__ModuleLoader__.load({
       const dragRef = React.useRef(null)
       /** Block ids currently selected, on the active page. */
       const [selected, setSelected] = React.useState(() => new Set())
+      /**
+       * The user's exact text selection, or `''`.
+       *
+       * Held in state rather than read from the DOM at send time because the selection is gone by
+       * then: the bar's own input takes focus, and focusing another element collapses the
+       * document's selection. The text has to be captured while it is still live.
+       */
+      const [selectedText, setSelectedText] = React.useState('')
+      /** Whether the current selection came from dragging over text, for the bar's wording. */
+      const [byText, setByText] = React.useState(false)
+      /**
+       * Set when the pointer is down on a rectangle drag, so `selectionchange` does not fight it.
+       *
+       * A marquee drag through prose makes the browser try to select that prose as well (the
+       * suppression class stops the *result* but not the caret work), and each of those events
+       * would otherwise clear the block selection the rectangle is about to establish.
+       */
+      const marqueeRef = React.useRef(false)
+      /**
+       * Swallow the `selectionchange` caused by our own `removeAllRanges()`.
+       *
+       * That event is delivered *after* the pointerup handler has returned, at which point
+       * `marqueeRef` is already false and a collapsed selection looks exactly like a click that
+       * should clear the selection — so the rectangle's own result would be erased a tick after it
+       * was computed. Only armed when there really was a selection to drop, so a no-op removal
+       * cannot leave the flag set and eat a later, genuine event.
+       */
+      const ignoreSelectionRef = React.useRef(false)
       /** The question the user is writing about the current selection. */
       const [note, setNote] = React.useState('')
       /** Set while a selection is being handed to the composer. */
@@ -2527,7 +2684,59 @@ window.__ModuleLoader__.load({
       // A selection means "these blocks on this page", so switching pages clears it.
       React.useEffect(() => {
         setSelected(new Set())
+        setSelectedText('')
+        setByText(false)
         setMarquee(null)
+      }, [pageId])
+
+      /**
+       * Mirror the browser's own text selection into the board's selection state.
+       *
+       * This is the bridge that makes "select text" and "select blocks" one gesture instead of two.
+       * The browser owns the highlight; this only observes it. Measured, one drag over three cards
+       * fires six `selectionchange` events, so the bar tracks the highlight live rather than
+       * appearing only on release.
+       *
+       * The rectangle drag has to be excluded by hand: `sb-picking` stops the browser from painting
+       * a selection, but the events still fire with a collapsed range, and acting on them would
+       * clear the very selection the rectangle is computing.
+       */
+      React.useEffect(() => {
+        if (typeof document === 'undefined') return undefined
+        const onSelectionChange = () => {
+          if (marqueeRef.current) return
+          if (ignoreSelectionRef.current) {
+            ignoreSelectionRef.current = false
+            return
+          }
+          const selection = document.getSelection()
+          const root = containerRef.current
+          if (root === null) return
+          const inside =
+            selection !== null &&
+            selection.rangeCount > 0 &&
+            root.contains(selection.getRangeAt(0).commonAncestorContainer)
+          // A selection that lives outside the canvas (the reading column, the bar's own note field,
+          // the composer) is not the board's business. Without this, clicking into the note field
+          // would collapse the document selection and clear the selection the bar is describing.
+          if (!inside) return
+          const text = textSelectionText(selection)
+          const hits = textSelectionBlocks(selection, root)
+          // A collapsed caret is a click. Inside the canvas that means "clear", which is the
+          // conventional meaning and what the marquee path does for a click too — but only when
+          // something is actually selected, so the state is not rewritten on every idle click.
+          if (text === '' && hits.size === 0) {
+            setSelected((current) => (current.size === 0 ? current : new Set()))
+            setSelectedText((current) => (current === '' ? current : ''))
+            setByText(false)
+            return
+          }
+          setSelected(hits)
+          setSelectedText(text)
+          setByText(true)
+        }
+        document.addEventListener('selectionchange', onSelectionChange)
+        return () => document.removeEventListener('selectionchange', onSelectionChange)
       }, [pageId])
 
       const pageBlocks = activePage?.blocks ?? []
@@ -2595,6 +2804,24 @@ window.__ModuleLoader__.load({
         // Only the primary button, and never when the gesture starts on a control.
         if (event.button !== 0) return
         if (event.target.closest('button, input, textarea, a') !== null) return
+        // Origin dispatch (the user's chosen gesture): a drag beginning on rendered text is the
+        // browser's selection and is left completely alone — no rectangle, no suppression, and no
+        // `preventDefault`. Starting anywhere else owns the gesture, and the canvas draws a
+        // rectangle.
+        //
+        // The class goes on here, imperatively, rather than through React state: it must be in
+        // effect before the browser begins extending a selection on the first `pointermove`, and a
+        // state update would land a frame late. It is also only ever *added* at pointerdown —
+        // measured, adding `user-select:none` to an element whose text is already selected wipes
+        // that selection, so setting it mid-drag would destroy the highlight under the user's
+        // cursor.
+        const origin = originAt(event.clientX, event.clientY)
+        if (origin.mode === 'text') {
+          dragRef.current = null
+          return
+        }
+        containerRef.current?.classList.add('sb-picking')
+        marqueeRef.current = true
         const start = canvasPoint(event)
         dragRef.current = { start, pointerId: event.pointerId }
         setMarquee({ ...start, width: 0, height: 0 })
@@ -2608,16 +2835,39 @@ window.__ModuleLoader__.load({
 
       const onPointerUp = (event) => {
         const drag = dragRef.current
-        if (drag === null || drag.pointerId !== event.pointerId) return
+        // A text drag has no rectangle to resolve; the browser already did the work, and
+        // `onSelectionChange` mirrors it into the selection state.
+        if (drag === null) {
+          containerRef.current?.classList.remove('sb-picking')
+          marqueeRef.current = false
+          return
+        }
+        if (drag.pointerId !== event.pointerId) return
         dragRef.current = null
+        marqueeRef.current = false
+        containerRef.current?.classList.remove('sb-picking')
         const rect = normaliseRect(drag.start, canvasPoint(event))
         setMarquee(null)
 
         // A click rather than a drag clears the selection, which is the conventional meaning.
         if (rect.width < 4 && rect.height < 4) {
           setSelected(new Set())
+          setSelectedText('')
+          setByText(false)
           return
         }
+
+        // The rectangle replaces any text selection, including the highlight the browser may have
+        // painted while the drag passed over prose. The flag suppresses the `selectionchange` this
+        // causes, which would otherwise arrive after `marqueeRef` was already cleared and be read as
+        // a click — erasing the selection computed just below.
+        const live = document.getSelection()
+        if (live !== null && live.rangeCount > 0) {
+          ignoreSelectionRef.current = true
+          live.removeAllRanges()
+        }
+        setSelectedText('')
+        setByText(false)
 
         // Measure the blocks from the DOM, the same source the arrows use, so a block is selected
         // exactly when it visually intersects the rectangle.
@@ -2680,6 +2930,10 @@ window.__ModuleLoader__.load({
           blocks,
           edges,
         }
+        // The user's exact characters, when there are any. Carried in the payload as its own field
+        // rather than folded into a block's text: the Agent has to be able to tell "the user pointed
+        // at this sentence" from "this whole block is the answer".
+        if (selectedText.trim() !== '') payload.text = selectedText
         // The same shape the clipboard copy used, so what the Agent reads inline and what it would
         // have received as text cannot drift apart.
         const summary = formatFeedback({
@@ -2688,6 +2942,7 @@ window.__ModuleLoader__.load({
           blocks: blocks.map((block) => block.slug),
           edges,
           note,
+          text: selectedText,
         })
 
         setSending(true)
@@ -2703,6 +2958,8 @@ window.__ModuleLoader__.load({
           }
           setNote('')
           setSelected(new Set())
+          setSelectedText('')
+          setByText(false)
         } catch (error) {
           setSendError(error instanceof Error ? error.message : String(error))
         } finally {
@@ -2808,9 +3065,14 @@ window.__ModuleLoader__.load({
               setNote,
               sending,
               error: sendError,
+              text: selectedText,
+              byText,
               onSend: () => void stageFeedback(),
               onCancel: () => {
+                document.getSelection()?.removeAllRanges?.()
                 setSelected(new Set())
+                setSelectedText('')
+                setByText(false)
                 setNote('')
                 setSendError(null)
               },
@@ -2953,7 +3215,7 @@ window.__ModuleLoader__.load({
      * attach: the selection becomes an attachment in the composer, where the user can see it, edit
      * the note beside it, and remove it with a control they already recognise.
      */
-    function SelectionBar({ count, slugs, note, setNote, sending, error, onSend, onCancel }) {
+    function SelectionBar({ count, slugs, note, setNote, sending, error, onSend, onCancel, text, byText }) {
       if (count === 0) return null
 
       // A long selection must not turn the bar into a wall of chips. The overflow count keeps the
@@ -2961,11 +3223,17 @@ window.__ModuleLoader__.load({
       const CHIP_LIMIT = 4
       const shown = slugs.slice(0, CHIP_LIMIT)
       const hidden = slugs.length - shown.length
+      const hasText = typeof text === 'string' && text.trim() !== ''
+      // A text selection is reported in characters, because that is the unit the user dragged over
+      // and the unit the Agent receives. Blocks alone would say "3 blocks" for what may be one
+      // clause, which understates what was pointed at.
+      const countLabel =
+        byText && hasText ? `选中 ${text.trim().length} 字 · ${count} 个块` : `已选 ${count} 个块`
 
       return h(
         'div',
         { className: 'sb-selbar', 'data-superboard-selection': '' },
-        h('span', { className: 'sb-selbarCount' }, `已选 ${count} 个块`),
+        h('span', { className: 'sb-selbarCount' }, countLabel),
         h(
           'div',
           { className: 'sb-selbarChips', title: slugs.join('、') },
@@ -3078,6 +3346,12 @@ window.__ModuleLoader__.load({
       // *which* blocks a marquee means and *what text* the Agent receives are both checked.
       normaliseRect,
       rectsIntersect,
+      // Which gesture a drag means, and what the browser's own selection covers. The classifier is
+      // pure apart from its DOM reads, so a stub element lets the tests pin the three outcomes —
+      // and `textSelectionText` is pure, which is what its normalisation needs.
+      originAt,
+      textSelectionBlocks,
+      textSelectionText,
       describeSelectedEdges,
       formatFeedback,
       // Markdown and transcript extraction. DOM-free, so the two pieces most likely to be subtly
@@ -3095,6 +3369,10 @@ window.__ModuleLoader__.load({
       BoardView,
       ReadingColumn,
       SelectionBar,
+      // The stylesheet itself. Exported because the rules that decide *what a drag means* live here
+      // as much as in the handlers — a marquee is only possible on chrome the browser will not
+      // select — and a rendered card is the only way to check a rule against real layout.
+      BoardStyles,
       BlockNode,
       Block,
       Markdown,

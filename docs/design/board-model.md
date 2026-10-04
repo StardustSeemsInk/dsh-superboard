@@ -1309,6 +1309,42 @@ gestures yet. Ask the user which part they mean instead of guessing.
 
 **验证方式**：headless Edge 里加载真实的 `src/client.js`（走 stub module loader），把 catppuccin 真实注册的 201 个 token 按 `ThemePresenter` 的方式装到 `<body>` 上，渲染五种图，再用 `getComputedStyle` 量出来。**测量本身有三个坑，都踩过**：脱离文档的 SVG 所有计算样式都是 `''`（读成「无填充」而不是报错）；mermaid 把可见文字放在 `<tspan>` 里（`text.actor>tspan{fill:…}`）而父 `<text>` 带的是方框底色，量父节点等于量错对象；`<svg>` 自己没有背景，`getComputedStyle(svg).backgroundColor` 是透明并会被解析成黑色。证据图：`docs/assets/diagram-theme.png`。
 
+### 4.7 画布上的选择：一次拖拽的两种含义（2026-10-04）
+
+用户提出「现在只能框到组件而无法选中文字」，希望能**选中文字以更精确地传给 Agent**，并支持 `Ctrl+C`。用户选定的手势是**按起点分派**：
+
+| 起点 | 含义 |
+|---|---|
+| 渲染出的文字（行盒之内） | 浏览器自己的文字选择。不画框、不抑制、不 `preventDefault`；`Ctrl+C` 直接可用；**同时**把所触及的块自动选上（可跨块） |
+| 卡片标签（`sb-cardHead` / `sb-groupHead`） | 框选（这些是 `user-select:none` 的装饰，不可能是想选文字） |
+| 其余（图片、图的边框、卡片内边距、卡片之间的空隙、空白画布） | 框选 |
+
+**为什么原来的实现「一个字都选不中」**：`.sb-picking` 带着 `user-select:none`，而它在**每一次** `pointerdown` 就加上——于是任何拖动都变成框选。这条规则必须保留（否则画框会把看板自己的正文一起选上），但它只能加在**确实要画框**的那次拖拽上。
+
+**判定「起点是不是文字」是本功能的全部难点，而显然的判法是错的两次**（`src/client.js` 的 `originAt`）：
+
+1. **`caretRangeFromPoint` 永远吸附到最近的可编辑文字**。实测：段落只有一行的卡片，在它**底边内侧 3px**、左内侧、以及一行**末端之后**取点，报告的都还是那一段的真实文本节点。
+2. **caret 所在的节点并不是被点中的东西**。在段落左侧 4px 取点，返回的是该段落自己的文本节点。
+
+所以判据必须是「这个点是否落在该文字的**已渲染行盒**之内」，而不是「附近有没有文字」。行盒来自对该文本节点宿主元素建立的 `Range.getClientRects()`——那是浏览器**真正排版出来的**结果，不猜字体度量，而且换行的段落会给出**每行一个 rect**，于是两行之间的行距**正确地算作空白**。三处 1px 余量用来吸收行末的次像素舍入。
+
+**为什么在拖拽中途加抑制类会毁掉选择**（实测，也是 `originAt` 只在 `pointerdown` 求值一次的原因）：对**已有选区**的元素施加 `user-select:none`，浏览器会当场清空该选区——`before: "Prose a human wou"` → `after: ""`。因此这个类只在 `pointerdown` 加、只在 `pointerup` 撤，绝不在拖动过程中加。
+
+**文字选择如何自动选上块**：`document.addEventListener('selectionchange')` 把浏览器的选区镜像进选择状态（`textSelectionBlocks` 用 `Range.intersectsNode`，这正是「跨块」的语义）。实测一次跨两张卡片的拖拽触发 **6 次** `selectionchange`，所以托盘实时跟随高亮，而不是等松手才出现。
+
+两个必须显式处理的异步问题：
+
+- **矩形拖拽期间要忽略 `selectionchange`。** `sb-picking` 阻止的是浏览器**画出**选区，事件仍会带着折叠区间触发；不忽略的话它们会把矩形正要建立的选区清掉。
+- **我们自己 `removeAllRanges()` 引发的那一次事件要吞掉。** 它在 `pointerup` 返回**之后**才送达，那时 `marqueeRef` 已经复位，而折叠选区与「一次应清空选区的点击」形状完全一样——于是矩形刚算出的结果会在下一 tick 被自己的回声抹掉。只在确实有待清除的选区时才置标志，避免空调用把标志留下、吃掉之后一次真实事件。
+
+**卡片标签改为 `user-select:none`**（`.sb-cardHead,.sb-groupHead`）有两个作用：复制出来的文字不再被块地址污染（否则跨块选区会带上第二张卡片的 slug），而且标签本身成为框选的落点——在一块满是正文的看板上，这大幅扩展了矩形的可用起手区域。
+
+**载荷**：`textSelectionText()` 规整出的字符原文以**独立字段** `payload.text` 随块列表一起送出，托盘摘要里以 `>` 逐行引用（避免多行选区被误读成载荷自身的结构）。**不折进某一块的 text 里**——Agent 必须能区分「用户指的是这一句」和「这一整块就是答案」。选中文字后，托盘显示的是**字数**而不是块数（`选中 N 字 · M 个块`），因为那才是用户拖过的单位。
+
+> 一个顺带修掉的真 bug：`textSelectionText` 起初只检查 `toString()` 的返回值是不是字符串，但**普通对象继承的 `Object.prototype.toString` 返回的是货真价实的字符串 `"[object Object]"`**，会被当成一次幻影选区送进载荷。改为按接口判断（`typeof selection.rangeCount === 'number'`）。
+
+**验证方式**：headless Edge 加载**真实的** `src/client.js`（stub module loader 取真实 `BOARD_CSS` 与真实 `Block`/`originAt`），用 CDP 派发**真实鼠标事件**，量回来的是：五种起点各自的分类、跨两块拖拽后的原文与块命中、`Ctrl+C` 实际拿到的内容、以及抑制类在拖动中途确实清空选区的反例。纯函数部分（分类器的三种结果、行盒判据、选区规整、载荷格式）由 `test/client.test.js` 覆盖，四处关键判据各做了变异测试。真实拖拽的 `Ctrl+C` 结果实测为两段正文的拼接，与选区原文一致。
+
 
 ---
 
