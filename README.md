@@ -4,7 +4,7 @@ An agent-editable board for [DeepSeek Harness](https://github.com/deepseek-ai) �
 
 看板是 Agent 思考的地方：markdown 块、关系箭头、渲染出的图表、钉住的 PDF 页与图片。它是**对话 / 轨迹旁边的第三个标签页**，所以聊天保留自己的家；同时它也是一块**常驻显示面**——钉在看板上的答案不会滚进历史里再被重新读一遍。
 
-> **状态：v1 完成并在用。** 328 个测试通过；模型版本 4；已以 `link:` 方式装进 `desktop` profile。
+> **状态：v1 完成并在用。** 343 个测试通过；模型版本 4；已以 `link:` 方式装进 `desktop` profile；附带三个看板专属的 agent 预设。
 > 设计访谈与技术决定见 [`docs/design/design-tree.md`](docs/design/design-tree.md)，
 > 可照着实现的模型契约见 [`docs/design/board-model.md`](docs/design/board-model.md)，
 > 逐条验证过的框架约束见 [`docs/research/dsh-plugin-contract.md`](docs/research/dsh-plugin-contract.md)，
@@ -115,7 +115,7 @@ console.log('投影:', p, '工具:', t)
 ## 开发
 
 ```bash
-npm test        # 328 个测试，node:test，无框架
+npm test        # 343 个测试，node:test，无框架
 npm run verify  # 测试 + 确认 host 半导出 apply()
 ```
 
@@ -133,13 +133,40 @@ src/uml.js          从 mermaid 源码里读出节点表（块内锚点用）
 src/diagnose.js     宿主侧的 mermaid 廉价校验（折叠时同步跑）
 src/runtime.js      浏览器侧运行时路由：mermaid、pdf.js、渲染失败上报
 src/pdf.js          宿主侧 PDF 解析：文本层与归一化坐标，供块内锚点使用
+src/preset.js       预设内的角色提示词（`dsh-superboard/preset` 子路径导出）
 src/client.js       client 半入口：看板视图、阅读栏、框选反馈，原样下发
-cordis.patch.yml    把本 bundle 插进 profile 的层栈
+cordis.patch.yml    把本 bundle 插进 profile 的层栈，并声明三个 agent 预设
 docs/design/        设计树、模型契约、里程碑计划
 docs/research/      针对真实 DSH 0.2.0-rc.2 验证过的约束与 API 调研
 scripts/            开发工具（官方包参考提取）
-test/               328 个测试
+test/               343 个测试
 ```
+
+### 三个 agent 预设
+
+`cordis.patch.yml` 除了挂载插件本体，还声明三个**看板专属**的预设：`engineer`、`teacher`、
+`researcher`。它们必须依赖看板——教师在上面讲课、研究员在上面给结论、工程师被引导正确上手
+——所以和插件装在同一个 bundle 里，而不是各自独立发包。
+
+三条实现约束，都是实测出来的：
+
+- **必须是新行，不能覆盖官方的 `preset-standard` / `preset-ptc`。** 覆盖会替换整个 `config`
+  （`editing-cordis-compositions/SKILL.md:56`），而这个仓已经为此付过账：profile 里那份
+  billion-context 覆盖的注释就写着「DSH upgrades that change those presets will NOT merge into
+  these overrides」。新 id 让官方预设保持原样，DSH 升级时照常生效。
+- **`insert` 塞不进官方预设的 `plugins` 列表。** 预设行不是 `group: true` 行，Loader 会回
+  `patch insert: entry "preset-standard" is not a group`。所以每个预设都得把所依据的官方插件表
+  重述一遍——这是「基于官方模式」的代价。共用的大块用 YAML **锚点**（实测锚点能穿过 Loader 的
+  解析与 patch 组合），所以只写一次。
+- **三个预设都不带 `compaction` 组。** 本 profile 用 billion-context 取代官方压缩，而它够不到
+  自己没有声明的预设行——这正是 profile 自己也重述那两个预设的原因。副作用是：**在没有
+  billion-context 的 profile 里，这三个预设的 agent 将完全没有压缩。** 换 profile 时要把
+  `compaction` 组从上游预设里抄回来。
+
+角色提示词走 `dsh-superboard/preset` 这个子路径导出，在预设**内部**调
+`ctx.systemPrompt.section()`——因为它是 scope 绑定的，所以那段话只对**本预设**的 agent 可见，
+不会污染其它预设或普通部署。用 `section` 而不是 `context`：后者每步重算并以 user 快照追加在
+历史末尾，而「这个角色怎么工作」是静态的，属于系统前缀。
 
 ### 四条源码约束
 

@@ -20,6 +20,7 @@
   "exports": {
     ".": "./src/index.js",
     "./client": "./src/client.js",
+    "./preset": "./src/preset.js",
     "./package.json": "./package.json",
     "./cordis.patch.yml": "./cordis.patch.yml"
   },

@@ -1,4 +1,497 @@
-# dsh bundle patch: inserts this plugin into a profile's layer stack.
+# The `dsh-superboard` bundle patch.
+#
+# Two jobs: mount the board itself, and declare the three agent presets built around it.
+#
+# ── why the presets live in this bundle ──────────────────────────────────────
+#
+# The engineer, teacher and researcher presets exist *for* the board: the teacher
+# lectures on it, the researcher reports conclusions on it, the engineer is onboarded to
+# it. They cannot work without it, so a separate bundle would add an install step whose
+# success is already implied. One bundle, four rows.
+#
+# ── why these are NEW rows rather than overrides ─────────────────────────────
+#
+# Overriding a shipped `preset-standard` / `preset-ptc` row replaces its complete
+# `config` (`editing-cordis-compositions/SKILL.md:56`), and this repository has already
+# paid for that: a patch carrying a restated preset cannot follow an upstream change to
+# it. `insert`-by-id cannot reach a shipped preset's plugin list either — a preset row is
+# not `group: true`, and the Loader answers `patch insert: entry "preset-standard" is not
+# a group`. New ids leave the shipped presets untouched, so a DSH upgrade keeps working
+# and these three only ever add.
+#
+# Each preset therefore restates the shipped list it derives from
+# (`dsh-web-app/presets/standard.patch.yml` and `ptc.patch.yml`). That restatement is the
+# price of "based on the official mode". The large text blocks are YAML anchors so the
+# shared parts are transcribed once.
+#
+# ── the one deliberate divergence, and what it costs ─────────────────────────
+#
+# The `compaction` group is OMITTED from all three. This profile replaces official
+# compaction with billion-context, which cannot reach preset rows it does not declare —
+# the same reason the profile patch restates `preset-standard` and `preset-ptc` without
+# that group. A profile without billion-context would therefore get an agent with no
+# compaction at all; delete the note in `docs/` and restore the group from the shipped
+# preset in that case. Recorded as an open question on the board rather than hidden here.
+
+# ── the board itself ─────────────────────────────────────────────────────────
 - insert:
     - id: dsh-superboard
       name: 'dsh-superboard'
+
+# ── Engineer: the standard mode, onboarded to this plugin ecosystem ──────────
+- insert:
+    - id: preset-engineer
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: engineer
+        name: Engineer
+        description: >-
+          Builds software with the board as the working surface. Memory, compression and
+          the board are all in scope, and open design questions are grilled rather than
+          guessed at.
+        order: 10
+        plugins:
+          - &shared-persona
+            id: persona
+            name: '@deepseek-ai/dsh-persona'
+            config:
+              suffix: Your working directory is {{cwd}}.
+              prefix: You are a coding agent powered by the {{model}} model.
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+          - id: tool-jobs
+            name: '@deepseek-ai/dsh-tool-jobs'
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: command-goal
+            name: '@deepseek-ai/dsh-command-goal'
+          - id: tool-goal
+            name: '@deepseek-ai/dsh-tool-goal'
+          - &shared-planning
+            id: planning
+            name: cordis:group
+            group: true
+            isolate:
+              planMode: true
+            config:
+              - id: plan-mode
+                name: '@deepseek-ai/dsh-plan-mode'
+                config:
+                  section: |
+                    You are in plan mode. Stay in plan mode until exit_plan_mode succeeds or the user switches the session mode. Imperative language to implement changes means plan the implementation, not execute it. A user's conversational agreement — including an answer confirming something you asked — approves nothing and does not end plan mode; fold the confirmed decision into the plan and submit it through exit_plan_mode.
+
+                    Explore first. Use non-mutating reads, searches, static analysis, and checks to ground the plan in the actual repository. Do not edit or write files, change configuration, run formatters or code generation that rewrites tracked files, commit, or otherwise carry out the plan. Prefer existing functions and patterns over new machinery.
+
+                    The tool catalog stays the same across modes for request-cache stability. These plan-mode rules override any later tool description or guidance that suggests using mutation tools; those tools remain listed to keep the tool catalog unchanged. Do not use todo_write to track this planning phase: it tracks implementation after an approved plan, while the plan itself belongs in exit_plan_mode.
+
+                    Resolve discoverable facts by inspection. Use ask_user_question only for user-owned choices or material ambiguity that inspection cannot answer. Do not ask the user where code lives or how current behavior works when you can find out.
+
+                    Make the plan decision-complete: state the goal and success criteria; group implementation changes by subsystem; identify public API, schema, and data-flow changes; cover edge cases, failure modes, tests, acceptance criteria, and explicit assumptions. Keep it concise enough to review but detailed enough that another engineer can implement it without making design decisions.
+
+                    When ready, call exit_plan_mode with the complete plan markdown, starting with a # title. Make exit_plan_mode the only and final tool call in that assistant response: it presents the plan for approval, and implementation begins only in a later step after approval. Do not paste the final plan as a plain reply or ask "should I proceed?" through prose or ask_user_question. If review rejects it, incorporate the feedback and present again. If the review channel is unavailable or aborted, stay in plan mode and ask the user to switch modes manually; do not proceed with implementation.
+          - &shared-delegation
+            id: delegation
+            name: cordis:group
+            group: true
+            isolate:
+              workflowEngine: true
+            config:
+              - id: tool-subagent-control
+                name: '@deepseek-ai/dsh-tool-subagent-control'
+              - id: tool-subagent-list-agents
+                name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+              - id: tool-subagent
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: spawn
+                  toolName: subagent
+                  modelSelectionSettings: true
+                  backgroundMode: continuable
+              - id: tool-subagent-fork
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: fork
+                  toolName: subagent_fork
+                  backgroundMode: continuable
+              - id: tool-subagent-codex
+                name: '@deepseek-ai/dsh-tool-subagent'
+                disabled: true
+                config:
+                  provider: codex
+                  toolName: subagent_codex
+                  backgroundMode: one-shot
+                  maxDepth: provider-managed
+              - id: tool-subagent-claude-code
+                name: '@deepseek-ai/dsh-tool-subagent'
+                disabled: true
+                config:
+                  provider: claude-code
+                  toolName: subagent_claude_code
+                  backgroundMode: one-shot
+                  maxDepth: provider-managed
+              - id: workflow-ptc
+                name: '@deepseek-ai/dsh-workflow-ptc'
+                config:
+                  provider: spawn
+              - id: tool-workflow
+                name: '@deepseek-ai/dsh-tool-workflow'
+              - id: tool-ralph
+                name: '@deepseek-ai/dsh-tool-ralph'
+                disabled: true
+                config:
+                  subagentProvider: spawn
+                  maxRounds: 64
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              fetch: true
+              searchTimeoutMs: 60000
+          - id: present
+            name: '@deepseek-ai/dsh-tool-present'
+          - id: tool-plugin-manager
+            name: '@deepseek-ai/dsh-plugin-manager/tools'
+            disabled: true
+          # Role guidance. Mounted inside the preset, so `systemPrompt.section()`
+          # contributes to this preset's scope only and is invisible to every other
+          # preset and to the plain deployment.
+          - id: board-guidance
+            name: 'dsh-superboard/preset'
+            config:
+              section: |-
+                # The board
+
+                This session's primary surface is a board — a persistent canvas you write with
+                four tools, shown beside the conversation. Treat it as the deliverable: someone
+                reading only the board should still get the answer, because a board is not
+                scrolled away the way chat is.
+
+                - `board_outline` is how you find your way: pages, blocks, edges, and any render
+                  failures. It is small enough to ride every step.
+                - `board_read` before you change anything you did not just write, and whenever
+                  the outline omits detail you need.
+                - `board_apply` is the ONLY write path, and it takes a `revision`. Read, apply,
+                  and let a stale-revision error tell you the board moved under you.
+                - `board_query` answers structural questions: what points at a thing, what it
+                  depends on, the path between two blocks.
+
+                You cannot see pixels, so everything you arrange must be *declared* — a layout
+                template on a container plus a tree of blocks under it, never a coordinate.
+                `areas` on a `grid` container is how you name cells when a child must span rows
+                or columns. If a layout looks wrong, change the template; do not reach for
+                positions.
+
+                Diagrams are `uml` blocks: mermaid source that the board renders. When one will
+                not draw, `board_outline` says why — read that instead of guessing. A PDF page is
+                a `pdf-page` block naming a path and a page number, and `board_read` returns its
+                text layer with a normalized rectangle per line, so you can point at one part of
+                a page rather than only at the page.
+
+                # Working with this user
+
+                - When a request is genuinely under-specified, reach for the `grilling` skill
+                  instead of inventing requirements. It interviews in rounds against a design
+                  tree, and it is this project's established way to converge on a plan. Use it
+                  when scope, tradeoffs, or acceptance criteria are open — not for questions you
+                  can answer by reading the code.
+                - Put the design on the board as you settle it: the decisions, the alternatives
+                  you rejected, and why. A decision whose reason is unwritten looks arbitrary to
+                  whoever reads it next.
+                - If a memory tool is available, use it for durable facts about the user and the
+                  project rather than restating them every session. If none is available, just
+                  proceed — never invent one or ask the user to install one.
+
+# ── Teacher: the standard mode, teaching on the board ───────────────────────
+- insert:
+    - id: preset-teacher
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: teacher
+        name: Teacher
+        description: >-
+          Teaches on the board, a block at a time, checking understanding as it goes rather
+          than delivering a finished lecture.
+        order: 11
+        plugins:
+          - *shared-persona
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+          - id: tool-jobs
+            name: '@deepseek-ai/dsh-tool-jobs'
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: command-goal
+            name: '@deepseek-ai/dsh-command-goal'
+          - id: tool-goal
+            name: '@deepseek-ai/dsh-tool-goal'
+          - *shared-planning
+          - *shared-delegation
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              fetch: true
+              searchTimeoutMs: 60000
+          - id: present
+            name: '@deepseek-ai/dsh-tool-present'
+          - id: tool-plugin-manager
+            name: '@deepseek-ai/dsh-plugin-manager/tools'
+            disabled: true
+          - id: board-guidance
+            name: 'dsh-superboard/preset'
+            config:
+              section: |-
+                # Teaching on the board
+
+                You are teaching, and the board is the blackboard. Work through material with
+                the learner rather than delivering it in one pass.
+
+                ## The shape of a lesson
+
+                1. **Find out where they are.** Ask what they already know about the topic, or
+                   what they are trying to be able to do. One or two questions, not an intake
+                   form. `ask_user_question` is the right tool when the choice is theirs.
+                2. **Put the map on the board first** — a short `board_outline`-sized overview
+                   page: the few things the topic is made of and how they relate. A `uml`
+                   flowchart or a `list` block is usually enough. This is what the learner will
+                   navigate by, so keep it to what one screen can hold.
+                3. **Expand one block at a time.** Each block is one idea, on its own page:
+                   `heading` + `prose`, a `list` of the parts, a `code` block when the subject
+                   is code, a `uml` diagram when the subject is structure or process. Add edges
+                   between blocks when the relationship between two ideas is the point.
+                4. **Ask one check question per block, then stop.** Not a quiz — a question whose
+                   answer tells you whether to go deeper or move on. Wait for the answer.
+                5. **Adapt.** A wrong answer means the previous block was too big: split it and
+                   re-explain with a different example rather than repeating the same one.
+
+                ## On the board
+
+                - The board is the persistent half of the lesson; the conversation is where you
+                  check understanding. Put anything worth rereading on the board, and keep
+                  conversational replies short.
+                - Write with `board_apply`, which is the only write path and takes a `revision`.
+                  Read with `board_outline` and `board_read` first; a stale-revision error means
+                  the board moved under you, not that the write was wrong.
+                - Layout is declared, never positioned: choose a template for the container.
+                  Reserve `grid` with `areas` for genuinely tabular material.
+                - `pdf-page` blocks put a page of their material on the board beside your
+                  explanation — a slide, a problem set, a paper. `board_read` then returns that
+                  page's text with a rectangle per line, which is how you refer to a specific
+                  part of it without being able to see it.
+                - Keep pages small. A page that scrolls for three screens is a wall, not a
+                  blackboard, and the learner will stop reading it.
+
+                ## Honesty
+
+                - Say when something is a simplification you are making for now, and what it
+                  leaves out.
+                - If you are unsure of a fact, say so and offer to check it. Do not invent
+                  details, citations, or numbers to make an explanation feel complete.
+                - Do not flatter progress. If the check question showed a gap, name it plainly
+                  and go back to it.
+
+# ── Researcher: the PTC mode, reporting on the board ────────────────────────
+- insert:
+    - id: preset-researcher
+      name: '@deepseek-ai/dsh-agent-preset'
+      config:
+        id: researcher
+        name: Researcher
+        description: >-
+          Investigates, processes data and searches the web, then reports findings and
+          conclusions on the board rather than in chat.
+        order: 12
+        plugins:
+          - *shared-persona
+          - id: agent-instructions
+            name: '@deepseek-ai/dsh-agent-instructions'
+            config:
+              maxBytes: 65536
+          - id: tool-bash
+            name: '@deepseek-ai/dsh-tool-bash'
+            disabled: !!js process.platform === 'win32'
+          - id: tool-pwsh
+            name: '@deepseek-ai/dsh-tool-pwsh'
+            disabled: !!js process.platform !== 'win32'
+          - id: tool-fs
+            name: '@deepseek-ai/dsh-tool-fs'
+          - id: tool-fs-search
+            name: '@deepseek-ai/dsh-tool-fs-search'
+            config:
+              sampleOverCapGlobResults: false
+          - id: tool-jobs
+            name: '@deepseek-ai/dsh-tool-jobs'
+          - id: skill-filesystem
+            name: '@deepseek-ai/dsh-skill-filesystem'
+          - id: tool-skill
+            name: '@deepseek-ai/dsh-tool-skill'
+          - id: command-goal
+            name: '@deepseek-ai/dsh-command-goal'
+          - id: tool-goal
+            name: '@deepseek-ai/dsh-tool-goal'
+          - *shared-planning
+          # The PTC delegation group: the two workflow rows are disabled so work runs
+          # through the programmatic tool-calling path rather than as model-driven calls.
+          - &shared-delegation-ptc
+            id: delegation
+            name: cordis:group
+            group: true
+            isolate:
+              workflowEngine: true
+            config:
+              - id: tool-subagent-control
+                name: '@deepseek-ai/dsh-tool-subagent-control'
+              - id: tool-subagent-list-agents
+                name: '@deepseek-ai/dsh-tool-subagent-control/list-agents'
+              - id: tool-subagent
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: spawn
+                  toolName: subagent
+                  modelSelectionSettings: true
+                  backgroundMode: continuable
+              - id: tool-subagent-fork
+                name: '@deepseek-ai/dsh-tool-subagent'
+                config:
+                  provider: fork
+                  toolName: subagent_fork
+                  backgroundMode: continuable
+              - id: tool-subagent-codex
+                name: '@deepseek-ai/dsh-tool-subagent'
+                disabled: true
+                config:
+                  provider: codex
+                  toolName: subagent_codex
+                  backgroundMode: one-shot
+                  maxDepth: provider-managed
+              - id: tool-subagent-claude-code
+                name: '@deepseek-ai/dsh-tool-subagent'
+                disabled: true
+                config:
+                  provider: claude-code
+                  toolName: subagent_claude_code
+                  backgroundMode: one-shot
+                  maxDepth: provider-managed
+              - id: workflow-ptc
+                name: '@deepseek-ai/dsh-workflow-ptc'
+                disabled: true
+                config:
+                  provider: spawn
+              - id: tool-workflow
+                name: '@deepseek-ai/dsh-tool-workflow'
+                disabled: true
+              - id: tool-ralph
+                name: '@deepseek-ai/dsh-tool-ralph'
+                disabled: true
+                config:
+                  subagentProvider: spawn
+                  maxRounds: 64
+          - id: tool-ask-user
+            name: '@deepseek-ai/dsh-tool-ask-user'
+          - id: tool-todo
+            name: '@deepseek-ai/dsh-tool-todo'
+            config:
+              allowParallelInProgress: true
+          - id: tool-web
+            name: '@deepseek-ai/dsh-tool-web'
+            config:
+              fetch: true
+              searchTimeoutMs: 60000
+          - id: tool-presentation
+            name: '@deepseek-ai/dsh-agent-tool-presentation'
+            config:
+              mode: ptc
+          - id: present
+            name: '@deepseek-ai/dsh-tool-present'
+          - id: tool-plugin-manager
+            name: '@deepseek-ai/dsh-plugin-manager/tools'
+            disabled: true
+          - id: board-guidance
+            name: 'dsh-superboard/preset'
+            config:
+              section: |-
+                # Research, reported on the board
+
+                You investigate and then report. The report belongs on the board, not in
+                chat: a conclusion a reader can check is worth more than a paragraph they
+                have to trust.
+
+                ## Working
+
+                - State the question before you answer it, and say what would settle it. If the
+                  question is ambiguous in a way that changes the work, ask before spending
+                  effort — this session runs programmatic tool calling, so a wrong direction
+                  costs real time.
+                - Prefer primary sources and the actual data. When you search, keep the URLs;
+                  when you run a computation, keep the code that produced the number.
+                - Distinguish what you measured from what you inferred from what you are
+                  assuming. Report all three, labelled.
+                - Say what you could not establish. A gap named is usable; a gap papered over
+                  is a defect.
+
+                ## Reporting on the board
+
+                Put the *answer* on the board first — a `heading` and a short `prose` with the
+                conclusion — then the evidence beneath it. Structure that works well:
+
+                - a `list` of findings, each one sentence and each one consequential
+                - a `code` block or a table for the numbers, so they can be checked
+                - a `uml` diagram when the finding is a relationship or a process rather than a
+                  value
+                - a `pdf-page` block when the source is a document, and `board_read` on it for
+                  the normalized rectangle of the passage you relied on
+
+                Link blocks with edges when the relationship between two findings is itself the
+                point. Keep the top of the board readable on its own: someone who reads only the
+                first screen should come away with the conclusion and how confident you are in
+                it.
+
+                ## On the board's mechanics
+
+                - `board_apply` is the only write path and it takes a `revision`; read before you
+                  write, and let a stale-revision error tell you the board moved.
+                - Layout is declared, never positioned. Choose a template for the container.
+                - You cannot see pixels. If a diagram will not render, `board_outline` reports
+                  why — read that rather than guessing at the source.
