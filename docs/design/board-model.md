@@ -501,7 +501,7 @@ interface OpBase {
 | **D6** | 幂等边界 | 折叠**不**做去重。同一个 op 批被模型重发两次，就会执行两次（第二次大概率因 slug 冲突或引用失效而失败，从而被 D3 丢弃）。真正的防重入由 `expected_revision` 负责。**不要**引入「按 op 内容哈希去重」——那会让两条合法的同内容 op（例如在两个位置各加一个同名块）行为不一致。 |
 | **D7** | 相同序列 ⇒ 相同结果 | 因为：id 生成是**折叠时确定性推导**的（不是随机数），见下。 |
 | **D8** | id 的确定性 | 元素 id **不由 `Math.random()` 生成**，而由 `sha256(sessionId + '\x1f' + callSeq + '\x1f' + opIndex + '\x1f' + kind)[0..5]` 取 6 位十六进制，前缀 `pg_/bl_/ed_/rg_/li_`。`callSeq` 是 `tool/call` 事件的 `seq`（log 位置，重放稳定）。若碰撞（同会话同前缀 6 hex 撞车），线性探测 `+1` 直到空闲。这把 D7 从「大概成立」变成**可证成立**。 |
-| **D9** | 浮点 | `at` 与 `AnchorAt.rect/point` 存**归一化或整数**；`rect/point` 由模型侧量化到 4 位小数（`Math.round(v * 1e4) / 1e4`），避免 `0.1+0.2` 这类跨引擎差异进入哈希。 |
+| **D9** | 浮点 | `AnchorAt.rect/point` 存**归一化或整数**；`rect/point` 由模型侧量化到 4 位小数（`Math.round(v * 1e4) / 1e4`），避免 `0.1+0.2` 这类跨引擎差异进入哈希。块自身不再有坐标（§4.4），所以这条只约束箭头端点 |
 | **D10** | 字符串 | 所有入模型字符串走 `NFC` 归一化后存储。**NFC 归一化必须在 op 应用时做，不是在哈希时做**，否则模型里的值与哈希的输入会漂移。 |
 | **D11** | 空批 | `ops: []` 合法但无变化：`revSeq` **不**递增，返回 `changed: false`。 |
 
@@ -1146,7 +1146,7 @@ gestures yet. Ask the user which part they mean instead of guessing.
 | **`columns`** | 页的内容明显成栏（对比、并列方案） | 由 `hints.bands` 或「连续的 `group` 块」切分栏；`cols` 缺省 = `min(块组数, 3)`；每栏宽度均分，栏内各自 `flow` | `cols`（可选）, `bands`（可选） |
 | **`grid`** | 一批同质卡片（风险清单、指标、对照表） | 列数 = `clamp(floor(容器宽 / minCardWidth), 1, cols ?? 4)`；行按顺序填充；卡高等高到该行最高卡 | `minCardWidth`（默认 280px）, `cols`（默认 4） |
 | **`tree`** | 有明确根与层次（依赖树、目录、故障树） | 根 = `root` 指定的块，缺省 = 该页第一条 `heading`；父子关系取「`contains`/`depends` 方向的边」；同层水平排布，层高固定；**边由引擎布线，用户不能拖** | `root`（可选）；页内至少有 1 条带方向的边，否则退化为 `flow` 并产生一条 `warning` |
-| **`canvas`** | 逃生舱：Agent 认为自动排版表达不了（时序图式布局、非规则相对位置） | 只用 `block.at` 的显式坐标；未给 `at` 的块按 `flow` 追加在内容包围盒右侧；网格吸附 8px | 每个要定位的块的 `at` |
+| **`canvas`** | 逃生舱：Agent 认为自动排版表达不了（时序图式布局、非规则相对位置） | 一块**自由摆放的画布**：容器内的空间留给「本质上就是空间性的」组件（今天只有箭头层，将来会有 Note 块）。**普通块不再有坐标**——见 §4.4 | 无。自由摆放是组件自身的能力，不是块的通用属性 |
 | **（预留）`matrix`** | 二维对照（方案 × 维度） | 不实现 | — |
 
 **约束：`tree` 与 `grid` 排他。** 同一页同时声明两者会导致几何无解，引擎取 `grid` 并出 warning。
@@ -1161,7 +1161,7 @@ gestures yet. Ask the user which part they mean instead of guessing.
 | 位置 | 块外（`block.regionId` 反向指针 + `region.blockIds`） | 块内（`group.children`） |
 | 读序影响 | **无**（块仍在 `page.blocks` 的原位置） | **无**（同上，children 只是引用） |
 | 视觉 | 背景色块 + 边框 + 标题，包住成员块（可跨栏） | 可折叠容器，渲染为带标题的盒子 |
-| 排版模板 | **可以挂模板**（`region.layout`） | 不挂模板，跟随所在页 |
+| 排版模板 | **不挂模板**（纯标注，与树正交） | **可以挂模板**，且可嵌套（`group.layout`） |
 | 典型用途 | 「这些问题都属于风险」「这两个方案是一组」——**语义簇** | 「这一节的细节折叠起来」——**阅读折叠** |
 
 **规则：** 要模板、要跨页、要语义 → `region`；要在页内折叠一段内容 → `group` 块。**一个块最多属于一个 region**，但可以是某个 group 的 child——两者不冲突，因为一个影响背景框，一个影响折叠。
@@ -1176,7 +1176,7 @@ gestures yet. Ask the user which part they mean instead of guessing.
 
 模板算出的坐标是**派生数据**，它：
 
-- 不进 `BoardModel`（§1.1 只有 `at` 这种「覆盖」才进模型）；
+- 不进 `BoardModel`（模板算出的几何从不进模型，块本身也不携带坐标——§4.4）；
 - 不进 `revHash`（§2.5）；
 - 不落 log。
 
@@ -1190,9 +1190,39 @@ gestures yet. Ask the user which part they mean instead of guessing.
 
 **为什么不做真响应式：** 因为 Agent 看不到像素（本设计的中心约束）。一个 Agent 无法感知、无法验证、无法针对其调整的响应式行为，只会制造「模型以为布局是 A、实际是 B」的静默错配。窄窗提示 + 分页把这件事变成 Agent 可以**看见并决定**的。
 
-### 4.4 `at` 的合法使用边界（防止模板被架空）
+### 4.4 坐标属于「空间性的组件」，不属于块（`at` 已删除）
 
-`block.at` 是例外，因此要有明确的门槛。**只在 `canvas` 模板的页里，`at` 才被采信。** 其他模板下 `at` 被记入 `warnings` 并忽略。这条让「模板优先」不是一句建议，而是可检查的规则：Agent 想精细控制，必须先显式把页切成 `canvas`，那是一个看得见的决定。
+**`block.at` 不再存在。** 它曾是「块可以离开流、被放到任意像素」的逃生舱，两次评审后删除，理由是：**坐标只对「本质上是空间性的东西」才有意义**，而一个 Markdown 块不是。
+
+它删掉的直接原因是一类静默失败：Agent 写下一个坐标，既无法看到渲染结果，也无法验证落点，于是「模型以为布局是 A、实际是 B」没有任何通道能暴露。`canvas` 模板因此改为**给空间性组件留出画布**，而不是给每个块发一根坐标笔。
+
+**今天的位置表达只有两种：**
+
+1. **容器声明布局** —— 页或 `group` 上的 `layout.template`（`flow` / `row` / `columns` / `grid` / `canvas`）。这是机制，覆盖绝大多数需求。
+2. **容器声明命名单元格** —— `grid` 模板下的 `params.areas`，用**子块引用**（slug / 旧别名 / id）而不是数字填格子，让「哪一块占哪一片」可读、可校验，且不限制容器只能有 9 个块：
+
+   ```
+   arch  arch  intro
+   tests .     intro
+   ```
+
+   行用 `/` 或换行分隔，`.` 是空位。**同一个名字占据的格子必须构成实心矩形**——L 形和不相连会被拒绝，而不是被猜一个包围盒。行列数由模板自身决定；与 `cols`、`minCardWidth` 互斥（同时给出是错误，不是「后者忽略前者」）。
+
+**将来的自由摆放属于组件，不属于块：** 箭头今天已经按端点的实际几何布线；一个 Note 块（特殊 Markdown）以后可以自带位置。它们共同点是——**位置是它们语义的一部分**，而不是覆盖在别人排版上的一层。
+
+**约束（保持不变）：模板优先。** Agent 声明结构与命名，引擎算几何；凡是需要 Agent 手写坐标才能表达的东西，都应该是「有一个组件天然如此」，而不是「给块加一个坐标字段」。
+
+---
+
+### 4.5 本节与实现的两处已知偏差
+
+本节表格写于两次排版评审之前。**以代码为准**；下面是已核实的偏差，不要照表格实现：
+
+| 表格里的 | 实现里的 |
+|---|---|
+| `tree` 模板、`region` 可挂模板（`region.layout`） | `tree` 已删除——**组里套组本身就是一棵树**，另设模板是同一件事的两种说法；改为新增 `row`。`region` 退化为**纯标注**（tone + label），不再有 `layout`；`group` 才是排版容器 |
+| `grid` 的 `minCardWidth` 默认 280px、`cols` 默认 4；`hints.bands` | 实现里默认 260px，且 `grid` 未给 `cols` 时用 `repeat(auto-fill, minmax(...))` 自适应；`bands`、`matrix`、`tree` 的 `root` 字段均未实现（`set_layout` 的 `root` 已删除） |
+
 
 ---
 
@@ -1330,13 +1360,13 @@ D  ⚠ 1 render failure
 |---|---|---|
 | Q1 `conversation.view` 第三 tab | board tab 用 `useProjection('board')` 读，与 host 唯一耦合是投影键 | §6.1 |
 | Q2 自建 DOM/SVG | 场景模型与渲染器分离：`BoardModel` 无任何像素字段；坐标是派生数据 | §1.1, §4.3 |
-| Q3 块流优先 | `Page.blocks` 是有序数组，`at` 是覆盖，`region` 是分组 | §1.2–1.6 |
+| Q3 块流优先 | `Page.blocks` 是有序数组，`region` 是标注，`group` 是排版容器 | §1.2–1.6 |
 | Q4 log 原生 | 折叠入口 = `tool/call` + `tool/result` 配对 | §2.7 |
 | Q-A 只有 Agent 写 | 唯一的写 op 集在 `board_apply`；客户端纯读；用户手势只产出 `board_feedback` | §3.2.3, §6.1 |
 | Q-B v1 范围 | UML 有类型无渲染；`diag` 通道今天就存在但恒空 | §1.8, §1.1 |
 | Q-C 多页 | `Page` 是一等对象，`add_page/rename_page/reorder_pages/delete_page` | §1.2, §2.2 |
 | Q-D 常驻大纲 + 拉取 | `systemPrompt.context()` 注入 §5.1 文本；细节走 `board_read` | §5.1 |
-| Q-E 模板优先 | 5 个模板；`at` 只在 `canvas` 页生效 | §4.1, §4.4 |
+| Q-E 模板优先 | 5 个模板（`flow`/`row`/`columns`/`grid`/`canvas`）；坐标已从块上删除，自由摆放只属于空间性组件 | §4.1, §4.4 |
 | Q-F 有向语义边 | `Edge{from,to,rel?,label?}`，方向即语义，`board_query` 按方向查 | §1.5, §3.2.4 |
 | Q-G slug 主地址 | 三层地址 + `uniqSlug` 含 alias + 边锚 id | §1.7 |
 | Q-H 结构化文本反馈 | `board_feedback` 返回 id/原文/关系；不返回位图 | §3.2.5 |

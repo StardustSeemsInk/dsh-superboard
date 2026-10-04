@@ -105,7 +105,7 @@ function applied(seq, callId, args) {
 
 /**
  * A board that exercises everything the renderer has a branch for: a nested container carrying its
- * own layout, a page layout, a region tone, a pinned block, and an edge.
+ * own layout, a page layout, a region tone, and an edge.
  *
  * Explicit slugs are used for the blocks that are referenced as children, because a slug derived
  * from a sentence is deliberately not guessable.
@@ -120,10 +120,10 @@ function richWire() {
         { op: 'add_block', page: 'main', kind: 'list', ordered: true, items: ['读取会话', '校验令牌'] },
         { op: 'add_block', page: 'main', kind: 'uml', source: 'flowchart TD\n  A-->B', diagram: 'flowchart' },
         { op: 'add_block', page: 'main', kind: 'image', src: 'docs/arch.png', alt: '架构图' },
-        { op: 'add_block', page: 'main', kind: 'prose', markdown: '被钉住的说明。', slug: 'pinned', at: { x: 40, y: 80, width: 220 } },
+        { op: 'add_block', page: 'main', kind: 'prose', markdown: '附注说明。', slug: 'notes' },
         // The inner container first: a group can only adopt what already exists.
         { op: 'add_block', page: 'main', kind: 'group', title: '内层', slug: 'inner', layout: { template: 'row' }, children: ['arch', 'intro'] },
-        { op: 'add_block', page: 'main', kind: 'group', title: '外层', slug: 'outer', layout: { template: 'columns', params: { cols: 2 } }, children: ['inner', 'pinned'] },
+        { op: 'add_block', page: 'main', kind: 'group', title: '外层', slug: 'outer', layout: { template: 'columns', params: { cols: 2 } }, children: ['inner', 'notes'] },
         { op: 'set_layout', scope: 'main', template: 'grid', params: { minCardWidth: 240 } },
         { op: 'set_region', region: 'focus', blockIds: ['arch'], label: '重点', tone: 'warn' },
         { op: 'add_edge', from: 'arch', to: 'intro', rel: 'explains', label: '说明' },
@@ -292,7 +292,7 @@ test('the rendered board shows every block kind and both containers', () => {
   assert.equal(textOf(tree).filter((part) => part === '架构总览').length, 1)
 })
 
-test('the container, tone and pinned-position classes all reach the output', () => {
+test('the container and tone classes all reach the output', () => {
   const found = classes(render(client.BoardView(props())))
 
   // The page layout.
@@ -303,9 +303,10 @@ test('the container, tone and pinned-position classes all reach the output', () 
   assert.ok(found.includes('sb-groupBox'))
   // A region is annotation: it colours a block without moving it.
   assert.ok(found.includes('sb-tone-warn'), 'a region tone must reach the card')
-  // `at` is the escape hatch, and a positioned child makes the container an anchor.
-  assert.ok(found.includes('sb-anchored'))
-  assert.ok(found.includes('sb-pinned'))
+  // Nothing generic is positioned any more: pixel freedom belongs to spatial components, and the
+  // classes that carried it are gone rather than merely unused.
+  assert.ok(!found.includes('sb-pinned'), 'block-level positioning was deleted')
+  assert.ok(!found.includes('sb-anchored'), 'the anchor container existed only for block-level at')
 })
 
 test('the reading column renders the dialogue from the chat snapshot', () => {

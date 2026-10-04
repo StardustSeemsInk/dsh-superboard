@@ -18,8 +18,14 @@
  * template vocabulary changed (`tree` out — nested groups *are* a tree; `row` in). Bumping is what
  * makes an old checkpoint get re-folded from the log rather than parsed into a shape it no longer
  * matches, and re-folding is exactly what the log-native design buys.
+ *
+ * Bumped to 3 by the areas grill, which **deleted** the block-level `at`. Adding an optional field
+ * would not need a bump — an old checkpoint simply lacks it — but removing one does: a stored `at`
+ * would still parse into a shape nothing reads any more, so those boards have to be re-folded. The
+ * reverse case matters just as much: an `at` the fold used to produce can no longer be produced, so
+ * any revision computed from one is stale.
  */
-export const BOARD_MODEL_VERSION = 2
+export const BOARD_MODEL_VERSION = 3
 
 /** Block kinds, in the order `board-model.md` §1.3 lists them. */
 export const BLOCK_KINDS = Object.freeze([
@@ -344,12 +350,6 @@ export function encodeModelForHash(model) {
 function encodeBlock(block) {
   const parts = [block.id, FIELD_SEP, block.kind, FIELD_SEP, block.slug, FIELD_SEP]
   parts.push(block.regionId ?? '', FIELD_SEP)
-  parts.push(
-    block.at === undefined
-      ? ''
-      : `${Math.trunc(block.at.x)},${Math.trunc(block.at.y)},${Math.trunc(block.at.w ?? 0)},${Math.trunc(block.at.h ?? 0)}`,
-    FIELD_SEP,
-  )
 
   switch (block.kind) {
     case 'heading':
@@ -462,6 +462,13 @@ function encodeLayout(layout) {
  *
  * The edge's own fields are encoded by the caller; only the endpoint shape is produced here.
  *
+ * The `switch` is deliberately exhaustive with no `default`. This function used to fall through to
+ * `${blockId}@unknown`, and that branch was a scar: `validateAnchor` normalised the anchor's `at`
+ * with the block-position helper, which dropped `kind`, so *every* located anchor reached the
+ * default and hashed identically — an arrow could be re-anchored without the revision moving. A
+ * silent fallback would hide that class of bug again, so an unrecognised kind now throws where the
+ * invariant is broken instead of quietly producing a wrong hash.
+ *
  * @param anchor - the anchor to encode.
  * @returns the encoded fragment.
  */
@@ -486,7 +493,7 @@ export function encodeAnchor(anchor) {
     case 'point':
       return `${anchor.blockId}@point:${quantise(at.x)},${quantise(at.y)}`
     default:
-      return `${anchor.blockId}@unknown`
+      throw new Error(`encodeAnchor: unknown anchor kind ${JSON.stringify(at.kind)}`)
   }
 }
 

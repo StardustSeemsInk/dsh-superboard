@@ -51,9 +51,6 @@ const baseBlock = {
   alias: z.array(z.string()),
   anchors: z.array(anchorAt),
   regionId: z.string().optional(),
-  at: z
-    .object({ x: z.number(), y: z.number(), w: z.number().optional(), h: z.number().optional() })
-    .optional(),
   createdAtRev: z.string(),
   updatedAtRev: z.string(),
 }

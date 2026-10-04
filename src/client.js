@@ -50,16 +50,16 @@ window.__ModuleLoader__.load({
       '.sb-page{font:inherit;font-size:12px;line-height:18px;color:var(--dsw-alias-label-secondary);cursor:pointer;background:none;border:none;border-bottom:2px solid transparent;padding:4px 8px;}',
       '.sb-pageOn{color:var(--dsw-alias-brand-primary);border-bottom-color:var(--dsw-alias-brand-primary);font-weight:600;}',
       '.sb-pageCount{color:var(--dsw-alias-label-tertiary);font-size:11px;margin-left:4px;}',
-      '.sb-canvas{position:relative;flex:1;min-height:0;overflow:auto;padding:2px;}',      '.sb-flow{display:flex;flex-direction:column;gap:12px;}',
+      '.sb-canvas{position:relative;flex:1;min-height:0;overflow:auto;padding:2px;}',
+      '.sb-flow{display:flex;flex-direction:column;gap:12px;}',
       '.sb-grid{display:grid;gap:12px;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));align-items:start;}',
       '.sb-columns{display:grid;gap:12px;align-items:start;}',
       '.sb-row{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-start;}',
       '.sb-row>.sb-card{flex:1 1 220px;min-width:0;}',
-      // A container whose children are pinned needs to be a containing block itself.
-      '.sb-anchored{position:relative;}',
+      // The free-placement template. Nothing generic is positioned any more — pixel coordinates
+      // belong to things whose nature is spatial, so this reserves a containing block for the
+      // arrow layer and for whatever spatial block kind joins it.
       '.sb-absBox{position:relative;min-height:120px;}',
-      // A pinned block leaves the flow entirely, so it never widens its container.
-      '.sb-pinned{position:absolute;}',
       '.sb-groupBox{display:flex;flex-direction:column;gap:8px;border:1px solid var(--dsw-alias-border-l2);border-radius:10px;padding:10px;min-width:0;}',
       '.sb-groupHead{display:flex;align-items:center;gap:8px;flex-wrap:wrap;}',
       '.sb-groupTitle{font-size:12px;font-weight:600;line-height:18px;}',
@@ -211,12 +211,22 @@ window.__ModuleLoader__.load({
       }
 
       if (layout?.template === 'grid') {
-        // auto-fill with a minimum card width is responsive by construction: the browser fits as
-        // many as the current width allows, so no breakpoint is needed or wanted.
-        const requested = Number(layout.params?.minCardWidth ?? 260)
-        const safe = Number.isFinite(requested) ? requested : 260
-        const min = Math.max(120, Math.min(Math.trunc(safe) || 260, 640))
-        style.gridTemplateColumns = `repeat(auto-fill, minmax(${min}px, 1fr))`
+        // `areas` fixes the column count; the host resolves the template into `cols` on the way out,
+        // so the named placement and the grid's own width can never disagree. Without it, auto-fill
+        // with a minimum card width is responsive by construction — the browser fits as many as the
+        // current width allows, so no breakpoint is needed or wanted.
+        const fixed = Number(layout.params?.cols)
+        if (layout.params?.cols !== undefined && Number.isFinite(fixed)) {
+          style.gridTemplateColumns = `repeat(${Math.max(1, Math.trunc(fixed) || 1)}, minmax(0, 1fr))`
+          // A named cell is a slot: a card spanning two rows fills them rather than sitting at the
+          // top of the first one, which is what `.sb-grid`'s `align-items:start` would do.
+          style.alignItems = 'stretch'
+        } else {
+          const requested = Number(layout.params?.minCardWidth ?? 260)
+          const safe = Number.isFinite(requested) ? requested : 260
+          const min = Math.max(120, Math.min(Math.trunc(safe) || 260, 640))
+          style.gridTemplateColumns = `repeat(auto-fill, minmax(${min}px, 1fr))`
+        }
       }
 
       return Object.keys(style).length === 0 ? undefined : style
@@ -243,27 +253,23 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * Turn an explicit position into a style.
+     * Turn a resolved grid cell into a style.
      *
-     * The escape hatch, not the mechanism. A block with `at` leaves the flow and is placed against
-     * its container, which is the only way to say "put this annotation *here*" — and it is also the
-     * one thing the Agent cannot check afterwards, so it stays deliberately awkward to reach for.
+     * `areas` is resolved on the host, into explicit `grid-row` / `grid-column` line spans. The
+     * client never sees the template, only the answer, so a CJK slug needs no escaping and an
+     * invalid template cannot reach the browser — where a bad `grid-template-areas` declaration
+     * would be dropped in silence and collapse the layout with nothing to report.
      *
-     * @param at - the position, or none.
-     * @returns a style object, or undefined when the block flows normally.
+     * @param cell - `{row, col, rowSpan, colSpan}`, 1-based, or none.
+     * @returns a style object, or undefined when the block flows into the next free cell.
      */
-    function atStyle(at) {
-      if (at === null || at === undefined || typeof at !== 'object') return undefined
-      const x = Number(at.x)
-      const y = Number(at.y)
-      const style = {
-        position: 'absolute',
-        left: `${Math.trunc(Number.isFinite(x) ? x : 0)}px`,
-        top: `${Math.trunc(Number.isFinite(y) ? y : 0)}px`,
+    function cellStyle(cell) {
+      if (cell === null || cell === undefined || typeof cell !== 'object') return undefined
+      const span = (value) => Math.max(1, Math.trunc(Number(value) || 1))
+      return {
+        gridRow: `${Math.max(1, Math.trunc(Number(cell.row) || 1))} / span ${span(cell.rowSpan)}`,
+        gridColumn: `${Math.max(1, Math.trunc(Number(cell.col) || 1))} / span ${span(cell.colSpan)}`,
       }
-      if (Number.isFinite(Number(at.w))) style.width = `${Math.trunc(Number(at.w))}px`
-      if (Number.isFinite(Number(at.h))) style.height = `${Math.trunc(Number(at.h))}px`
-      return style
     }
 
     // -----------------------------------------------------------------------
@@ -1648,16 +1654,16 @@ window.__ModuleLoader__.load({
     }
 
     /** One block, with its selection state. */
-    function Block({ block, selected, region, at }) {
+    function Block({ block, selected, region, cell }) {
       // A region is annotation, so it tints the block and adds its label — it never moves anything.
       const tone = region?.tone === undefined || region.tone === 'neutral' ? '' : ` sb-tone-${region.tone}`
       return h(
         'article',
         {
-          className: `sb-card${selected ? ' sb-cardSel' : ''}${tone}${at === undefined ? '' : ' sb-pinned'}`,
-          // `at` is the escape hatch: absolute, and layered on top of whatever the container's
-          // layout computed. It is spread last so it wins, which is the point of an override.
-          style: at,
+          className: `sb-card${selected ? ' sb-cardSel' : ''}${tone}`,
+          // A named cell is placement by the container's own template. It is spread last so it wins
+          // over nothing in particular — the card carries no geometry of its own by design.
+          style: cellStyle(cell),
           'data-block-id': block.id,
           'data-block-slug': block.slug,
         },
@@ -1685,36 +1691,36 @@ window.__ModuleLoader__.load({
      */
     function BlockTree({ blocks, layout, width, selected, byId, regions }) {
       const roots = rootBlocksOf(blocks)
-      // Any absolutely positioned child needs a positioned ancestor, or `at` would be measured
-      // against the page instead of against the container it was written for.
-      const needsAnchor = roots.some((block) => block.at !== undefined)
+      const cells = layout?.params?.cells
       return h(
         'div',
         {
-          className: `${layoutClass(layout)}${needsAnchor ? ' sb-anchored' : ''}`,
+          className: layoutClass(layout),
           style: layoutStyle(layout, width),
         },
-        roots.map((block) => h(BlockNode, { key: block.id, block, width, selected, byId, regions })),
+        roots.map((block) =>
+          h(BlockNode, { key: block.id, block, width, selected, byId, regions, cell: cells?.[block.id] }),
+        ),
       )
     }
 
     /** One node of the tree: a container, or a leaf block. */
-    function BlockNode({ block, width, selected, byId, regions }) {
-      const at = atStyle(block.at)
+    function BlockNode({ block, width, selected, byId, regions, cell }) {
       const region = block.regionId === undefined ? undefined : regions.get(block.regionId)
 
-      if (block.kind !== 'group') return h(Block, { block, selected: selected.has(block.id), region, at })
+      if (block.kind !== 'group') return h(Block, { block, selected: selected.has(block.id), region, cell })
 
       const children = (block.children ?? []).map((id) => byId.get(id)).filter((child) => child !== undefined)
-      const innerNeedsAnchor = children.some((child) => child.at !== undefined)
+      const innerCells = block.layout?.params?.cells
       return h(
         'section',
         {
           // Exactly one element per group carries the layout: the body below, which is the one
           // that arranges the children. The box stays a plain flex column so its two rows — the
           // head and the body — behave the same whatever the children are arranged with.
-          className: `sb-groupBox${at === undefined ? '' : ' sb-pinned'}`,
-          style: at,
+          className: 'sb-groupBox',
+          // A group is itself a child of something, so the cell it was given belongs on the box.
+          style: cellStyle(cell),
           'data-block-id': block.id,
           'data-block-slug': block.slug,
           'data-superboard-group': '',
@@ -1731,16 +1737,25 @@ window.__ModuleLoader__.load({
           h('span', { className: 'sb-kind' }, `${children.length} 项`),
           region?.label !== undefined && h('span', { className: `sb-regionTag sb-tone-${region.tone ?? 'neutral'}` }, region.label),
         ),
-        // A group with no layout of its own still needs to arrange its children somehow, and
-        // `sb-anchored` is what makes `at` on a grandchild measure against this box rather than
-        // against the page.
+        // A group with no layout of its own still needs to arrange its children somehow, which is
+        // what the default `flow` class is for.
         h(
           'div',
           {
-            className: `sb-groupBody ${layoutClass(block.layout)}${innerNeedsAnchor ? ' sb-anchored' : ''}`,
+            className: `sb-groupBody ${layoutClass(block.layout)}`,
             style: layoutStyle(block.layout, width),
           },
-          children.map((child) => h(BlockNode, { key: child.id, block: child, width, selected, byId, regions })),
+          children.map((child) =>
+            h(BlockNode, {
+              key: child.id,
+              block: child,
+              width,
+              selected,
+              byId,
+              regions,
+              cell: innerCells?.[child.id],
+            }),
+          ),
         ),
       )
     }
@@ -1857,10 +1872,10 @@ window.__ModuleLoader__.load({
       routeBetween,
       layoutClass,
       layoutStyle,
-      // The tree, the escape hatch and the tree flattening. DOM-free, so the rules that decide
-      // *what sits at the top level* and *where a pinned block lands* are both checked.
+      // The tree and the tree flattening. DOM-free, so the rules that decide *what sits at the top
+      // level* and *which cell the host resolved for a child* are both checked.
       rootBlocksOf,
-      atStyle,
+      cellStyle,
       BlockTree,
       // Selection geometry and the feedback payload. Also DOM-free, so the parts that decide
       // *which* blocks a marquee means and *what text* the Agent receives are both checked.

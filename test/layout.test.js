@@ -9,9 +9,9 @@
  *
  * None of this was covered before the change — the old code forbade nesting outright and the suite
  * never exercised it — so these tests exist as much to pin the new rules as to prove the old ones
- * gone. The whole tree is also checked end to end: a nested container and an `at` offset both have
- * to survive the wire projection, because a field the fold produces but the wire schema omits takes
- * the board view down at runtime with every unit test still green.
+ * gone. The whole tree is also checked end to end: a nested container, its layout and a region tone
+ * all have to survive the wire projection, because a field the fold produces but the wire schema
+ * omits takes the board view down at runtime with every unit test still green.
  *
  * Run with `node --test`.
  */
@@ -69,8 +69,11 @@ test('the vocabulary is the CSS-shaped set, with `row` in and `tree` out', () =>
 })
 
 test('the model version moved, which is what forces an old checkpoint to re-fold', () => {
-  assert.equal(BOARD_MODEL_VERSION, 2)
-  assert.equal(emptyBoardDoc(SESSION).modelVersion, 2)
+  // 3 because the areas grill **deleted** the block-level `at`: a stored position would still parse
+  // into a shape nothing reads, so those boards have to be re-folded from the log rather than
+  // trusted. Removing a field is what the version exists for; adding one would not have needed it.
+  assert.equal(BOARD_MODEL_VERSION, 3)
+  assert.equal(emptyBoardDoc(SESSION).modelVersion, 3)
 })
 
 // ---------------------------------------------------------------------------
@@ -293,29 +296,20 @@ test('deleting a region keeps its blocks and clears their tone', () => {
 })
 
 // ---------------------------------------------------------------------------
-// Coordinates are an escape hatch, not a layout
+// A block carries no coordinates. Pixel freedom belongs to spatial components.
 // ---------------------------------------------------------------------------
 
-test('an explicit position round-trips, including its size', () => {
+test('a block position is no longer a field the fold will accept', () => {
+  // Not a silent drop: `at` was deleted from the model, so nothing should put one back. This pins
+  // that the removal is real rather than that a stale op is quietly ignored.
   const state = apply(10, [
-    { op: 'add_block', page: 'main', kind: 'prose', markdown: '绝对定位', at: { x: 40, y: 120, w: 320, h: 180 } },
+    { op: 'add_block', page: 'main', kind: 'prose', markdown: '绝对定位', at: { x: 40, y: 120 } },
   ])
   assert.equal(state.lastOpError, undefined)
-  assert.deepEqual(findByKind(state, 'prose')[0].at, { x: 40, y: 120, w: 320, h: 180 })
+  assert.equal('at' in findByKind(state, 'prose')[0], false)
 })
 
-test('a position with no size is legal — the block keeps its measured height', () => {
-  const state = apply(10, [{ op: 'add_block', page: 'main', kind: 'prose', markdown: 'x', at: { x: 10, y: 20 } }])
-  assert.deepEqual(findByKind(state, 'prose')[0].at, { x: 10, y: 20 })
-})
-
-test('changing a position changes the revision, because it is content', () => {
-  const first = apply(10, [{ op: 'add_block', page: 'main', kind: 'prose', markdown: 'x' }])
-  const moved = apply(10, [{ op: 'add_block', page: 'main', kind: 'prose', markdown: 'x', at: { x: 0, y: 0 } }])
-  assert.notEqual(first.model.rev, moved.model.rev)
-})
-
-test('changing a container layout changes the revision too', () => {
+test('changing a container layout changes the revision', () => {
   const base = [
     heading('甲'),
     { op: 'add_block', page: 'main', kind: 'group', title: '簇', children: ['甲'] },
@@ -326,12 +320,12 @@ test('changing a container layout changes the revision too', () => {
 })
 
 // ---------------------------------------------------------------------------
-// The tree and the escape hatch both reach the client
+// The tree reaches the client intact
 // ---------------------------------------------------------------------------
 
-test('a nested container, its layout, a region tone and an offset all survive the wire schema', () => {
+test('a nested container, its layout and a region tone all survive the wire schema', () => {
   const state = apply(10, [
-    { op: 'add_block', page: 'main', kind: 'prose', markdown: '自由定位', at: { x: 12, y: 34 } },
+    { op: 'add_block', page: 'main', kind: 'prose', markdown: '自由定位' },
     heading('甲'),
     { op: 'add_block', page: 'main', kind: 'group', title: '内层', children: ['甲'], layout: { template: 'row' } },
     { op: 'add_block', page: 'main', kind: 'group', title: '外层', children: ['内层'], layout: { template: 'columns', params: { cols: 3 } } },
@@ -350,7 +344,7 @@ test('a nested container, its layout, a region tone and an offset all survive th
   assert.equal(outer.layout.params.cols, 3)
   assert.equal(inner.layout.template, 'row')
   assert.equal(wire.model.regions[0].tone, 'warn')
-  assert.equal(wire.model.pages[0].blocks.find((block) => block.kind === 'prose').at.x, 12)
+  assert.equal(wire.model.pages[0].blocks.find((block) => block.kind === 'prose').regionId, undefined)
 })
 
 test('the whole tree folds identically twice, nested containers included', () => {

@@ -579,7 +579,6 @@ function buildBlock(op, context, model, page, id) {
   if (typeof op.region === 'string') {
     base.regionId = resolveElement(model, op.region, 'region').element.id
   }
-  if (op.at !== undefined) base.at = normaliseAt(op.at)
 
   switch (kind) {
     case 'heading':
@@ -899,7 +898,7 @@ function validateAnchor(model, anchor, which) {
         `${JSON.stringify(target.slug)} is ${target.kind}`,
     )
   }
-  return { blockId: target.id, at: normaliseAt(at) }
+  return { blockId: target.id, at: normaliseAnchorAt(at, which) }
 }
 
 /** `add_edge` — rejects an exact duplicate so the Agent cannot draw the same arrow twice. */
@@ -1288,13 +1287,90 @@ function normaliseChildren(value, page, selfId) {
   })
 }
 
-/** Normalise an explicit absolute position, which is the exception rather than the rule. */
-function normaliseAt(value) {
-  if (typeof value !== 'object' || value === null) throw new BoardOpError('"at" must be an object')
-  const at = { x: Math.trunc(Number(value.x) || 0), y: Math.trunc(Number(value.y) || 0) }
-  if (value.w !== undefined) at.w = Math.trunc(Number(value.w) || 0)
-  if (value.h !== undefined) at.h = Math.trunc(Number(value.h) || 0)
-  return at
+/** The heading/prose/code fields an anchor may name. */
+const ANCHOR_FIELDS = ['title', 'code', 'caption', 'filename']
+
+/**
+ * Require a whole number, which is what every numeric anchor coordinate is.
+ *
+ * Anchors do not get the block-position default of zero. A half-formed `{ kind: 'lines', from: 1 }`
+ * is an Agent that meant a range and lost half of it, and quietly anchoring it at line 0 would
+ * point the arrow somewhere nobody asked for while reporting success.
+ *
+ * @param value - the candidate number.
+ * @param what - the dotted path, for the error message.
+ * @returns the integer.
+ */
+function requireInt(value, what) {
+  const n = Number(value)
+  if (value === undefined || value === null || !Number.isFinite(n)) {
+    throw new BoardOpError(`${what} must be a number, got ${JSON.stringify(value)}`)
+  }
+  return Math.trunc(n)
+}
+
+/**
+ * Normalise an anchor's in-block location.
+ *
+ * An anchor's `at` is a discriminated union answering *which part of the block* the arrow points
+ * at. It is not a block position, even though both are spelled `at`, and it used to be normalised
+ * with the block-position helper — which reads `x`/`y`/`w`/`h` and returns only those, so every
+ * located anchor came out of the fold as `{ x: 0, y: 0 }`. Two things followed, both silent:
+ * `encodeAnchor` fell through to `@unknown`, so re-anchoring an arrow never moved the revision and
+ * the Agent's own retry looked like a no-op; and `boardWireSchema` rejected the edge, which takes
+ * the whole board view down. Rebuilding the union member explicitly is what keeps the kind.
+ *
+ * @param value - the anchor's `at`, already checked against the kinds the target block allows.
+ * @param which - `from` or `to`, for the error message.
+ * @returns the normalised union member.
+ */
+function normaliseAnchorAt(value, which) {
+  switch (value.kind) {
+    case 'field':
+      return { kind: 'field', field: requireOneOf(value.field, ANCHOR_FIELDS, `${which}.at.field`) }
+    case 'item':
+      return { kind: 'item', itemId: requireText(value.itemId, `${which}.at.itemId`) }
+    case 'lines':
+      return {
+        kind: 'lines',
+        from: requireInt(value.from, `${which}.at.from`),
+        to: requireInt(value.to, `${which}.at.to`),
+      }
+    case 'text': {
+      const text = {
+        kind: 'text',
+        start: requireInt(value.start, `${which}.at.start`),
+        end: requireInt(value.end, `${which}.at.end`),
+      }
+      if (value.quote !== undefined) text.quote = requireText(value.quote, `${which}.at.quote`)
+      return text
+    }
+    case 'child':
+      return { kind: 'child', childId: requireText(value.childId, `${which}.at.childId`) }
+    case 'node':
+      return { kind: 'node', key: requireText(value.key, `${which}.at.key`) }
+    case 'rect':
+      return {
+        kind: 'rect',
+        x: quantise(value.x),
+        y: quantise(value.y),
+        w: quantise(value.w),
+        h: quantise(value.h),
+      }
+    case 'point':
+      return { kind: 'point', x: quantise(value.x), y: quantise(value.y) }
+    default:
+      // Unreachable: validateAnchor rejects an unknown kind against its `allowed` table first.
+      throw new BoardOpError(`${which}.at.kind ${JSON.stringify(value.kind)} has no normaliser`)
+  }
+}
+
+/** Require a non-empty string, which is what every identifying anchor field is. */
+function requireText(value, what) {
+  if (typeof value !== 'string' || value.length === 0) {
+    throw new BoardOpError(`${what} must be a non-empty string, got ${JSON.stringify(value)}`)
+  }
+  return value
 }
 
 /** Normalise a layout spec (Q-E: the Agent names a template, the engine does the geometry). */

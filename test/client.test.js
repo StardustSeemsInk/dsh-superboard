@@ -283,28 +283,25 @@ test('a page of loose blocks is all roots', () => {
   assert.equal(client.rootBlocksOf([]).length, 0)
 })
 
-test('a pinned block becomes absolute, and its size is optional', () => {
-  const style = client.atStyle({ x: 40, y: 120, w: 320, h: 180 })
-  assert.equal(style.position, 'absolute')
-  assert.equal(style.left, '40px')
-  assert.equal(style.top, '120px')
-  assert.equal(style.width, '320px')
-  assert.equal(style.height, '180px')
-
-  // Height omitted means "as tall as the content", which is the common case for an annotation.
-  const loose = client.atStyle({ x: 10, y: 20 })
-  assert.equal(loose.width, undefined)
-  assert.equal(loose.height, undefined)
+test('a named cell becomes a grid line span', () => {
+  const style = client.cellStyle({ row: 2, col: 3, rowSpan: 1, colSpan: 2 })
+  assert.equal(style.gridRow, '2 / span 1')
+  assert.equal(style.gridColumn, '3 / span 2')
+  // A cell is placement, never position: the card carries no geometry of its own.
+  assert.equal(style.position, undefined)
+  assert.equal(style.left, undefined)
 })
 
-test('a malformed position is normalised rather than producing a NaN style', () => {
+test('a malformed cell degrades to the first cell rather than producing a NaN style', () => {
   // A NaN in a style attribute silently does nothing, which would look like the board ignoring the
   // Agent — the worst possible failure, because nothing reports it.
-  const style = client.atStyle({ x: 'abc', y: null })
-  assert.equal(style.left, '0px')
-  assert.equal(style.top, '0px')
-  assert.equal(client.atStyle(undefined), undefined)
-  assert.equal(client.atStyle(null), undefined)
+  const style = client.cellStyle({ row: 'abc', col: null })
+  assert.equal(style.gridRow, '1 / span 1')
+  assert.equal(style.gridColumn, '1 / span 1')
+  assert.equal(client.cellStyle(undefined), undefined)
+  assert.equal(client.cellStyle(null), undefined)
+  // A zero or negative span is not a span, so it clamps up rather than collapsing the card.
+  assert.equal(client.cellStyle({ row: 1, col: 1, rowSpan: 0, colSpan: -3 }).gridRow, '1 / span 1')
 })
 
 test('an absurd column request is clamped rather than trusted', () => {
