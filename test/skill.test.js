@@ -164,6 +164,36 @@ test('the skill describes masonry as the waterfall it is, not as a grid', async 
   assert.match(skill.content, /column by column/i)
 })
 
+test('the skill says a group carries its own layout, and that groups nest', async () => {
+  const { skill } = await load('board-layout')
+  // The gap this pins: the renderer has always let a group arrange its children with the same six
+  // templates a page takes, and let those groups nest (`src/client.js:3196-3201` gives the body its
+  // layout, `:3202-3213` recurses). Nothing in the skill said so, so an Agent could reasonably
+  // conclude that arrangement is a page-level idea only — and a card cannot then hold two shapes.
+  assert.match(skill.content, /A group is a layout container in its own right/)
+  assert.match(skill.content, /groups nest/)
+  assert.match(skill.content, /nothing is inherited downward/i)
+  // And the reason this was invisible for so long, which is the part that stops a false negative:
+  // a template over one child renders identically to no template at all.
+  assert.match(skill.content, /A template over a single child is invisible/)
+})
+
+test('the skill warns that `columns` clamps against the page, not the group', async () => {
+  const { skill } = await load('board-layout')
+  // `layoutStyle` is handed the canvas width for every container (`src/client.js:281`), so a narrow
+  // group still computes its column count from the whole page. `grid`/`masonry` delegate to CSS and
+  // are unaffected — the asymmetry is exactly what an Agent cannot guess.
+  assert.match(skill.content, /clamped against the \*\*page's\*\* width/)
+  assert.match(skill.content, /auto-fill/)
+})
+
+test('the skill says `areas` works on a group, not only on a page', async () => {
+  const { skill } = await load('board-layout')
+  // `applyAreas` resolves named cells for every container as it folds (`src/model.js:674-680`), so
+  // a spanning cell inside one card is available and costs the Agent nothing extra.
+  assert.match(skill.content, /`areas` works on a `group` just as it does on a page/)
+})
+
 // ---------------------------------------------------------------------------
 // The plugin surface
 // ---------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 ---
 name: board-layout
-description: How a board actually renders — card height, row-major filling, when a heading and its list become two separate cards, what a group buys you, and every field whose visual effect is not what its name suggests. Read this before writing or rearranging more than a couple of blocks.
+description: How a board actually renders — card height, row-major filling, when a heading and its list become two separate cards, what a group buys you and how groups nest, and every field whose visual effect is not what its name suggests. Read this before writing or rearranging more than a couple of blocks.
 whenToUse: Before laying out a board, choosing a layout template, or reorganising a page whose arrangement looks wrong.
 ---
 
@@ -37,6 +37,21 @@ add_block group children ["keep", "keep-list"] layout { template: "flow" }
 A `group` is the only thing that draws one box around several blocks. Use it for every heading +
 content pair, and for any set of blocks that is one unit of meaning.
 
+**A group is a layout container in its own right, and groups nest.** It carries its own `layout`
+with the same six templates a page takes, and reads the same `params` — `cols`, `minCardWidth`,
+`areas`, `gap`. A group with no `layout` gets `flow`.
+
+So the arrangement is **per level, and nothing is inherited downward**: an outer group arranges its
+children, and any child that is itself a group arranges its own children with its own template. A
+two-column card inside a one-column page is a group with `layout: { template: "columns", params:
+{ cols: 2 } }`; a row of chips inside that card is a nested group with `layout: { template: "row"
+}`. This is the only way to get more than one arrangement inside a single card.
+
+**Do not read a tidy board as proof that this works, and do not read an untidy one as proof that it
+does not.** A template over a single child is invisible: `flow`, `row`, `columns` and `grid` all
+render one card the same way. A board where every group holds one block looks identical whether the
+engine supports group layouts or ignores them entirely.
+
 ## Templates, and what each one actually does
 
 | Template | What it renders as | Fields it reads |
@@ -72,6 +87,10 @@ areas: ["nav body body", "nav side foot"]
 Rows are separated by newlines or `/`. Every row needs the same number of cells, and one name must
 fill a solid rectangle. A cell is a child reference (slug, id, or retired alias).
 
+`areas` works on a `group` just as it does on a page — a group's `areas` name that group's own
+children, which is how you get a spanning cell *inside* one card. The host resolves them for every
+container as it folds, so the group does not need anything the page does not.
+
 `areas` replaces `cols` and `minCardWidth` — passing both is refused rather than reconciled.
 
 **Name every child you care about.** Unnamed children still flow into whatever cells are left, in
@@ -88,6 +107,12 @@ If you want equal heights, use `areas`; otherwise heights are natural.
 `cols: 2` and six blocks you get three rows of two, not three blocks stacked in each of two
 columns. It also collapses to a single column on a narrow pane — the canvas width is not something
 you can see, so never rely on a particular column count.
+
+Its column count is clamped against the **page's** width, not against the box the group finally
+lands in. A `columns` group sitting inside a narrow card is still computed from the whole page, so
+it can ask for three columns in a space that fits one. `grid` and `masonry` do not have this
+behaviour: given `minCardWidth` they hand `auto-fill` / `column-width` to the browser, which
+measures the element it is actually filling.
 
 **`canvas` is not a free canvas.** Nothing on the board has coordinates. `canvas` is a plain box
 for sectioning; its children stack vertically with the normal spacing and nothing is positioned.
