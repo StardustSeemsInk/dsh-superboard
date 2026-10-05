@@ -1,10 +1,14 @@
 # DSH Plugin API — research report
 
-> **先读哪一份。** 这份是**全量调研**（728 行）：slot 目录、服务、事件，附证据。
-> 如果要的是「必须遵守什么」，读 [`dsh-plugin-contract.md`](./dsh-plugin-contract.md)——它是这份的**浓缩版**，
-> 逐条带行号，而且是 [`../design/build-plan.md`](../design/build-plan.md) 点名的前置文档。
-> 两份内容重叠是**有意**的：浓缩版负责被遵守，这份负责被查证。改任何一边时请同步另一边，或者
-> 至少确认重叠的那几条没有分叉。
+> **先读哪一份。** 这份是**全量调研**（728 行）：slot 目录、服务、事件，附证据表。如果要的是
+> 「必须遵守什么」，读 [`dsh-plugin-contract.md`](./dsh-plugin-contract.md)——它是
+> [`../design/build-plan.md`](../design/build-plan.md) 点名的前置文档。
+>
+> **状态（2026-10-05）：这是一份冻结的调研记录，不再与契约同步维护。** 它的价值在**目录广度**
+> （90 个 slot key、8 个 client service、约 60 个 host service、约 78 个 host event、403 个 `--dsw-*`
+> token，以及全部证据表），而**结论**归 `dsh-plugin-contract.md` 所有：那份文件修正过这里的若干说法
+> （`PLATFORM_MODULES` 到底是哪九个、`wire.view` 的确切形态），**两边冲突时以契约为准**。
+> 这里不再新增或修订结论；新发现写进契约或 `docs/design/` 的相应文件。
 
 **Scope.** DSH (DeepSeek Harness) **0.2.0-rc.2**, installed Desktop build.
 Implementation checkout: `C:\Users\haoch\AppData\Local\Programs\DeepSeek Harness\resources\app.asar` (a 121 MB file, not a directory).
@@ -724,6 +728,9 @@ Paths are relative to `C:\Users\haoch\AppData\Local\Temp\dsh-asar\` unless absol
 ---
 
 ## UNVERIFIED / open items
+
+> 第 1、3 条已由 [`dsh-plugin-contract.md`](./dsh-plugin-contract.md) §11 / §12 解决（结论归那份文件所有）；
+> 其余各条仍如下。
 
 1. **`PLATFORM_MODULES` contents.** `dsh-client-modules\README.md` L46 names the baseline as "React, Cordis, and static UI libraries" but the actual member list was not located in the extracted artifacts. A client bundle that `require`s something outside it needs `dsh.client.external`.
 2. **License/redistribution terms** for copying primitive markup/CSS, which `practices.md` L35 recommends. Every shipped package carries an MIT `LICENSE` file; the three `@deepseek-ai/cordis*` packages and `@deepseek-ai/cosmokit`/`schemastery` are vendored forks. Not legal advice — confirm before shipping copied code.

@@ -109,7 +109,7 @@ An agent-editable board for [DeepSeek Harness](https://github.com/deepseek-ai) �
 
 ## 状态
 
-**v1 完成并在用。** 400 个测试通过；模型版本 4；三个看板专属的 agent 预设（工程师 / 教师 / 研究员，其中**教师预设未完成**，自动朗读留待后续）。
+**v1 完成并在用。** 428 个测试通过；模型版本 5；三个看板专属的 agent 预设（工程师 / 教师 / 研究员，其中**教师预设未完成**，自动朗读留待后续）。
 
 ## License
 

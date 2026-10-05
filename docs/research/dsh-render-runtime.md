@@ -1,10 +1,13 @@
 # DSH 渲染运行时可行性验证
 
-> **先读哪一份。** 本文的 **§11（客户端模块加载 / chunk 路由）** 后来被
-> [`dsh-client-rendering.md`](./dsh-client-rendering.md) 用加载器源码重新推导了一遍，并补上了 PDF 那条路。
-> **要引用「mermaid 怎么作为包内 chunk 懒加载」这个结论，请引 `dsh-client-rendering.md`。**
-> 本文仍然是「客户端到底能栅格化什么」这份更宽的调研的来源，所以两份都留着——重叠的是加载器那一节，
-> 不是全文。
+> **先读哪一份。** 本文是**冻结的可行性调研**（2026-10-05）。加载器那一节是 **§A4**——它曾被写成
+> 「本文的 §11」，那是把契约的节号误记到了这里，本文没有 §11。它的结论已被
+> [`dsh-client-rendering.md`](./dsh-client-rendering.md) 用加载器源码重新推导过：**要引用「mermaid 怎么
+> 作为包内 chunk 懒加载」请引那一份**；host 光栅化那一节（§B）同样被那份的 §4 覆盖。
+>
+> 本文保留别处没有的东西：六条加载路径的对照表、`chunkUrl` 的逐字推导、§B3 的 `ctx.subprocess` 契约、
+> §C3 的同步回退方案、以及自己的 UNVERIFIED 清单。所以留着，但**不再更新**——新结论写进
+> `dsh-client-rendering.md` 或 [`dsh-plugin-contract.md`](./dsh-plugin-contract.md)。
 
 **验证对象**：DSH (DeepSeek Harness) `0.2.0-rc.2` Desktop
 **证据来源**（全部为直接读到的字节）：

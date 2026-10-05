@@ -67,7 +67,7 @@
 
 **另有四个缺陷来自工具测试**：`uniqSlug` 被传错了集合（显式 slug 永不判冲突）；空看板把标题和页名渲染进**每一个**请求；slug 冲突警告比较错了对象；`execute` 返回 `{ value }` 而注册表要的是被 `output.schema` 校验的那个裸值。
 
-**与契约的一处差异**：契约 §3.2.3 的表把 `add_page` 的参数写作 `page` 且标为 slug，但 §2.2 的 op 表写的是 `slug`。两者都接受了（`slug ?? page ?? title`）。同理 `set_region` 的 `region` 在 schema 里是可选的（有 `region` 就更新，没有就新建）。
+**与契约的一处差异**：[`board-tools.md`](./board-tools.md) §3.2.3 的表把 `add_page` 的参数写作 `page` 且标为 slug，但 [`board-model.md`](./board-model.md) §2.2 的 op 表写的是 `slug`。两者都接受了（`slug ?? page ?? title`）。同理 `set_region` 的 `region` 在 schema 里是可选的（有 `region` 就更新，没有就新建）。
 
 ---
 

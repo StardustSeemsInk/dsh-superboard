@@ -5,6 +5,10 @@ an artifact named inline. This file is the short list of *rules we must obey*; t
 survey with 90 slot keys and full evidence tables is in
 [`../research/dsh-plugin-api.md`](../research/dsh-plugin-api.md).
 
+**Ownership（2026-10-05）:** this file owns the *conclusions*. The long-form survey it condenses is now a
+**frozen research record** — kept for its catalogue breadth and evidence tables, no longer maintained in
+parallel. Where the two disagree, this file wins; new findings go here or into `docs/design/`.
+
 Two independent sources back this file:
 
 1. The **official authoring skill** shipped inside DSH, extracted verbatim to

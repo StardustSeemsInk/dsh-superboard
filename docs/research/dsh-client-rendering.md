@@ -11,6 +11,11 @@ This file is the long-form companion to [`dsh-plugin-contract.md`](./dsh-plugin-
 loader source and extends it to PDF. Where the two agree, this file supersedes nothing — it adds the
 mechanism and the citations.
 
+**Ownership（2026-10-05）:** this file owns the client-rendering conclusions — the loader route, bundle
+serving, CSP, the document-preview byte path and host rasterisation.
+[`dsh-render-runtime.md`](./dsh-render-runtime.md) is the earlier feasibility survey of the same ground; it
+is now a **frozen record**, and its loader section (§A4) is superseded by §1b here. Cite this file.
+
 ## Sources and citation convention
 
 Every claim below is quoted or paraphrased from one of these, and every citation is `file:line`.
