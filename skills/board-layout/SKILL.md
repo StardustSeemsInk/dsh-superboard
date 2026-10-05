@@ -127,14 +127,44 @@ depends on the window width and the reading column, both of which change as the 
 "The block after this one sits beside it" is true only until the next reflow. Express ownership
 with a `group`, never by putting blocks next to each other.
 
-**Arrows are faint, and their labels are hover-only.** An edge is a 1.5px line in the muted text
-colour. Its `label` renders as a tooltip on that line, and `rel` (`depends`, `causes`, …) has no
-visual effect at all — it is metadata for `board_query`. Put any words the reader needs into a
-block, not into `label`.
+**Arrows are faint, and labels are small.** An edge is a 1.5px line in the muted text colour, with
+its `label` in a small chip at the curve's midpoint. `rel` (`depends`, `causes`, …) has no visual
+effect at all — it is metadata for `board_query`. Either way the reader gets one short phrase, so
+put anything they actually need to read into a block.
 
-**An edge shows only when both endpoints are on the page you are looking at.** Cross-page edges and
-edges to a deleted block are simply not drawn, with no marker. Keep a connected structure on one
-page, or accept that the arrows read as absent.
+**An edge is drawn only when both endpoints are on the page you are looking at.** A cross-page edge
+is not drawn, but it is not silent either: the board header reports how many edges lead to another
+page. Keep a connected structure on one page when the arrows are the point.
+
+### Aiming an arrow inside a block
+
+An endpoint is either a block reference or `{ blockId, at }`, and `at` names the part of the block
+to land on. This is usually the difference between an arrow that means something and an arrow that
+merely points at a card:
+
+- `{ kind: 'field', field }` — `title`, `code`, `caption` or `filename`. The most useful one: it
+  puts the arrowhead on the words rather than on the card around them.
+- `{ kind: 'item', itemId }` — one list item, so "this came from that bullet" is expressible.
+- `{ kind: 'lines', from, to }` — a line range in a `code` block.
+- `{ kind: 'text', start, end }` — a character range in `prose` or `heading`.
+- `{ kind: 'child', childId }` — one block inside a `group`.
+- `{ kind: 'node', key }` — a node inside a `uml` diagram. **Only flowchart and state diagrams
+  publish resolvable nodes.** Sequence and class diagrams draw nothing addressable, and `er`
+  diagrams resolve most entities but not all; an unresolvable key falls back to the whole card.
+- `{ kind: 'rect', x, y, w, h }` or `{ kind: 'point', x, y }` — normalised `0–1` inside an `image`
+  or a `pdf-page`, `(0,0)` at the top-left. On a `pdf-page` the frame is its `crop`, so cropping to a
+  figure also moves what those numbers mean — which is the point: crop to the table, then aim at
+  its corner.
+
+An `at` that names nothing — a stale id, a key the diagram never drew, a kind that does not suit the
+block — **is not an error and produces no message.** The arrow quietly falls back to the whole
+block, so an arrow that appears to ignore your anchor looks exactly like an arrow with no anchor.
+Check the block's `kind` against the list above first, and for a `node` check the keys `board_read`
+prints after that diagram's source.
+
+**`waypoints` bends the arrow.** Each one is `{ x, y }` normalised to the box spanning both
+endpoints, so the numbers move with the blocks instead of naming pixels a reflow would invalidate.
+Omit them and the renderer picks its own curve.
 
 ## Write for the reader, not for the model
 

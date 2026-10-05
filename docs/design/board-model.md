@@ -306,7 +306,7 @@ type AnchorAt =
   | { kind: 'text'; start: number; end: number; quote?: string }
   /** 容器内某个子块。 */
   | { kind: 'child'; childId: string }
-  /** 引擎图里的节点/边；key 由 UmlBlock.nodeHints 或解析器提供。 */
+  /** 引擎图里的节点；key 由 UmlBlock.nodeHints 或解析器提供。 */
   | { kind: 'node'; key: string }
   /** 位图/PDF 页内的归一化矩形，(0,0)=左上，(1,1)=右下。 */
   | { kind: 'rect'; x: number; y: number; w: number; h: number }
@@ -314,7 +314,7 @@ type AnchorAt =
   | { kind: 'point'; x: number; y: number }
 ```
 
-**为什么 PDF/图片用归一化坐标：** 页空间坐标是「相对该页/该图」的比例，与渲染 DPI、容器宽度、缩放级别全部无关。宿主栅格化到任何 `pixelWidth` 时都按 `x * naturalWidth`（PDF 用 crop 宽）换算。这样：
+**为什么 PDF/图片用归一化坐标：** 页空间坐标是「相对该页/该图」的比例，与渲染 DPI、容器宽度、缩放级别全部无关。**换算的基准是实测出来的渲染框**——浏览器量出的 `<img>` 或 `<canvas>` 的实际盒子（PDF 用 crop 框）——不是模型里的任何固有尺寸。模型里**没有**固有尺寸这种东西：`naturalSize` 曾经承担这个角色，但它只能和磁盘上的文件不一致，所以已经删掉（见 §1.3）。这样：
 
 - 同一个锚点在 4K 屏和右侧栏小窗里指向同一个物理位置；
 - 模型不需要知道任何像素——Agent 只会说「第 4 页，左边那栏的表」，由一条 `rect(0.06,0.42,0.34,0.18)` 表达；

@@ -113,6 +113,18 @@ window.__ModuleLoader__.load({
       '.sb-missing{color:var(--dsw-alias-label-tertiary);font-size:12px;font-style:italic;}',
       '.sb-group{border-style:dashed;padding-left:14px;}',
       '.sb-edges{position:absolute;inset:0;pointer-events:none;overflow:visible;}',
+      // An edge's label used to live only in an SVG `<title>`, which is hover-only — invisible in a
+      // screenshot, in the film, and to anyone who does not happen to rest the pointer on the line.
+      // It rides the curve's midpoint instead: the stroke is the board's own text colour at 10px, so
+      // a label reads as an annotation on the arrow rather than as content competing with the cards.
+      '.sb-edgeLabel{fill:var(--dsw-alias-label-secondary);font-size:10px;font-weight:600;letter-spacing:.02em;}',
+      // The label's plate, which is also what keeps it from colliding with the line under it. The
+      // card colour rather than the page's: an arrow crosses cards, and a plate that matches what is
+      // behind it is the only way the text stays legible on both.
+      '.sb-edgeLabelChip{fill:var(--dsw-alias-bg-layer-2);stroke:var(--dsw-alias-border-l2);stroke-width:.8;}',
+      // The honest signal that arrows leave this page. Two endpoints, one page: a reader could not
+      // otherwise tell "there is no such edge" from "it is drawn on another page".
+      '.sb-crossPage{font-size:10px;line-height:14px;padding:0 6px;border-radius:999px;border:1px dashed var(--dsw-alias-border-l2);color:var(--dsw-alias-label-tertiary);}',
       '.sb-empty{color:var(--dsw-alias-label-tertiary);font-size:12px;line-height:18px;padding:12px 0;}',
       // Marquee: while a rectangle drag is in flight the canvas owns the gesture, so the browser's
       // text selection must be suppressed or the drag would select the board's own prose.
@@ -496,18 +508,25 @@ window.__ModuleLoader__.load({
      *
      * @param nodes - the node list from {@link parseInline}.
      * @param keyPrefix - a stable prefix so React can reconcile the list.
+     * @param base - where this run starts in the *field's* text. Only a `text` anchor reads it: a
+     *   character range has to name a position, and the run's own text does not say where in the
+     *   paragraph it sits — `**根因**: 说明` parses into three nodes, and node two begins at
+     *   character 4 of the source, not at 0.
      * @returns React children.
      */
-    function renderInline(nodes, keyPrefix = 'md') {
+    function renderInline(nodes, keyPrefix = 'md', base = 0) {
+      let at = base
       return nodes.map((node, position) => {
         const key = `${keyPrefix}-${position}`
+        const from = at
+        at += inlineTextLength(node)
         switch (node.type) {
           case 'strong':
-            return h('strong', { key }, renderInline(node.children, key))
+            return h('strong', { key, 'data-superboard-from': from }, renderInline(node.children, key, from))
           case 'em':
-            return h('em', { key }, renderInline(node.children, key))
+            return h('em', { key, 'data-superboard-from': from }, renderInline(node.children, key, from))
           case 'code':
-            return h('code', { key, className: 'sb-inlineCode' }, node.text)
+            return h('code', { key, className: 'sb-inlineCode', 'data-superboard-from': from }, node.text)
           case 'link':
             return h(
               'a',
@@ -515,6 +534,7 @@ window.__ModuleLoader__.load({
                 key,
                 className: 'sb-link',
                 href: node.href,
+                'data-superboard-from': from,
                 // Board links leave the application; opening in a new tab keeps the session.
                 target: '_blank',
                 rel: 'noreferrer noopener',
@@ -522,19 +542,47 @@ window.__ModuleLoader__.load({
               node.text,
             )
           default:
-            return h('span', { key }, node.text)
+            return h('span', { key, 'data-superboard-from': from }, node.text)
         }
       })
     }
 
     /**
+     * How many characters of the source one parsed inline node accounts for.
+     *
+     * The parser drops the markers, so a node's rendered text is shorter than the run it came from:
+     * `**根因**` renders three characters from eight. A `text` anchor indexes the *source*, because
+     * that is what `board_read` prints and therefore what an Agent can count, so every run has to be
+     * advanced by what it consumed rather than by what it shows.
+     *
+     * @param node - one node from {@link parseInline}.
+     * @returns its length in source characters.
+     */
+    function inlineTextLength(node) {
+      if (node.type === 'strong') return 4 + sourceLengthOf(node.children)
+      if (node.type === 'em') return 2 + sourceLengthOf(node.children)
+      if (node.type === 'code') return 2 + node.text.length
+      if (node.type === 'link') return node.text.length + 4 + node.href.length
+      return node.text.length
+    }
+
+    /** The source length of a parsed run, which is what its children consumed. */
+    function sourceLengthOf(nodes) {
+      let total = 0
+      for (const node of nodes) total += inlineTextLength(node)
+      return total
+    }
+
+    /**
      * Render text that may contain inline markdown.
      *
-     * @param text - the source text.
+     * @param props - `{ text, base }`, where `base` is the offset of `text` within the field it
+     *   belongs to. A list item is the case that needs it: one `list` block holds several items, and
+     *   a `text` anchor indexes the field's text, not the item's.
      * @returns a fragment of React children.
      */
-    function RichText({ text }) {
-      return h(React.Fragment, null, renderInline(parseInline(text)))
+    function RichText({ text, base }) {
+      return h(React.Fragment, null, renderInline(parseInline(text), 'md', base ?? 0))
     }
 
     // -----------------------------------------------------------------------
@@ -1413,6 +1461,109 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * The box of every node in a rendered mermaid SVG, in the SVG's own user units.
+     *
+     * **Why the result is text rather than a measurement.** The diagram is a picture: mermaid's SVG
+     * goes into an `<img>` through a `data:` URL, deliberately, because that is what isolates
+     * Agent-authored diagram source from the board's own document. So the nodes are in no DOM the
+     * arrow layer could walk — an `<img>`'s contents are sealed. What *is* available is the SVG's
+     * own text, at the one moment it is already in hand, and an XML parse of it runs no scripts and
+     * has no layout, which is exactly the amount of custody this needs. The table is then carried to
+     * the arrow layer as an attribute, the same way every other measurement crosses a boundary here.
+     *
+     * `getBBox` is not available — a detached parsed document has no layout to measure — so a node's
+     * box comes from its own `transform` and its shape element's declared attributes. Mermaid writes a
+     * node as `<g class="node" id="<containerId>-<family>-<key>[-<n>]">` holding a
+     * `rect`/`circle`/`ellipse`/`polygon`; the `<n>` is a global counter rather than anything to do
+     * with the node, so the key is what remains once the container id, the family token and that
+     * counter are off. That is the identifier the Agent wrote and the one `src/uml.js` publishes as
+     * `nodeHints`, so the two agree by construction.
+     *
+     * Not every family draws nodes this way: sequence and class diagrams emit no `g.node` at all
+     * (`<g id="A">` and `<g class="node">`-less class boxes), so their keys are not reachable here. A
+     * key that is not found is not an error — the anchor falls back to the block box, which is a plain
+     * and honest answer: the diagram is there, the node is not addressable.
+     *
+     * @param svg - the SVG document mermaid produced.
+     * @param env - the parser to read it with, defaulting to the browser's. Injected for the same
+     *   reason `originAt` takes its DOM: this is the one branch of the resolver that needs a host
+     *   object, and a test can then drive it with a parsed document instead of a browser.
+     * @returns `{ w, h, nodes }` with the SVG's own size, or `undefined` if the parse failed.
+     */
+    function diagramNodeTable(svg, env) {
+      const Parser = env?.DOMParser ?? (typeof DOMParser === 'function' ? DOMParser : undefined)
+      if (Parser === undefined) return undefined
+      let root
+      try {
+        root = new Parser().parseFromString(svg, 'image/svg+xml').documentElement
+      } catch {
+        return undefined
+      }
+      if (root === null || root === undefined || root.localName !== 'svg') return undefined
+
+      /** One length attribute. `px` with no unit is what mermaid writes. */
+      const length = (raw) => {
+        const value = Number.parseFloat(raw)
+        return Number.isFinite(value) ? value : undefined
+      }
+      // The viewBox is the size that matters, not `width`/`height`: the picture is drawn with
+      // `preserveAspectRatio: 'none'`, so the img box *is* the viewBox scaled, and mermaid writes
+      // `width="100%"` on the root — a percentage that `parseFloat` would read as the number 100.
+      const view = (root.getAttribute('viewBox') ?? '').trim().split(/[\s,]+/).map(Number)
+      const w = (Number.isFinite(view[2]) && view[2] > 0 ? view[2] : undefined) ?? length(root.getAttribute('width')) ?? 100
+      const h = (Number.isFinite(view[3]) && view[3] > 0 ? view[3] : undefined) ?? length(root.getAttribute('height')) ?? 100
+
+      // Mermaid names a node `<containerId>-<familyToken>-<key>[-<counter>]`, and the root carries the
+      // container id, so the prefix comes off by identity rather than by guessing where it ends. Then
+      // the family token, then the global counter: what is left is the identifier the Agent wrote.
+      // Measured against mermaid 11: a flowchart is `flowchart-A-0`, a state diagram `state-Idle-0`, an
+      // er entity `entity-CUSTOMER`. Sequence and class diagrams draw no `g.node` at all, so their keys
+      // are not reachable this way and their anchors fall back to the block box.
+      const container = root.getAttribute('id') ?? ''
+      const nodeKey = (id, owner) => {
+        const rest = owner !== '' && id.startsWith(`${owner}-`) ? id.slice(owner.length + 1) : id
+        return rest.replace(/^(flowchart|state|entity)-/, '').replace(/-\d+$/, '')
+      }
+
+      const nodes = {}
+      const write = (key, x, y, width, heightBox) => {
+        if (key === undefined || key === '') return
+        // `slice` rather than mutating the object literal: a second shape inside one node group (a
+        // class box draws its own compartment lines) must not overwrite the first.
+        nodes[key] = { x, y, w: width, h: heightBox }
+      }
+      for (const group of root.querySelectorAll('g.node')) {
+        const id = group.getAttribute('id') ?? ''
+        const key = nodeKey(id, container)
+        const translated = /translate\(\s*(-?[\d.]+)[\s,]+(-?[\d.]+)/.exec(group.getAttribute('transform') ?? '')
+        if (translated === null) continue
+        const x = Number(translated[1])
+        const y = Number(translated[2])
+        const shape = group.querySelector('rect, circle, ellipse, polygon')
+        if (shape === null) continue
+        const shapeName = shape.localName
+        if (shapeName === 'circle') {
+          const radius = length(shape.getAttribute('r')) ?? 0
+          write(key, x - radius, y - radius, radius * 2, radius * 2)
+        } else if (shapeName === 'ellipse') {
+          const rx = length(shape.getAttribute('rx')) ?? 0
+          const ry = length(shape.getAttribute('ry')) ?? 0
+          write(key, x - rx, y - ry, rx * 2, ry * 2)
+        } else if (shapeName === 'rect') {
+          // mermaid clips a rounded rect to an 8px radius; the box is the same either way.
+          write(key, x, y, length(shape.getAttribute('width')) ?? 0, length(shape.getAttribute('height')) ?? 0)
+        } else {
+          const numbers = (shape.getAttribute('points') ?? '').trim().split(/[\s,]+/).map(Number)
+          const xs = numbers.filter((_, at) => at % 2 === 0)
+          const ys = numbers.filter((_, at) => at % 2 === 1)
+          if (xs.length === 0 || ys.length === 0) continue
+          write(key, x + Math.min(...xs), y + Math.min(...ys), Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys))
+        }
+      }
+      return { w, h, nodes }
+    }
+
+    /**
      * Render one `uml` block.
      *
      * Three states, and the failure one deliberately keeps the source visible: a user looking at a
@@ -1463,7 +1614,9 @@ window.__ModuleLoader__.load({
             return mermaid.render(`sb-uml-${block.id}`, source)
           })
           .then((result) => {
-            if (!cancelled) setState({ status: 'ready', src: svgDataUrl(result.svg) })
+            if (!cancelled) {
+              setState({ status: 'ready', src: svgDataUrl(result.svg), nodes: diagramNodeTable(result.svg) })
+            }
           })
           .catch((error) => {
             if (cancelled) return
@@ -1482,11 +1635,24 @@ window.__ModuleLoader__.load({
       if (state.status === 'ready') {
         return h(
           'div',
-          { className: 'sb-diagram', 'data-superboard-diagram': '' },
+          {
+            className: 'sb-diagram',
+            'data-superboard-diagram': '',
+            // Read by a `node` anchor, which is the only reason the node table is published at all.
+            // On the wrapper rather than beside the picture so one lookup gets the container, the
+            // image and the table; a diagram with no addressable nodes carries an empty table, and
+            // its arrows fall back to the block box.
+            'data-superboard-nodes': JSON.stringify(state.nodes),
+          },
           h('img', {
             className: 'sb-diagramImage',
             src: state.src,
             alt: `${block.slug}：${block.engine} ${block.diagram} 图`,
+            // Filled rather than letterboxed with the aspect ratio intact, so the picture's box *is*
+            // the SVG's user-unit space scaled. A node's box is then a single multiplication and
+            // needs no idea where the letterbox bars went — the one assumption the rest of this
+            // conversion is allowed to make.
+            preserveAspectRatio: 'none',
           }),
         )
       }
@@ -1537,12 +1703,60 @@ window.__ModuleLoader__.load({
           className: 'sb-media',
           src: url,
           alt: block.alt,
+          // Read by a `rect`/`point` anchor: the frame those normalised coordinates are relative to
+          // is this picture's own rendered box, which is the only thing the browser knows and the
+          // only thing that stays right when the card is resized. A picture and a cropped PDF page
+          // carry the same hook on purpose — an anchor's `(0,0)`–`(1,1)` box means "the picture I can
+          // see" for both, and a second name for it would be a second thing to get wrong.
+          'data-superboard-field': 'frame',
           onError: () => {
             setFailed(true)
             reportRenderFailure(sessionId, block, `读不到文件 ${block.src}`)
           },
         }),
       )
+    }
+
+    /**
+     * The region of a PDF page a `pdf-page` block shows, or `undefined` for the whole page.
+     *
+     * Normalised fractions of the page (`src/schema.js:95`), which is the same frame the document
+     * gives a `rect`/`point` anchor on such a block (`docs/design/board-model.md:306-308`) — so this
+     * is not a display nicety, it is the coordinate frame, and the renderer and the resolver have to
+     * read it the same way or the arrows point at a region the picture is not showing.
+     *
+     * `undefined` rather than an identity box for three cases at once — no crop, an unreadable crop,
+     * and the whole page — because all three mean the same thing to the caller, and a malformed crop
+     * should degrade to the whole page rather than to a blank canvas.
+     *
+     * @param value - `block.crop` as the model carries it.
+     * @returns `{x, y, w, h}` in `[0, 1]`, or `undefined`.
+     */
+    function pageCrop(value) {
+      if (typeof value !== 'object' || value === null) return undefined
+      const x = fraction(unit(coordinate(value.x) ?? 0))
+      const y = fraction(unit(coordinate(value.y) ?? 0))
+      const w = coordinate(value.w)
+      const h = coordinate(value.h)
+      if (w === undefined || h === undefined || w <= 0 || h <= 0) return undefined
+      // Clamped into the page rather than rejected: a crop that runs off the edge is a crop that
+      // shows the edge, and an arrow measured against a region that is not on screen has no frame.
+      const box = { x, y, w: fraction(Math.min(w, 1 - x)), h: fraction(Math.min(h, 1 - y)) }
+      if (box.w <= 0 || box.h <= 0) return undefined
+      return box.x === 0 && box.y === 0 && box.w === 1 && box.h === 1 ? undefined : box
+    }
+
+    /**
+     * A normalised fraction, rounded the way the model rounds one.
+     *
+     * `src/model.js:325` quantises a crop to four decimals so float noise cannot reach the revision
+     * hash. Clamping does the same thing to a different pair of numbers — `1 - 0.8` is
+     * `0.19999999999999996` — and a rendered crop that disagreed with the hashed one in the seventh
+     * decimal would be two descriptions of the same box, which is exactly what this file is here to
+     * stop doing.
+     */
+    function fraction(value) {
+      return Math.round(value * 1e4) / 1e4
     }
 
     /**
@@ -1564,6 +1778,11 @@ window.__ModuleLoader__.load({
       const canvas = React.useRef(null)
       const src = block.src
       const number = block.page
+      // Normalised once, in the render, so the attribute below and the rasteriser cannot describe
+      // two different boxes — and so the effect depends on a string rather than on an object, which
+      // would re-rasterise the page on every render.
+      const crop = pageCrop(block.crop)
+      const cropText = crop === undefined ? undefined : JSON.stringify(crop)
 
       React.useEffect(() => {
         let cancelled = false
@@ -1580,12 +1799,34 @@ window.__ModuleLoader__.load({
             const target = canvas.current
             if (cancelled || target === null || target === undefined) return
             const base = page.getViewport({ scale: 1 })
+            const shown = crop ?? { x: 0, y: 0, w: 1, h: 1 }
             const density = window.devicePixelRatio || 1
-            const cssWidth = Math.min(target.parentElement?.clientWidth || base.width, MAX_PAGE_WIDTH)
-            const viewport = page.getViewport({ scale: (cssWidth / base.width) * density })
-            target.width = Math.floor(viewport.width)
-            target.height = Math.floor(viewport.height)
-            target.style.width = `${Math.round(viewport.width / density)}px`
+            // A quarter-turned page shows the crop's *height* across the screen, so which of the
+            // page's two dimensions the card's width is measured against depends on its rotation.
+            const turn = (((base.rotation % 360) + 360) % 360)
+            const across = turn === 90 || turn === 270 ? base.height * shown.h : base.width * shown.w
+            const cssWidth = Math.min(target.parentElement?.clientWidth || across, MAX_PAGE_WIDTH)
+            const scale = (cssWidth / across) * density
+            const uncropped = page.getViewport({ scale })
+            // The crop's two opposite corners, asked of pdf.js rather than derived here: where a
+            // point of the page lands depends on the page's rotation and its `userUnit`, and
+            // `convertToViewportPoint` is the module's own answer to that question.
+            const viewBox = base.viewBox
+            const left = viewBox[0] + shown.x * (viewBox[2] - viewBox[0])
+            const top = viewBox[3] - shown.y * (viewBox[3] - viewBox[1])
+            const [cornerX, cornerY] = uncropped.convertToViewportPoint(left, top)
+            const [farX, farY] = uncropped.convertToViewportPoint(left + shown.w * (viewBox[2] - viewBox[0]), top - shown.h * (viewBox[3] - viewBox[1]))
+            // `offsetX`/`offsetY` translate the finished viewport in device pixels whatever the
+            // rotation — `PageViewport`'s transform puts them straight into its translation — so
+            // moving the crop's corner to the canvas's origin is exactly this subtraction. The
+            // viewport still *reports* the whole page's size, which is why the canvas is sized from
+            // the two corners instead.
+            const viewport = page.getViewport({ scale, offsetX: -cornerX, offsetY: -cornerY })
+            const deviceWidth = Math.max(1, Math.abs(farX - cornerX))
+            const deviceHeight = Math.max(1, Math.abs(farY - cornerY))
+            target.width = Math.round(deviceWidth)
+            target.height = Math.round(deviceHeight)
+            target.style.width = `${Math.round(deviceWidth / density)}px`
             await page.render({ canvasContext: target.getContext('2d'), viewport }).promise
             if (!cancelled) setState({ status: 'ready' })
           })
@@ -1598,7 +1839,7 @@ window.__ModuleLoader__.load({
         return () => {
           cancelled = true
         }
-      }, [src, number])
+      }, [src, number, cropText])
 
       const canvasElement = h('canvas', {
         // Hidden until there is something on it: an untouched canvas is white in both themes, so
@@ -1606,6 +1847,12 @@ window.__ModuleLoader__.load({
         className: state.status === 'ready' ? 'sb-pdfPage' : 'sb-pdfPage sb-pdfPending',
         ref: canvas,
         'data-superboard-pdf': `${src}#${number}`,
+        // Read by a `rect`/`point` anchor: this canvas *is* the crop, so its own box is the frame a
+        // normalised coordinate is measured in, and `crop` cannot be applied a second time here.
+        'data-superboard-field': 'frame',
+        // The crop the page was rasterised to, normalised, for whoever has to explain why an arrow
+        // landed where it did: the frame is on screen but which part of the page it is, is not.
+        'data-superboard-crop': cropText,
       })
 
       if (state.status === 'failed') {
@@ -1638,14 +1885,27 @@ window.__ModuleLoader__.load({
     function renderBlockBody(block, sessionId) {
       switch (block.kind) {
         case 'heading':
-          return h(`h${block.level}`, { className: `sb-h${block.level}` }, h(RichText, { text: block.text }))
+          return h(
+            `h${block.level}`,
+            // The `text` field. A heading's rendered text is its field verbatim, so the inline
+            // spans' own offsets are the field's.
+            { className: `sb-h${block.level}`, 'data-superboard-field': 'text' },
+            h(RichText, { text: block.text }),
+          )
         case 'prose': {
           const blocks = parseMarkdownBlocks(block.markdown)
           // A table is not a line shape — it takes a header row *and* a separator row — so it can
           // only be found by parsing. Asking the parser rather than pattern-matching here keeps
           // one definition of what block structure is.
           if (blocks.length === 1 && blocks[0].type === 'paragraph') {
-            return h('p', { className: 'sb-p' }, h(RichText, { text: block.markdown }))
+            // The one shape whose rendered text and field text are the same string, so a `text`
+            // anchor lands on the exact character. `Markdown` below carries the same hook for every
+            // other shape, where the offsets can only be as precise as the block they are in.
+            return h(
+              'p',
+              { className: 'sb-p', 'data-superboard-field': 'text' },
+              h(RichText, { text: block.markdown }),
+            )
           }
           return h(Markdown, { text: block.markdown, className: 'sb-mdProse' })
         }
@@ -1656,7 +1916,12 @@ window.__ModuleLoader__.load({
             block.items.map((item) =>
               h(
                 'li',
-                { key: item.id, style: item.depth > 0 ? { marginLeft: item.depth * 12 } : undefined },
+                {
+                  key: item.id,
+                  style: item.depth > 0 ? { marginLeft: item.depth * 12 } : undefined,
+                  // Read by an `item` anchor, which names one row of a list and needs no index.
+                  'data-superboard-item': item.id,
+                },
                 h(RichText, { text: item.text }),
               ),
             ),
@@ -1665,11 +1930,23 @@ window.__ModuleLoader__.load({
           return h(
             'div',
             null,
-            block.filename === undefined ? null : h('div', { className: 'sb-slug' }, block.filename),
+            block.filename === undefined
+              ? null
+              // The `filename` field. It shares the `sb-slug` class with the card head, and the
+              // field attribute is what keeps an anchor from pointing at the card's own slug.
+              : h('div', { className: 'sb-slug', 'data-superboard-field': 'filename' }, block.filename),
             h(
               'pre',
               { className: 'sb-code' },
-              h('code', { className: codeClass(block.lang) }, block.code),
+              h(
+                'code',
+                { className: codeClass(block.lang), 'data-superboard-field': 'code' },
+                // One span per line, so `lines {from, to}` has a box per line to resolve against.
+                // The newlines are sibling text nodes rather than part of a span: the code element's
+                // text is then byte-for-byte what the block holds, which is what the board's own
+                // "structured kinds stay literal" rule promises.
+                codeLines(block.code),
+              ),
             ),
           )
         case 'image':
@@ -1677,14 +1954,20 @@ window.__ModuleLoader__.load({
             'div',
             null,
             h(Picture, { block, sessionId }),
-            block.caption === undefined ? null : h('p', { className: 'sb-p' }, h(RichText, { text: block.caption })),
+            block.caption === undefined
+              ? null
+              // The `caption` field; the picture above carries `frame`, which is the box a `rect`/
+              // `point` anchor is measured in.
+              : h('p', { className: 'sb-p', 'data-superboard-field': 'caption' }, h(RichText, { text: block.caption })),
           )
         case 'pdf-page':
           return h(
             'div',
             null,
             h(PdfPage, { block, sessionId }),
-            block.caption === undefined ? null : h('p', { className: 'sb-p' }, h(RichText, { text: block.caption })),
+            block.caption === undefined
+              ? null
+              : h('p', { className: 'sb-p', 'data-superboard-field': 'caption' }, h(RichText, { text: block.caption })),
           )
         case 'uml':
           return h(Diagram, { block, sessionId })
@@ -1692,7 +1975,9 @@ window.__ModuleLoader__.load({
           return h(
             'div',
             null,
-            block.title === undefined ? null : h('h3', { className: 'sb-h3' }, h(RichText, { text: block.title })),
+            block.title === undefined
+              ? null
+              : h('h3', { className: 'sb-h3', 'data-superboard-field': 'title' }, h(RichText, { text: block.title })),
             h('p', { className: 'sb-missing' }, `contains ${block.children.length} block(s)`),
           )
         default:
@@ -1700,9 +1985,379 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /**
+     * A code block's text as one span per line.
+     *
+     * `lines {from, to}` is a 1-based inclusive range, so the span's index is the anchor's own
+     * numbering and nothing has to be stored to translate between them.
+     *
+     * @param code - the code text, newlines included.
+     * @returns the children of the `<code>` element.
+     */
+    function codeLines(code) {
+      const parts = String(code ?? '').split('\n')
+      const children = []
+      parts.forEach((line, index) => {
+        if (index > 0) children.push('\n')
+        // Even an empty line gets a span: a blank line is a line, and a range that spans one would
+        // otherwise have to be treated as an absence.
+        children.push(h('span', { key: `ln${index}`, 'data-superboard-line': index + 1 }, line))
+      })
+      return children
+    }
+
     // -----------------------------------------------------------------------
     // Edges
     // -----------------------------------------------------------------------
+
+    /**
+     * Resolve one anchor to a rectangle. Pure: no DOM, no measuring.
+     *
+     * **Why this is separate from the measuring.** `board_apply` has accepted nine anchor kinds since
+     * the first layout grill, `src/schema.js` puts `at` on the wire, and `src/model.js` hashes it —
+     * and until now the renderer measured whole blocks and threw every one of them away, so a
+     * `{kind: 'node', key}` arrow and a `{kind: 'block'}` arrow drew identically. The nine kinds are
+     * a promise the renderer now has to keep, and the part worth testing is which rectangle a given
+     * descriptor names. Splitting it here is what makes that testable at all: this file's tests run
+     * in a `vm` with no DOM.
+     *
+     * @param at - an `AnchorAt` from `src/schema.js:19-40`, or `undefined` for the whole block.
+     * @param target - what the collector measured, in canvas content coordinates: `{ block, frame,
+     *   fields, items, children, lines, text, nodes, diagram }`. Every member is optional.
+     * @returns `{left, top, width, height}` in canvas content coordinates.
+     */
+    function anchorRect(at, target) {
+      const block = target?.block
+      // A missing block box is the one case with nothing to fall back to (the block is not
+      // rendered). A zero rect is the honest answer: the caller has already dropped the edge.
+      if (block === undefined) return { left: 0, top: 0, width: 0, height: 0 }
+
+      try {
+        if (at === undefined || at === null) return block
+        const kind = at.kind
+        if (kind === 'block') return block
+        if (kind === 'field') return (target.fields ?? {})[at.field] ?? block
+        if (kind === 'item') return (target.items ?? {})[at.itemId] ?? block
+        if (kind === 'child') return (target.children ?? {})[at.childId] ?? block
+        if (kind === 'rect') return anchorInFrame(at, target) ?? block
+        if (kind === 'point') return anchorInFrame({ x: at.x, y: at.y, w: 0, h: 0 }, target) ?? block
+        if (kind === 'lines') return linesRect(at, target) ?? block
+        if (kind === 'text') return textRect(at, target) ?? block
+        if (kind === 'node') return nodeRect(at, target) ?? block
+        return block
+      } catch {
+        // The fold enforces which kinds may appear on which blocks, but a renderer that throws on a
+        // value it did not expect takes the whole pane down to a blank rectangle. An arrow drawn at
+        // the block box is a worse arrow and a much better failure.
+        return block
+      }
+    }
+
+    /** A usable coordinate, or `undefined` for anything that is not a finite number. */
+    function coordinate(value) {
+      const number = typeof value === 'number' ? value : Number.NaN
+      return Number.isFinite(number) ? number : undefined
+    }
+
+    /** Clamp to `[0, 1]`, which is the domain a normalised anchor is defined over. */
+    function unit(value) {
+      const number = coordinate(value)
+      if (number === undefined) return 0
+      return Math.min(1, Math.max(0, number))
+    }
+
+    /**
+     * A normalised `rect` or `point`, mapped onto the box it is relative to.
+     *
+     * For an `image` that box is the picture's own rendered box. For a `pdf-page` it is the crop
+     * region, rasterised into the canvas — which is the whole reason `crop` stops being an inert
+     * field here: `docs/design/board-model.md:306-308` defines the coordinates as relative to the
+     * crop, and a page whose crop is set would otherwise place every anchor in the wrong part of the
+     * frame. The collector has already resolved that box; this only scales into it.
+     *
+     * @returns the rectangle, or `undefined` when one of the four numbers is not a number at all.
+     *   A `point` with an unreadable `x` is not "at the origin" — it is not a point, and clamping it
+     *   would put an arrowhead in the corner of the card and call that success.
+     */
+    function anchorInFrame(at, target) {
+      const x = coordinate(at.x)
+      const y = coordinate(at.y)
+      if (x === undefined || y === undefined) return undefined
+      const w = at.w === undefined ? 0 : coordinate(at.w)
+      const h = at.h === undefined ? 0 : coordinate(at.h)
+      if (w === undefined || h === undefined) return undefined
+      const frame = target.frame ?? target.block
+      return {
+        left: frame.left + unit(x) * frame.width,
+        top: frame.top + unit(y) * frame.height,
+        width: unit(w) * frame.width,
+        height: unit(h) * frame.height,
+      }
+    }
+
+    /** The bounding box of a 1-based, inclusive line range, or `undefined` if no line is there. */
+    function linesRect(at, target) {
+      const lines = target.lines
+      if (lines === undefined) return undefined
+      // `Number` first: the schema enforces numbers, but a renderer that trusted it would be one
+      // malformed value away from `from <= NaN` being false and the arrow landing at line 0.
+      const from = Number(at.from)
+      const to = Number(at.to)
+      if (!Number.isFinite(from) || !Number.isFinite(to)) return undefined
+      const wanted = []
+      for (let number = Math.min(from, to); number <= Math.max(from, to); number += 1) {
+        const rect = lines[number]
+        if (rect !== undefined) wanted.push(rect)
+      }
+      return unionRect(wanted)
+    }
+
+    /**
+     * The box of a character range within a field's text.
+     *
+     * A range on one rendered line is exact. A range that wraps has no single box that means "these
+     * characters", and neither does a field whose blocks could not all be placed — for both, the
+     * element's whole box is the answer. That is a real approximation and it is stated here rather
+     * than hidden: an anchor is a pointer, and a pointer to the right paragraph beats no pointer.
+     */
+    function textRect(at, target) {
+      const spans = target.text
+      if (spans === undefined || spans.length === 0) return undefined
+      const startAt = coordinate(at.start)
+      const endAt = coordinate(at.end)
+      if (startAt === undefined || endAt === undefined) return undefined
+      const length = Math.max(...spans.map((span) => span.at + span.length))
+      const start = Math.min(Math.max(Math.min(startAt, endAt), 0), length)
+      const end = Math.min(Math.max(Math.max(startAt, endAt), 0), length)
+      const wanted = []
+      if (start === end) {
+        // A caret, not a range: it belongs to one run — the one whose text it sits at the head of,
+        // or the last one when the caret is at the very end — and it is one pixel wide so there is
+        // something to draw at the position.
+        const span = spans.find((candidate) => candidate.at === start) ?? spans[spans.length - 1]
+        return { left: span.rect.left, top: span.rect.top, width: 1, height: span.rect.height }
+      }
+      for (const span of spans) {
+        const from = Math.max(start, span.at)
+        const to = Math.min(end, span.at + span.length)
+        // A run the range only touches at its boundary contributes nothing: `end` is exclusive.
+        if (to <= from) continue
+        const spanLength = span.length === 0 ? 1 : span.length
+        wanted.push({
+          left: span.rect.left + ((from - span.at) / spanLength) * span.rect.width,
+          top: span.rect.top,
+          width: ((to - from) / spanLength) * span.rect.width,
+          height: span.rect.height,
+        })
+      }
+      return unionRect(wanted)
+    }
+
+    /**
+     * A `node` anchor, mapped from the SVG's user units onto the picture's box.
+     *
+     * The `<img>` is rendered filled (`preserveAspectRatio="none"`), so there is no letterbox to
+     * account for and no offset: user units scale by width and height independently. A node the
+     * table does not name — another diagram family, a key the Agent mistyped, a diagram that has not
+     * drawn yet — resolves to nothing, and the caller falls back to the block box.
+     */
+    function nodeRect(at, target) {
+      const nodes = target.nodes
+      const diagram = target.diagram
+      if (nodes === undefined || diagram === undefined) return undefined
+      const node = nodes.nodes[at.key]
+      if (node === undefined) return undefined
+      const sx = nodes.w === 0 ? 1 : diagram.width / nodes.w
+      const sy = nodes.h === 0 ? 1 : diagram.height / nodes.h
+      return {
+        left: diagram.left + node.x * sx,
+        top: diagram.top + node.y * sy,
+        width: node.w * sx,
+        height: node.h * sy,
+      }
+    }
+
+    /** The smallest box containing all of these, or `undefined` when there are none. */
+    function unionRect(rects) {
+      if (rects.length === 0) return undefined
+      let left = Infinity
+      let top = Infinity
+      let right = -Infinity
+      let bottom = -Infinity
+      for (const rect of rects) {
+        left = Math.min(left, rect.left)
+        top = Math.min(top, rect.top)
+        right = Math.max(right, rect.left + rect.width)
+        bottom = Math.max(bottom, rect.top + rect.height)
+      }
+      return { left, top, width: right - left, height: bottom - top }
+    }
+
+    /** Parse a JSON attribute, or `undefined` when it is absent or unusable. */
+    function jsonAttribute(element, name) {
+      const raw = element.getAttribute(name)
+      if (raw === null || raw === undefined || raw === '') return undefined
+      try {
+        return JSON.parse(raw)
+      } catch {
+        return undefined
+      }
+    }
+
+    /**
+     * Every element matching `selector` inside `element` that belongs to `element`'s own block.
+     *
+     * "Its own" stops at the next `[data-block-id]`, and that boundary is the whole point: a group's
+     * box contains its children's headings, captions and code, so a lookup that descended into them
+     * would let a `{kind: 'field'}` anchor on the container resolve to a descendant's text — an arrow
+     * that lands somewhere plausible and is wrong. A nested block has its own target, collected when
+     * its turn comes.
+     */
+    function findWithin(element, selector) {
+      if (element.querySelectorAll === undefined) return []
+      // Comparing owners rather than requiring `element` itself to be the block: the diagram's own
+      // wrapper is searched for its `<img>` and is not a `[data-block-id]`.
+      const owner = element.closest?.('[data-block-id]') ?? null
+      return [...element.querySelectorAll(selector)].filter((candidate) => candidate.closest('[data-block-id]') === owner)
+    }
+
+    /**
+     * Measure a `text` field into runs that a character range can be resolved against.
+     *
+     * Two things are read: the `data-superboard-from` offset the inline renderer stamped on each
+     * span, and the element's own `text-base`. The second is what makes a nested run work — the
+     * `<div>` inside a `quote` starts where the quote's own source started, not at zero.
+     *
+     * @param root - the element carrying `data-superboard-field="text"`.
+     * @param canvas - the canvas to measure against.
+     * @returns `[{at, length, rect}]` in document order.
+     */
+    function textSpansOf(root, canvas) {
+      const base = Number(root.getAttribute('data-superboard-text-base') ?? '0')
+      const spans = []
+      const walk = (element) => {
+        for (const child of element.childNodes ?? []) {
+          if (child.nodeType === 3) {
+            // The offset is the owning element's, and the root's own text sits at its base.
+            const at = element === root ? base : Number(element.getAttribute('data-superboard-from') ?? base)
+            spans.push({ at, length: (child.data ?? '').length, rect: rectWithin(element, canvas) })
+          } else if (child.nodeType === 1 && child.getAttribute('data-superboard-field') !== 'text') {
+            // A nested field boundary ends this field's runs: the offsets on the other side of it
+            // belong to a different field, and mixing them would place a range in the wrong place.
+            walk(child)
+          }
+        }
+      }
+      walk(root)
+      return spans
+    }
+
+    /**
+     * Collect what an anchor can point at inside one block.
+     *
+     * One pass over the block, once per measurement, producing plain data. Nothing here tries to be
+     * clever about what *should* be present: a kind that is not on this block contributes nothing
+     * and the resolver falls back, which is what keeps a `lines` anchor on a heading from being a
+     * crash rather than a slightly wrong arrow.
+     *
+     * @param canvas - the canvas element, which defines the coordinate space.
+     * @param element - the block's own `[data-block-id]` element.
+     * @returns the target object {@link anchorRect} reads.
+     */
+    function collectTarget(canvas, element) {
+      const fields = {}
+      for (const field of findWithin(element, '[data-superboard-field]')) {
+        const name = field.getAttribute('data-superboard-field')
+        // `frame` is not a field an anchor addresses: it is the box a normalised coordinate is
+        // measured in, and it is read from the element below so the resolver has it as its own key.
+        if (name === 'frame') continue
+        fields[name] = rectWithin(field, canvas)
+      }
+      const text = []
+      for (const field of findWithin(element, '[data-superboard-field="text"]')) {
+        // Only the outermost: a nested one carries its own base and is reached by the walk inside.
+        if (field.parentElement?.closest?.('[data-superboard-field="text"]') != null) continue
+        text.push(...textSpansOf(field, canvas))
+      }
+      const items = {}
+      for (const item of findWithin(element, '[data-superboard-item]')) {
+        items[item.getAttribute('data-superboard-item')] = rectWithin(item, canvas)
+      }
+      const lines = []
+      for (const line of findWithin(element, '[data-superboard-line]')) {
+        lines[Number(line.getAttribute('data-superboard-line'))] = rectWithin(line, canvas)
+      }
+
+      const frameElement = findWithin(element, '[data-superboard-field="frame"]')[0]
+      const diagramRoot = findWithin(element, '[data-superboard-diagram]')[0]
+      const frame = frameElement === undefined ? undefined : rectWithin(frameElement, canvas)
+
+      return {
+        block: rectWithin(element, canvas),
+        // The box a `rect`/`point` anchor is measured in, and the whole of it: a cropped `pdf-page`
+        // rasterises only the crop and sizes the canvas to it, so the frame and the crop are the
+        // same rectangle on screen. Mapping `crop` through the frame a second time — which is what
+        // this used to do for the picture's intrinsic size — would have shrunk the frame by the
+        // crop it already is.
+        frame,
+        fields,
+        items,
+        text,
+        lines,
+        children: {},
+        nodes: diagramRoot === undefined ? undefined : jsonAttribute(diagramRoot, 'data-superboard-nodes'),
+        diagram: diagramRoot === undefined ? undefined : rectWithin(findWithin(diagramRoot, 'img')[0] ?? diagramRoot, canvas),
+      }
+    }
+
+    /**
+     * Which block boxes each block's `child` anchor may resolve to. Pure.
+     *
+     * A `child` anchor names a block *inside* a group, so the answer comes from the model: only the
+     * ids a group lists as its own children are reachable through it. A `childId` that names no
+     * child of that group is left out, and the resolver's fallback to the group's own box is the
+     * honest answer — pointing at whatever other card on the page happens to carry that id would be
+     * an arrow that looks right and is about something else.
+     *
+     * This is also the shape that was wrong when it was written inline: walking one map of
+     * `[id, target]` pairs and assigning `target.children[id]` gives every block an entry for itself
+     * and for nothing else, because `id` moves with `target`. Hence a function with a test.
+     *
+     * @param blocks - the page's blocks; a group carries its children's ids.
+     * @param boxes - a `Map` of block id to the box measured for it.
+     * @returns a `Map` of block id to `{[childId]: box}`, for the blocks that own children.
+     */
+    function childrenByParent(blocks, boxes) {
+      const owned = new Map()
+      for (const block of blocks) {
+        const ids = block.children ?? []
+        if (ids.length === 0) continue
+        const children = {}
+        for (const childId of ids) {
+          const box = boxes.get(`${childId}`)
+          if (box !== undefined) children[`${childId}`] = box
+        }
+        owned.set(`${block.id}`, children)
+      }
+      return owned
+    }
+
+    /**
+     * One element's box, in the canvas's content coordinates.
+     *
+     * The same conversion the block measurement uses: viewport rect minus the canvas's own rect,
+     * plus the scroll offset, so the numbers stay right while the canvas is scrolled.
+     */
+    function rectWithin(element, canvas) {
+      const box = element.getBoundingClientRect()
+      const base = canvas.getBoundingClientRect()
+      return {
+        left: box.left - base.left + canvas.scrollLeft,
+        top: box.top - base.top + canvas.scrollTop,
+        width: box.width,
+        height: box.height,
+      }
+    }
 
     /**
      * Draw the page's edges over the blocks.
@@ -1729,25 +2384,30 @@ window.__ModuleLoader__.load({
         let frame = null
         const measure = () => {
           frame = null
-          const base = container.getBoundingClientRect()
-          const boxes = new Map()
+          const targets = new Map()
           for (const element of container.querySelectorAll('[data-block-id]')) {
-            const rect = element.getBoundingClientRect()
-            boxes.set(element.getAttribute('data-block-id'), {
-              left: rect.left - base.left + container.scrollLeft,
-              top: rect.top - base.top + container.scrollTop,
-              width: rect.width,
-              height: rect.height,
-            })
+            targets.set(element.getAttribute('data-block-id'), collectTarget(container, element))
+          }
+          // A `child` anchor names a block *inside* the group; `childrenByParent` decides which ids
+          // that is, from the model. The DOM only knows the blocks nest.
+          const boxes = new Map()
+          for (const [id, target] of targets) boxes.set(id, target.block)
+          for (const [id, children] of childrenByParent(blocks, boxes)) {
+            const target = targets.get(id)
+            if (target !== undefined) target.children = children
           }
 
           const paths = []
           for (const edge of edges) {
-            const from = boxes.get(edge.from.blockId)
-            const to = boxes.get(edge.to.blockId)
-            // An edge whose endpoint is on another page is simply not drawn here.
-            if (from === undefined || to === undefined) continue
-            paths.push({ edge, d: routeBetween(from, to) })
+            const fromTarget = targets.get(edge.from.blockId)
+            const toTarget = targets.get(edge.to.blockId)
+            // An edge whose endpoint is on another page is simply not drawn here. That is counted
+            // in the page header rather than logged, so a reader can tell "no such edge" from
+            // "drawn elsewhere".
+            if (fromTarget === undefined || toTarget === undefined) continue
+            const from = anchorRect(edge.from.at, fromTarget)
+            const to = anchorRect(edge.to.at, toTarget)
+            paths.push({ edge, d: routeBetween(from, to, edge.waypoints), label: pathMidpoint(from, to, edge.waypoints) })
           }
 
           setState((previous) => {
@@ -1806,25 +2466,56 @@ window.__ModuleLoader__.load({
             h('path', { d: 'M 0 0 L 10 5 L 0 10 z', fill: 'context-stroke' }),
           ),
         ),
-        state.paths.map(({ edge, d }) =>
+        state.paths.map(({ edge, d, label }) =>
           h(
-            'path',
-            {
-              // The id is referenced by the label's textPath, so the label rides the curve.
-              id: edgePathId(edge.id),
-              key: edge.id,
-              d,
-              fill: 'none',
-              stroke: 'var(--dsw-alias-label-tertiary)',
-              strokeWidth: 1.5,
-              strokeDasharray: edge.style === 'dashed' ? '6 4' : edge.style === 'dotted' ? '2 3' : undefined,
-              markerEnd: 'url(#sb-arrow)',
-            },
-            edge.label === undefined
+            'g',
+            { key: edge.id },
+            h(
+              'path',
+              {
+                // Names the path so anyone inspecting a rendered board can tell which edge drew which
+                // line. The label below is a plain `<text>` at the curve's midpoint rather than a
+                // `textPath` riding this path, so nothing references the id — see that element for
+                // why.
+                id: edgePathId(edge.id),
+                d,
+                fill: 'none',
+                stroke: 'var(--dsw-alias-label-tertiary)',
+                strokeWidth: 1.5,
+                strokeDasharray: edge.style === 'dashed' ? '6 4' : edge.style === 'dotted' ? '2 3' : undefined,
+                markerEnd: 'url(#sb-arrow)',
+              },
+              // Kept as well as the visible label below: the `<title>` is what a screen reader and a
+              // hover announce, and the chip is what a screenshot and a film show. Neither replaces
+              // the other.
+              edge.label === undefined ? null : h('title', null, edge.label),
+            ),
+            edge.label === undefined || label === undefined
               ? null
               : h(
-                  'title',
-                  null,
+                  'text',
+                  {
+                    className: 'sb-edgeLabel',
+                    x: round(label.x),
+                    y: round(label.y),
+                    textAnchor: 'middle',
+                    // Centred on the curve's midpoint rather than riding a `textPath`. A textPath
+                    // squeezes its glyphs through a tight bend and turns a short label into a smear,
+                    // and the board's arrows bend a lot; a label that stops being readable to prove
+                    // it follows the line is the wrong trade. Text also reads best upright, so it is
+                    // not rotated onto the tangent.
+                    dominantBaseline: 'central',
+                  },
+                  h('rect', {
+                    className: 'sb-edgeLabelChip',
+                    // A plate, sized from the text: `0.62em` is a hair over half an em per glyph,
+                    // which is right for a mixed Chinese/Latin label and errs wide rather than tight.
+                    x: round(-0.31 * edge.label.length * 10 - 3),
+                    y: -8,
+                    width: round(0.62 * edge.label.length * 10 + 6),
+                    height: 16,
+                    rx: 8,
+                  }),
                   edge.label,
                 ),
           ),
@@ -1837,6 +2528,9 @@ window.__ModuleLoader__.load({
       if (left.length !== right.length) return false
       for (let index = 0; index < left.length; index += 1) {
         if (left[index].edge.id !== right[index].edge.id || left[index].d !== right[index].d) return false
+        // The label's own position too: a label whose endpoint moved would otherwise keep the chip
+        // where the label used to be, which reads as a label belonging to the wrong arrow.
+        if (left[index].label?.x !== right[index].label?.x || left[index].label?.y !== right[index].label?.y) return false
       }
       return true
     }
@@ -1847,17 +2541,144 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * The points an arrow with `waypoints` calls at, in canvas coordinates, in order.
+     *
+     * A waypoint is normalised to **the box spanning the two endpoint rectangles**
+     * (`docs/design/board-model.md`'s edge section, and `src/tools.js`'s `add_edge`), not to either
+     * endpoint and not to the canvas: the author is saying "and on the way, through here", where
+     * "here" is a place in the gap between the two cards. Normalising to that gap is what keeps a
+     * waypoint attached to the two blocks it joins rather than to the page, so a re-layout that
+     * moves both cards moves the detour with them.
+     *
+     * @param from - the source box, in canvas content coordinates.
+     * @param to - the target box.
+     * @param waypoints - `[{x, y}]` in `[0, 1]`, or `undefined`.
+     * @returns the mapped points, dropping any that are not two finite numbers.
+     */
+    function viaPoints(from, to, waypoints) {
+      if (!Array.isArray(waypoints)) return []
+      const gap = unionRect([from, to])
+      if (gap === undefined) return []
+      const points = []
+      for (const waypoint of waypoints) {
+        const x = coordinate(waypoint?.x)
+        const y = coordinate(waypoint?.y)
+        // One unreadable waypoint is dropped rather than taken as the origin: a detour through the
+        // corner of the gap is a visible lie, and the rest of the author's waypoints are still
+        // exactly where they were asked to be.
+        if (x === undefined || y === undefined) continue
+        points.push({ x: gap.left + unit(x) * gap.width, y: gap.top + unit(y) * gap.height })
+      }
+      return points
+    }
+
+    /**
      * Route an arrow between two boxes.
      *
      * A cubic curve leaving the source's nearest side and arriving at the target's facing side,
      * which reads well for both a vertical flow and a side-by-side pair without needing a
      * general graph router.
+     *
+     * With waypoints the curve is replaced by straight segments through them. A corner at a waypoint
+     * is the point of a waypoint — it is the one place on the board where the author said exactly
+     * where the line goes — and a curve smoothed through them would move the line off the place it
+     * was put. The departure and arrival points are the same either way, so an edge gains a detour
+     * without changing where it leaves or lands.
+     *
+     * @param from - the source box, in canvas content coordinates.
+     * @param to - the target box.
+     * @param waypoints - `[{x, y}]` in `[0, 1]` of the box spanning `from` and `to`, or `undefined`.
+     * @returns the SVG path data.
      */
-    function routeBetween(from, to) {
+    function routeBetween(from, to, waypoints) {
+      const curve = curvePoints(from, to)
+      if (curve === undefined) return ''
+      const via = viaPoints(from, to, waypoints)
+      if (via.length === 0) {
+        const { start, c1, c2, end } = curve
+        return `M ${round(start.x)} ${round(start.y)} C ${round(c1.x)} ${round(c1.y)}, ${round(c2.x)} ${round(c2.y)}, ${round(end.x)} ${round(end.y)}`
+      }
+      const points = [curve.start, ...via, curve.end]
+      return `M ${round(points[0].x)} ${round(points[0].y)} ${points
+        .slice(1)
+        .map((point) => `L ${round(point.x)} ${round(point.y)}`)
+        .join(' ')}`
+    }
+
+    /**
+     * The point halfway along a polyline, measured along it rather than by counting vertices.
+     *
+     * The label of an edge with waypoints has to sit on the line the way the curved one does, and
+     * "halfway" for a broken line is half its *length*: halfway between the first and last vertex is
+     * not on the line at all once there is a detour in it.
+     *
+     * @param points - the vertices, in order. At least two.
+     * @returns `{x, y}`, or `undefined` for a line of no length.
+     */
+    function polylineMidpoint(points) {
+      if (points.length < 2) return undefined
+      const legs = []
+      let total = 0
+      for (let index = 1; index < points.length; index += 1) {
+        const length = Math.hypot(points[index].x - points[index - 1].x, points[index].y - points[index - 1].y)
+        legs.push(length)
+        total += length
+      }
+      if (total === 0) return undefined
+      let want = total / 2
+      for (let index = 0; index < legs.length; index += 1) {
+        if (want <= legs[index]) {
+          const share = legs[index] === 0 ? 0 : want / legs[index]
+          return {
+            x: points[index].x + (points[index + 1].x - points[index].x) * share,
+            y: points[index].y + (points[index + 1].y - points[index].y) * share,
+          }
+        }
+        want -= legs[index]
+      }
+      return points[points.length - 1]
+    }
+
+    /**
+     * Which edges a page draws and which ones it can only allude to.
+     *
+     * An edge is drawn here only when **both** endpoints are blocks of this page, and an edge with
+     * exactly one endpoint here is the case that used to be invisible. It is not a defect of the
+     * model — a cross-page edge is a legitimate thing to write, and `board_query` answers for it —
+     * but a reader looking at the page could not tell "the Agent wrote no such edge" from "the edge
+     * is drawn on the page the other block lives on". Those are different states of the board and
+     * they must not look the same.
+     *
+     * @param edges - every edge in the model.
+     * @param blockIds - the ids of the blocks on this page.
+     * @returns `{ drawn, cross }`.
+     */
+    function countEdges(edges, blockIds) {
+      let drawn = 0
+      let cross = 0
+      for (const edge of edges) {
+        const from = blockIds.has(edge.from.blockId)
+        const to = blockIds.has(edge.to.blockId)
+        if (from && to) drawn += 1
+        else if (from || to) cross += 1
+      }
+      return { drawn, cross }
+    }
+
+    /**
+     * A cubic curve leaving the source's nearest side and arriving at the target's facing side.
+     *
+     * The control points, not the path string: an edge is drawn *and* annotated, and a label placed
+     * from a second, separately derived curve would eventually sit somewhere the line does not go.
+     *
+     * @returns `{start, c1, c2, end, vertical}`, or `undefined` when both boxes have the same centre.
+     */
+    function curvePoints(from, to) {
       const fromCenter = { x: from.left + from.width / 2, y: from.top + from.height / 2 }
       const toCenter = { x: to.left + to.width / 2, y: to.top + to.height / 2 }
       const dx = toCenter.x - fromCenter.x
       const dy = toCenter.y - fromCenter.y
+      if (dx === 0 && dy === 0) return undefined
       const vertical = Math.abs(dy) >= Math.abs(dx)
 
       const start = vertical
@@ -1870,7 +2691,49 @@ window.__ModuleLoader__.load({
       const bow = Math.max(18, Math.min(60, Math.abs(vertical ? dy : dx) / 3))
       const c1 = vertical ? { x: start.x, y: start.y + (end.y > start.y ? bow : -bow) } : { x: start.x + (end.x > start.x ? bow : -bow), y: start.y }
       const c2 = vertical ? { x: end.x, y: end.y - (end.y > start.y ? bow : -bow) } : { x: end.x - (end.x > start.x ? bow : -bow), y: end.y }
-      return `M ${round(start.x)} ${round(start.y)} C ${round(c1.x)} ${round(c1.y)}, ${round(c2.x)} ${round(c2.y)}, ${round(end.x)} ${round(end.y)}`
+      return { start, c1, c2, end, vertical }
+    }
+
+    /**
+     * Where an edge's label sits.
+     *
+     * The curve's own midpoint — the point at `t = 0.5`, not the midpoint of the straight line
+     * between the endpoints. On a bowed arrow those are visibly different: the chord's midpoint can
+     * sit a third of the arrow's length off the line it is supposed to annotate.
+     *
+     * Halfway is where the arrowhead is not. The `refX: 9` marker is drawn at the end, and a label
+     * anywhere near it would either collide with it or read as part of it.
+     *
+     * @returns `{x, y}`, or `undefined` for two boxes with the same centre — a degenerate curve has
+     *   no midpoint worth naming.
+     */
+    function curveMidpoint(from, to) {
+      const curve = curvePoints(from, to)
+      if (curve === undefined) return undefined
+      // A cubic Bezier at t = 1/2 is (P0 + 3P1 + 3P2 + P3) / 8.
+      return {
+        x: (curve.start.x + 3 * curve.c1.x + 3 * curve.c2.x + curve.end.x) / 8,
+        y: (curve.start.y + 3 * curve.c1.y + 3 * curve.c2.y + curve.end.y) / 8,
+      }
+    }
+
+    /**
+     * Where an edge's label sits, for whichever route the edge takes.
+     *
+     * One function rather than a choice at the call site: the label and the line it annotates are
+     * derived from the same route or the label ends up beside the arrow instead of on it, and the
+     * caller should not have to know which shape it asked for to know where the middle is.
+     *
+     * @param waypoints - as {@link routeBetween}.
+     * @returns `{x, y}`, or `undefined` for a route with no middle worth naming.
+     */
+    function pathMidpoint(from, to, waypoints) {
+      const via = viaPoints(from, to, waypoints)
+      if (via.length > 0) {
+        const curve = curvePoints(from, to)
+        return curve === undefined ? undefined : polylineMidpoint([curve.start, ...via, curve.end])
+      }
+      return curveMidpoint(from, to)
     }
 
     /** One decimal is plenty for a path and keeps the DOM diff stable. */
@@ -2252,50 +3115,90 @@ window.__ModuleLoader__.load({
      * reading, so a card's text is untrusted by the time it renders; building elements means
      * anything the tokenizer does not recognise stays inert.
      *
-     * @param props - `{ text, className }`.
+     * @param props - `{ text, className, base }`, where `base` is the offset of `text` within the
+     *   field it belongs to, so a nested run's character offsets are the field's.
      * @returns the rendered element.
      */
-    function Markdown({ text, className }) {
+    function Markdown({ text, className, base }) {
       const blocks = parseMarkdownBlocks(text)
+      let at = base ?? 0
+      const rendered = blocks.map((block, index) => {
+        const element = renderMarkdownBlock(block, `md${index}`, at)
+        at += markdownSourceLength(block)
+        return element
+      })
       return h(
         'div',
-        { className: className === undefined ? 'sb-md' : `sb-md ${className}` },
-        blocks.map((block, index) => renderMarkdownBlock(block, `md${index}`)),
+        {
+          className: className === undefined ? 'sb-md' : `sb-md ${className}`,
+          // Read by a `text` anchor. `text-base` is where this container's rendered text starts in
+          // the *field's* text — non-zero only for a run nested inside another, such as a quote.
+          'data-superboard-field': 'text',
+          'data-superboard-text-base': base ?? 0,
+        },
+        rendered,
       )
     }
 
+    /**
+     * How many characters of the source one markdown block accounts for.
+     *
+     * Used to advance a `text` anchor's origin past each block. Only a paragraph, a heading and a
+     * single-line list item are the block's own text; everything else — the pipes of a table, a
+     * quote's nested source — has no single character range that means anything, so those report an
+     * upper bound. The price of being generous is that an anchor inside a *later* block of a
+     * multi-block card lands somewhere in the right paragraph rather than exactly on the word, which
+     * is why the renderer's job is to be close and the resolver's job is to be honest about it.
+     */
+    function markdownSourceLength(block) {
+      if (block.type === 'paragraph') return block.text.length
+      if (block.type === 'heading') return block.text.length
+      if (block.type === 'code') return block.text.length
+      if (block.type === 'list') return block.items.reduce((total, item) => total + item.text.length, 0)
+      return JSON.stringify(block).length
+    }
+
     /** Render one block descriptor. */
-    function renderMarkdownBlock(block, key) {
+    function renderMarkdownBlock(block, key, base) {
+      const from = base ?? 0
       switch (block.type) {
         case 'code':
           return h(
             'pre',
             { className: 'sb-code', key },
             block.lang === '' ? null : h('div', { className: 'sb-codeLang' }, block.lang),
-            h('code', { className: codeClass(block.lang) }, block.text),
+            h('code', { className: codeClass(block.lang), 'data-superboard-from': from }, block.text),
           )
         case 'heading': {
           const level = Math.min(Math.max(block.level, 1), 6)
-          return h(`h${level}`, { className: `sb-mdH sb-mdH${level}`, key }, renderInline(parseInline(block.text), key))
+          return h(
+            `h${level}`,
+            { className: `sb-mdH sb-mdH${level}`, key },
+            renderInline(parseInline(block.text), key, from),
+          )
         }
         case 'quote':
           return h(
             'blockquote',
             { className: 'sb-mdQuote', key },
-            h(Markdown, { text: block.text, className: 'sb-mdInner' }),
+            h(Markdown, { text: block.text, className: 'sb-mdInner', base: from }),
           )
-        case 'list':
+        case 'list': {
+          let itemAt = from
           return h(
             block.ordered ? 'ol' : 'ul',
             { className: 'sb-mdList', key },
-            block.items.map((item, position) =>
-              h(
+            block.items.map((item, position) => {
+              const element = h(
                 'li',
                 { key: `${key}-${position}`, style: item.depth > 0 ? { marginLeft: item.depth * 14 } : undefined },
-                renderInline(parseInline(item.text), `${key}-${position}`),
-              ),
-            ),
+                renderInline(parseInline(item.text), `${key}-${position}`, itemAt),
+              )
+              itemAt += item.text.length
+              return element
+            }),
           )
+        }
         case 'table': {
           // Ragged tables are normal in the wild, so the grid is as wide as its widest row and
           // a short row is padded rather than silently clipped.
@@ -2749,9 +3652,13 @@ window.__ModuleLoader__.load({
 
       const pageBlocks = activePage?.blocks ?? []
       const blockIds = new Set(pageBlocks.map((block) => block.id))
+      // The arrows this page can actually draw: both endpoints here. The header reports the ones it
+      // cannot — see `countEdges` — because "drawn on another page" and "not an edge" must not look
+      // the same.
       const pageEdges = (model?.edges ?? []).filter(
         (edge) => blockIds.has(edge.from.blockId) && blockIds.has(edge.to.blockId),
       )
+      const edgeCounts = countEdges(model?.edges ?? [], blockIds)
       const slugOf = (id) => pageBlocks.find((block) => block.id === id)?.slug ?? id
 
       /** Block id to block, for resolving a container's children without rescanning. */
@@ -3016,6 +3923,15 @@ window.__ModuleLoader__.load({
                 { className: 'sb-rev' },
                 `${pages.reduce((sum, page) => sum + page.blocks.length, 0)} block(s) · ${(model.edges ?? []).length} edge(s)`,
               ),
+              // Only when there is one to report. A badge that is always present, and usually reads
+              // zero, is furniture; this one appears exactly when the page is not showing everything
+              // it is part of, which is when a reader needs to know.
+              edgeCounts.cross > 0 &&
+                h(
+                  'span',
+                  { className: 'sb-crossPage' },
+                  `${edgeCounts.cross} 条边连到其他页`,
+                ),
             ),
             pages.length > 1 &&
               h(
@@ -3182,12 +4098,21 @@ window.__ModuleLoader__.load({
         h(
           'div',
           { className: 'sb-groupHead' },
-          h('span', { className: 'sb-slug' }, block.slug),
-          // A slug is the address and a title is the label; when the Agent uses the same words for
-          // both, printing them twice reads as a rendering fault rather than as information.
+          h(
+            'span',
+            {
+              className: 'sb-slug',
+              // A slug is the address and a title is the label; when the Agent uses the same words
+              // for both, printing them twice reads as a rendering fault rather than as information
+              // — so this span is what prints the title in that case, and it is the `title` field
+              // for the same reason the span below is when the two differ.
+              'data-superboard-field': block.title !== undefined && block.title === block.slug ? 'title' : undefined,
+            },
+            block.slug,
+          ),
           block.title !== undefined &&
             block.title !== block.slug &&
-            h('span', { className: 'sb-groupTitle' }, block.title),
+            h('span', { className: 'sb-groupTitle', 'data-superboard-field': 'title' }, block.title),
           h('span', { className: 'sb-kind' }, `${children.length} 项`),
           region?.label !== undefined && h('span', { className: `sb-regionTag sb-tone-${region.tone ?? 'neutral'}` }, region.label),
         ),
@@ -3343,6 +4268,29 @@ window.__ModuleLoader__.load({
       // Pure geometry and template selection: testable without a DOM, which matters because a
       // wrong bezier still renders — it just points somewhere unhelpful, silently.
       routeBetween,
+      curvePoints,
+      curveMidpoint,
+      // An edge with waypoints is a different shape with a different middle, so both the route and
+      // the label are pure functions of the two boxes and the detour, and both are testable here.
+      viaPoints,
+      polylineMidpoint,
+      pathMidpoint,
+      // Anchor resolution and the edge census. The resolver is the pure half of a split that exists
+      // so this can be tested at all: nine anchor kinds whose whole promise is *which* rectangle a
+      // descriptor names, and the arc that made a page's missing arrows visible instead of absent.
+      anchorRect,
+      // Which blocks a `child` anchor may name. Pure, and the reason is a bug rather than a style:
+      // the inline version gave every block a `children` map containing only itself.
+      childrenByParent,
+      countEdges,
+      // The crop a `pdf-page` is rasterised to. Pure, and separated from the rasteriser for the same
+      // reason the resolver is: the arithmetic is what decides which part of a page an arrow points
+      // into, and the pdf.js call around it is the part that cannot be tested here.
+      pageCrop,
+      // What a rendered mermaid SVG says its nodes are, and a code block's text split into the lines
+      // an anchor counts. Both pure: one parses text, the other builds elements.
+      diagramNodeTable,
+      codeLines,
       layoutClass,
       layoutStyle,
       // The tree and the tree flattening. DOM-free, so the rules that decide *what sits at the top

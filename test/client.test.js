@@ -801,6 +801,486 @@ test('deeply nested emphasis terminates instead of recursing without bound', () 
 })
 
 // ---------------------------------------------------------------------------
+// Anchor resolution
+// ---------------------------------------------------------------------------
+
+/**
+ * The measured facts one block contributes, in the shape the collector produces.
+ *
+ * Written as a literal because that is exactly the contract: `anchorRect` sees no DOM and no element,
+ * only numbers a collector already reduced. A test that had to build a document to ask "which
+ * rectangle does `lines {from: 1, to: 2}` name" would not be testing the resolver at all.
+ */
+const at = {
+  block: box(100, 100, 400, 300),
+  frame: box(110, 120, 380, 200),
+  fields: {
+    code: box(100, 200, 400, 100),
+    caption: box(100, 420, 400, 20),
+    filename: box(100, 180, 400, 16),
+    title: box(100, 110, 400, 24),
+  },
+  items: { li_a: box(120, 150, 360, 20), li_b: box(120, 175, 360, 20) },
+  children: { bl_child: box(150, 160, 200, 80) },
+  lines: [undefined, box(100, 200, 400, 18), box(100, 218, 400, 18), box(100, 236, 400, 18)],
+  text: [
+    { at: 0, length: 5, rect: box(100, 100, 50, 20) },
+    { at: 5, length: 5, rect: box(150, 100, 50, 20) },
+  ],
+  nodes: { w: 200, h: 100, nodes: { A: { x: 20, y: 10, w: 40, h: 20 }, B: { x: 120, y: 60, w: 60, h: 30 } } },
+  diagram: box(200, 300, 400, 200),
+}
+
+test('the whole block is the default, with or without the descriptor', () => {
+  assert.deepEqual(plain(client.anchorRect(undefined, at)), plain(at.block))
+  assert.deepEqual(plain(client.anchorRect({ kind: 'block' }, at)), plain(at.block))
+})
+
+test('a field anchor names the field, not the card it sits in', () => {
+  assert.deepEqual(plain(client.anchorRect({ kind: 'field', field: 'code' }, at)), plain(at.fields.code))
+  assert.deepEqual(plain(client.anchorRect({ kind: 'field', field: 'caption' }, at)), plain(at.fields.caption))
+  assert.deepEqual(plain(client.anchorRect({ kind: 'field', field: 'filename' }, at)), plain(at.fields.filename))
+  assert.deepEqual(plain(client.anchorRect({ kind: 'field', field: 'title' }, at)), plain(at.fields.title))
+})
+
+test('an item anchor names one row of a list', () => {
+  const rect = client.anchorRect({ kind: 'item', itemId: 'li_b' }, at)
+  assert.deepEqual(plain(rect), plain(at.items.li_b))
+})
+
+test('a child anchor is the child block, which the collector already measured', () => {
+  const rect = client.anchorRect({ kind: 'child', childId: 'bl_child' }, at)
+  assert.deepEqual(plain(rect), plain(at.children.bl_child))
+})
+
+test('a group reaches its own children and nothing else on the page', () => {
+  // The bug this pins: the map was filled by walking `[id, target]` pairs of one map and assigning
+  // `target.children[id]`, where `id` moves with `target` — so every block ended up with exactly one
+  // entry, itself, and every `child` anchor fell back to its own group's box.
+  const boxes = new Map([
+    ['bl_group', box(0, 0, 400, 200)],
+    ['bl_inner', box(10, 10, 180, 80)],
+    ['bl_other', box(200, 10, 180, 80)],
+    ['bl_stranger', box(0, 500, 400, 60)],
+    ['bl_nested', box(10, 100, 380, 90)],
+    ['bl_deep', box(20, 110, 160, 60)],
+  ])
+  const blocks = [
+    { id: 'bl_group', kind: 'group', children: ['bl_inner', 'bl_other', 'bl_nested'] },
+    { id: 'bl_inner', kind: 'prose' },
+    { id: 'bl_other', kind: 'prose' },
+    // A group inside a group owns its own children, not its parent's.
+    { id: 'bl_nested', kind: 'group', children: ['bl_deep'] },
+    { id: 'bl_deep', kind: 'prose' },
+    { id: 'bl_top', kind: 'heading' },
+  ]
+  const owned = client.childrenByParent(blocks, boxes)
+  assert.deepEqual([...owned.keys()], ['bl_group', 'bl_nested'])
+  // `bl_stranger` is on the page and measured, but no group lists it: reachable through nothing.
+  assert.deepEqual(Object.keys(owned.get('bl_group')), ['bl_inner', 'bl_other', 'bl_nested'])
+  assert.deepEqual(Object.keys(owned.get('bl_nested')), ['bl_deep'])
+  // A child that is listed but not rendered contributes nothing, so the resolver falls back rather
+  // than resolving to `undefined` from inside a group that does have children.
+  const partial = client.childrenByParent([{ id: 'bl_group', kind: 'group', children: ['bl_inner', 'bl_gone'] }], boxes)
+  assert.deepEqual(Object.keys(partial.get('bl_group')), ['bl_inner'])
+  // A block with no children of its own is not in the map at all, and neither is a page of none.
+  assert.equal(owned.has('bl_inner'), false)
+  assert.equal(client.childrenByParent([], boxes).size, 0)
+  assert.equal(client.childrenByParent([{ id: 'bl_top', kind: 'heading' }], boxes).size, 0)
+})
+
+test('a line range is the union of its lines, whichever way round it is written', () => {
+  const forwards = client.anchorRect({ kind: 'lines', from: 1, to: 2 }, at)
+  assert.equal(forwards.top, 200)
+  assert.equal(forwards.height, 36, 'two 18px lines')
+  // A backwards range is the same range: `from`/`to` are named, not ordered, and a resolver that
+  // read them positionally would return a box of no height rather than an error.
+  assert.deepEqual(plain(client.anchorRect({ kind: 'lines', from: 2, to: 1 }, at)), plain(forwards))
+  // A range over lines that are not rendered keeps the ones that are: line 1 is not in it.
+  const late = client.anchorRect({ kind: 'lines', from: 2, to: 9 }, at)
+  assert.equal(late.top, 218)
+  assert.equal(late.height, 36)
+  // A range that starts past the end of the code is no lines at all, so it is the block box.
+  assert.deepEqual(plain(client.anchorRect({ kind: 'lines', from: 40, to: 50 }, at)), plain(at.block))
+})
+
+test('a text range is a slice of the run it covers, because a range on one line is exact', () => {
+  const whole = client.anchorRect({ kind: 'text', start: 0, end: 10 }, at)
+  assert.equal(whole.left, 100)
+  assert.equal(whole.width, 100)
+
+  const firstHalf = client.anchorRect({ kind: 'text', start: 0, end: 5 }, at)
+  assert.equal(firstHalf.width, 50, 'half of the first run')
+
+  const secondHalf = client.anchorRect({ kind: 'text', start: 5, end: 10 }, at)
+  assert.equal(secondHalf.left, 150, 'starts where the second run starts')
+  assert.equal(secondHalf.width, 50)
+
+  // A range covering half of each run: the box that contains both halves.
+  const straddling = client.anchorRect({ kind: 'text', start: 3, end: 7 }, at)
+  assert.equal(straddling.left, 130)
+  assert.equal(straddling.width, 40)
+})
+
+test('a text range is clamped to the text that exists rather than reaching off the card', () => {
+  const clamped = client.anchorRect({ kind: 'text', start: 0, end: 999 }, at)
+  assert.equal(clamped.left, 100)
+  assert.equal(clamped.width, 100)
+  // An empty range still names a caret position, and a zero-width box at that position is what a
+  // caller can draw; the alternative is a fall back to the whole card, which says the opposite.
+  // Character 5 is the head of the second run, so that is where the caret is.
+  const caret = client.anchorRect({ kind: 'text', start: 5, end: 5 }, at)
+  assert.deepEqual(plain(caret), { left: 150, top: 100, width: 1, height: 20 })
+})
+
+test('a rect anchor is normalised against the picture, and a point is a zero-size rect', () => {
+  // `at.frame` is 380×200 at (110, 120): a quarter in from the left, half down, half as wide.
+  const rect = client.anchorRect({ kind: 'rect', x: 0.25, y: 0.5, w: 0.5, h: 0.25 }, at)
+  assert.deepEqual(plain(rect), { left: 110 + 95, top: 120 + 100, width: 190, height: 50 })
+
+  const point = client.anchorRect({ kind: 'point', x: 0, y: 1 }, at)
+  assert.deepEqual(plain(point), { left: 110, top: 320, width: 0, height: 0 })
+})
+
+test('a pdf-page rect is measured against the crop, because the crop is the picture', () => {
+  // A cropped `pdf-page` rasterises only the crop and sizes the canvas to it, so the rendered frame
+  // *is* the crop and there is nothing left for the resolver to map. This is the shape that makes
+  // `crop` load-bearing: the frame here is 200×100, the crop's own size, not the page's.
+  const cropped = { ...at, frame: box(100, 50, 200, 100) }
+  const rect = client.anchorRect({ kind: 'rect', x: 0, y: 0, w: 1, h: 1 }, cropped)
+  assert.deepEqual(plain(rect), { left: 100, top: 50, width: 200, height: 100 })
+
+  const half = client.anchorRect({ kind: 'point', x: 0.5, y: 0.5 }, cropped)
+  assert.deepEqual(plain(half), { left: 200, top: 100, width: 0, height: 0 })
+
+  // Outside [0,1] is clamped rather than allowed to leave the frame: a normalised coordinate is
+  // defined over the box, and an unclamped one would draw an arrow into the next card.
+  const clamped = client.anchorRect({ kind: 'rect', x: -1, y: -1, w: 3, h: 3 }, cropped)
+  assert.deepEqual(plain(clamped), { left: 100, top: 50, width: 200, height: 100 })
+})
+
+test('a crop is normalised to the page, and an unreadable one is the whole page', () => {
+  assert.deepEqual(plain(client.pageCrop({ x: 0.1, y: 0.2, w: 0.5, h: 0.25 })), { x: 0.1, y: 0.2, w: 0.5, h: 0.25 })
+
+  // Three cases with one answer: no crop, the whole page as a crop, and a crop that is not a box.
+  // All of them mean "show the page", and the failure mode of guessing otherwise is a blank canvas.
+  for (const value of [undefined, null, 'left', 7, {}, { x: 0, y: 0, w: 1, h: 1 }, { x: 0, y: 0, w: 0, h: 1 }, { x: 0, y: 0, w: 1, h: -1 }, { x: 0, y: 0, w: 'wide', h: 1 }]) {
+    assert.equal(client.pageCrop(value), undefined, `${JSON.stringify(value)} is the whole page`)
+  }
+
+  // Clamped into the page rather than rejected: a crop running off the edge shows the edge.
+  assert.deepEqual(plain(client.pageCrop({ x: 0.8, y: 0, w: 0.5, h: 1 })), { x: 0.8, y: 0, w: 0.2, h: 1 })
+  // And a negative corner is the page's corner, like every other normalised coordinate on the board.
+  assert.deepEqual(plain(client.pageCrop({ x: -0.5, y: -0.5, w: 0.5, h: 0.5 })), { x: 0, y: 0, w: 0.5, h: 0.5 })
+})
+
+test('a node anchor is the node, scaled from SVG user units onto the picture', () => {
+  // The SVG is 200×100 and the picture 400×200, so it is drawn at 2×.
+  const a = client.anchorRect({ kind: 'node', key: 'A' }, at)
+  assert.deepEqual(plain(a), { left: 200 + 40, top: 300 + 20, width: 80, height: 40 })
+  const b = client.anchorRect({ kind: 'node', key: 'B' }, at)
+  assert.deepEqual(plain(b), { left: 200 + 240, top: 300 + 120, width: 120, height: 60 })
+  // A key the diagram does not name — another family, a typo, a diagram that has not drawn — is the
+  // block box. A missing node must never blank the arrow.
+  assert.deepEqual(plain(client.anchorRect({ kind: 'node', key: 'nope' }, at)), plain(at.block))
+})
+
+test('every anchor kind falls back to the block box instead of throwing', () => {
+  const bare = { block: at.block }
+  const cases = [
+    undefined,
+    { kind: 'block' },
+    { kind: 'field', field: 'code' },
+    { kind: 'item', itemId: 'li_a' },
+    { kind: 'child', childId: 'bl_child' },
+    { kind: 'lines', from: 1, to: 2 },
+    { kind: 'text', start: 0, end: 3 },
+    { kind: 'node', key: 'A' },
+  ]
+  for (const spec of cases) {
+    assert.deepEqual(plain(client.anchorRect(spec, bare)), plain(at.block), `no measurement for ${JSON.stringify(spec)}`)
+  }
+  // `rect` and `point` need no hook of their own: the block's own box is the frame, so they resolve
+  // against a target that carries nothing but the block.
+  assert.deepEqual(plain(client.anchorRect({ kind: 'rect', x: 0, y: 0, w: 1, h: 1 }, bare)), plain(at.block))
+  assert.deepEqual(plain(client.anchorRect({ kind: 'point', x: 0, y: 0 }, bare)), { left: 100, top: 100, width: 0, height: 0 })
+})
+
+test('a descriptor the renderer does not know, or nonsense in one, is the block box and not a crash', () => {
+  // The fold keeps `at.kind` and the block's kind compatible, but a value can still arrive from an
+  // older build, and a throw inside `EdgeLayer` takes the whole pane down to a blank rectangle.
+  for (const spec of [
+    { kind: 'invented' },
+    { kind: 'lines', from: 'one', to: 'two' },
+    { kind: 'rect', x: 'left', y: null, w: {}, h: [] },
+    { kind: 'point', x: 'left', y: 0.5 },
+    { kind: 'text', start: undefined, end: undefined },
+    { kind: 'node' },
+  ]) {
+    assert.deepEqual(plain(client.anchorRect(spec, at)), plain(at.block), `fell back for ${JSON.stringify(spec)}`)
+  }
+  // A point with no readable coordinate is not "at the origin": the caller must see the block box
+  // rather than an arrowhead pinned to the corner of the card.
+  assert.deepEqual(plain(client.anchorRect({ kind: 'point', x: NaN, y: 0.5 }, at)), plain(at.block))
+  // And a target with nothing in it at all, which is what a block mid-mount looks like.
+  assert.deepEqual(plain(client.anchorRect({ kind: 'item', itemId: 'x' }, {})), { left: 0, top: 0, width: 0, height: 0 })
+})
+
+// ---------------------------------------------------------------------------
+// The label's position, and the edges a page cannot draw
+// ---------------------------------------------------------------------------
+
+test('the label sits on the curve at its own middle', () => {
+  // An asymmetric pair, so the two control points pull along different axes — (260, 30) against
+  // (340, 130) — and the cubic's value at t = 1/2 is what decides where the label goes:
+  // (P0 + 3P1 + 3P2 + P3) / 8, which is (300, 80) here.
+  const from = box(0, 0, 200, 60)
+  const to = box(400, 100, 200, 60)
+  const mid = client.curveMidpoint(from, to)
+  const curve = client.curvePoints(from, to)
+  assert.deepEqual(plain(curve.c1), { x: 260, y: 30 })
+  assert.deepEqual(plain(curve.c2), { x: 340, y: 130 })
+  assert.deepEqual(plain(mid), { x: 300, y: 80 })
+  assert.deepEqual(plain(mid), {
+    x: (curve.start.x + 3 * curve.c1.x + 3 * curve.c2.x + curve.end.x) / 8,
+    y: (curve.start.y + 3 * curve.c1.y + 3 * curve.c2.y + curve.end.y) / 8,
+  })
+  // The label is placed from the cubic, not from the straight line between the two anchor centres:
+  // on the pair below the curve leaves through the bottom and arrives at the top, so the cubic's
+  // middle coincides with the chord's — which is what makes the two formulas indistinguishable there
+  // and is exactly why the boxes above are the ones worth pinning.
+  const tall = client.curveMidpoint(box(0, 0, 200, 60), box(0, 400, 200, 60))
+  assert.deepEqual(plain(tall), { x: 100, y: 230 })
+  assert.equal(tall.y, (30 + 430) / 2)
+})
+
+test('the label is never at the arrowhead', () => {
+  const from = box(0, 0)
+  const to = box(0, 400)
+  const curve = client.curvePoints(from, to)
+  const mid = client.curveMidpoint(from, to)
+  // Halfway along, and the head is drawn at the end.
+  assert.equal(mid.y, (curve.start.y + 3 * curve.c1.y + 3 * curve.c2.y + curve.end.y) / 8)
+  assert.ok(Math.abs(mid.y - curve.end.y) > 60, 'well clear of the end')
+})
+
+test('two boxes with the same centre have no curve, so they have no label', () => {
+  const same = box(100, 100, 200, 60)
+  assert.equal(client.curveMidpoint(same, box(100, 100, 200, 60)), undefined)
+  assert.equal(client.curvePoints(same, box(100, 100, 200, 60)), undefined)
+  // A path of nothing rather than a path of NaN: an unrenderable `d` makes SVG drop the element.
+  assert.equal(client.routeBetween(same, box(100, 100, 200, 60)), '')
+})
+
+test('a waypoint is a place in the gap between the two cards, not a place on the page', () => {
+  const from = box(0, 0, 200, 60)
+  const to = box(400, 100, 200, 60)
+  // The box spanning the two endpoint rectangles is (0, 0) to (600, 160).
+  assert.deepEqual(plain(client.viaPoints(from, to, [{ x: 0.5, y: 0.5 }])), [{ x: 300, y: 80 }])
+  assert.deepEqual(plain(client.viaPoints(from, to, [{ x: 0, y: 0 }, { x: 1, y: 1 }])), [
+    { x: 0, y: 0 },
+    { x: 600, y: 160 },
+  ])
+  // Move both cards and the detour moves with them, which is the whole reason it is normalised to
+  // the gap: a waypoint tied to the page would drift off the line the first time a card grew.
+  const moved = client.viaPoints(box(1000, 0, 200, 60), box(1400, 100, 200, 60), [{ x: 0.5, y: 0.5 }])
+  assert.deepEqual(plain(moved), [{ x: 1300, y: 80 }])
+
+  // No waypoints, an empty list, or a value that is not a list: nothing to call at.
+  for (const value of [undefined, null, [], 'halfway']) assert.deepEqual(plain(client.viaPoints(from, to, value)), [])
+  // One unreadable waypoint is dropped; the ones that are readable stay exactly where they were put.
+  assert.deepEqual(plain(client.viaPoints(from, to, [{ x: 'left', y: 0 }, { x: 0.25, y: 0.5 }])), [{ x: 150, y: 80 }])
+  // Out of range is clamped into the gap rather than allowed to leave the board.
+  assert.deepEqual(plain(client.viaPoints(from, to, [{ x: -1, y: 4 }])), [{ x: 0, y: 160 }])
+})
+
+test('an edge with waypoints is a broken line through them, and without them is the same curve', () => {
+  const from = box(0, 0, 200, 60)
+  const to = box(400, 100, 200, 60)
+  // The departure and arrival points are the cubic's, whatever happens in between: adding a detour
+  // must not move where the arrow leaves or lands.
+  const curve = client.curvePoints(from, to)
+  const routed = client.routeBetween(from, to, [{ x: 0.5, y: 0 }])
+  assert.equal(routed, `M ${curve.start.x} ${curve.start.y} L 300 0 L ${curve.end.x} ${curve.end.y}`)
+
+  // Without waypoints the path is the cubic, byte for byte, as it was before waypoints existed.
+  assert.equal(client.routeBetween(from, to, undefined), client.routeBetween(from, to))
+  assert.ok(client.routeBetween(from, to, undefined).includes('C'), 'still the default curve')
+
+  // The same centre still has no route at all, waypoints or not: nothing to draw through.
+  const same = box(100, 100, 200, 60)
+  assert.equal(client.routeBetween(same, box(100, 100, 200, 60), [{ x: 0.5, y: 0.5 }]), '')
+})
+
+test('the label of a routed edge sits halfway along the line, not halfway between its ends', () => {
+  const from = box(0, 0, 200, 60)
+  const to = box(400, 100, 200, 60)
+  const curve = client.curvePoints(from, to)
+  // A detour that is deliberately lopsided: start (200, 30) → (300, 0) → end (400, 130). The legs are
+  // √(100² + 30²) = 104.4 and √(100² + 130²) = 164.0, so the halfway point is on the *second* leg.
+  const label = client.pathMidpoint(from, to, [{ x: 0.5, y: 0 }])
+  const first = Math.hypot(300 - curve.start.x, 0 - curve.start.y)
+  const second = Math.hypot(curve.end.x - 300, curve.end.y - 0)
+  const share = (first + second) / 2 - first
+  assert.ok(share > 0, 'the halfway point is past the corner')
+  // Along the second leg, so both coordinates move together from the corner to the end.
+  const along = share / second
+  assert.deepEqual(plain(label), plain({ x: 300 + along * (curve.end.x - 300), y: along * (curve.end.y - 0) }))
+  // And it is on the line, unlike the midpoint of the two ends.
+  assert.notDeepEqual(plain(label), plain({ x: (curve.start.x + curve.end.x) / 2, y: (curve.start.y + curve.end.y) / 2 }))
+
+  // A line of no length has no middle, and neither does a route with no curve at all.
+  assert.equal(client.polylineMidpoint([{ x: 5, y: 5 }, { x: 5, y: 5 }]), undefined)
+  assert.equal(client.polylineMidpoint([{ x: 5, y: 5 }]), undefined)
+  assert.equal(client.pathMidpoint(box(100, 100, 200, 60), box(100, 100, 200, 60), [{ x: 0.5, y: 0.5 }]), undefined)
+
+  // No waypoints is the cubic's own middle, exactly as before.
+  assert.deepEqual(plain(client.pathMidpoint(from, to, undefined)), plain(client.curveMidpoint(from, to)))
+})
+
+test('the page header counts the edges it draws and the ones that leave the page', () => {
+  const edges = [
+    { id: 'e1', from: { blockId: 'a' }, to: { blockId: 'b' } },
+    { id: 'e2', from: { blockId: 'b' }, to: { blockId: 'c' } },
+    { id: 'e3', from: { blockId: 'b' }, to: { blockId: 'far' } },
+    { id: 'e4', from: { blockId: 'far' }, to: { blockId: 'a' } },
+    // Neither endpoint here: not this page's business at all, and counting it would inflate the
+    // number a reader uses to decide whether anything is missing.
+    { id: 'e5', from: { blockId: 'x' }, to: { blockId: 'y' } },
+    // One endpoint gone: a dangling edge is not a cross-page one either.
+    { id: 'e6', from: { blockId: 'a' }, to: { blockId: 'gone' } },
+  ]
+  assert.deepEqual(plain(client.countEdges(edges, new Set(['a', 'b', 'c']))), { drawn: 2, cross: 3 })
+  assert.deepEqual(plain(client.countEdges([], new Set())), { drawn: 0, cross: 0 })
+})
+
+// ---------------------------------------------------------------------------
+// The two renderer outputs an anchor reads
+// ---------------------------------------------------------------------------
+
+test('a code block is one span per line, in the numbering an anchor uses', () => {
+  const lines = client.codeLines('one\ntwo\n\nfour')
+  // Nine children for four lines: a span each, and the newlines between them as text.
+  assert.equal(lines.length, 7)
+  assert.equal(lines[0].props['data-superboard-line'], 1)
+  assert.equal(lines[0].children[0], 'one')
+  assert.equal(lines[1], '\n')
+  assert.equal(lines[2].props['data-superboard-line'], 2)
+  // A blank line is a line. Dropping it would shift every span after it by one and make a range
+  // silently point at the wrong code.
+  assert.equal(lines[4].props['data-superboard-line'], 3)
+  assert.equal(lines[4].children[0], '')
+  assert.equal(lines[6].props['data-superboard-line'], 4)
+
+  // The element's text is byte-for-byte the block's, which is the promise a literal code card makes.
+  const text = lines.map((child) => (typeof child === 'string' ? child : child.children[0])).join('')
+  assert.equal(text, 'one\ntwo\n\nfour')
+  // A trailing newline is a final empty line, not a missing one.
+  assert.equal(client.codeLines('one\n').length, 3)
+})
+
+/**
+ * A `DOMParser` that answers the two questions `diagramNodeTable` asks: the root's own size, and its
+ * `g.node` elements. No layout, no CSS, no `getBBox` — which is the point, since the real one has
+ * none of those either for a detached parse.
+ *
+ * A function, because the real one is a constructor the code calls `new` on: passing a bare object
+ * would make `new Parser()` an object too, and the size guard would reject it.
+ */
+function fakeDOMParser(groups, root = { id: 'sb-uml-bl_ccd8b5', width: '200', height: '100', viewBox: '0 0 200 100' }) {
+  /** A CSS tag list, which is the only kind of selector `diagramNodeTable` asks for. */
+  const match = (selector, child) => selector.split(',').some((name) => name.trim() === child.localName)
+  const element = (name, attributes, children = []) => ({
+    localName: name,
+    getAttribute: (attribute) => attributes[attribute] ?? null,
+    querySelectorAll: (selector) => (selector === 'g.node' ? children : children.filter((child) => match(selector, child))),
+    querySelector: (selector) => children.find((child) => match(selector, child)) ?? null,
+  })
+  const toElement = (group) =>
+    element('g', { class: 'node', id: group.id, transform: group.transform }, group.shapes.map((shape) => element(shape.localName, shape.attributes)))
+  return function Parser() {
+    this.parseFromString = () => ({ documentElement: element('svg', root, groups.map(toElement)) })
+  }
+}
+
+test('a rendered diagram publishes each node box in its own user units', () => {
+  const groups = [
+    // What mermaid 11 actually writes: its own container id, then the marker, the identifier the
+    // Agent used, and a global counter. Reading the key off `flowchart-` at the front finds nothing
+    // and every `node` anchor silently becomes the block box.
+    { id: 'sb-uml-bl_ccd8b5-flowchart-A-0', transform: 'translate(20, 10)', shapes: [{ localName: 'rect', attributes: { width: '40', height: '20' } }] },
+    { id: 'sb-uml-bl_ccd8b5-flowchart-long-key-7', transform: 'translate(120, 60)', shapes: [{ localName: 'circle', attributes: { r: '15' } }] },
+    // A container that does not prefix the marker still reads, because the marker is what is looked for.
+    { id: 'flowchart-Diamond-3', transform: 'translate(10, 70)', shapes: [{ localName: 'polygon', attributes: { points: '0,0 30,0 15,25' } }] },
+  ]
+  const table = client.diagramNodeTable('<svg/>', { DOMParser: fakeDOMParser(groups) })
+  assert.equal(table.w, 200)
+  assert.equal(table.h, 100)
+  // The key is what sits between the last `flowchart-` and the counter: what an Agent writes and
+  // what `src/uml.js` publishes, so the two agree by construction.
+  assert.deepEqual(plain(table.nodes.A), { x: 20, y: 10, w: 40, h: 20 })
+  assert.deepEqual(plain(table.nodes['long-key']), { x: 105, y: 45, w: 30, h: 30 })
+  assert.deepEqual(plain(table.nodes.Diamond), { x: 10, y: 70, w: 30, h: 25 })
+})
+
+test('a percentage on the root is not a size, so the viewBox is what a node box scales against', () => {
+  // Mermaid writes `width="100%"`. `parseFloat` reads that as the number 100, which would make every
+  // node box a hundredth of its real size — and the picture is drawn with `preserveAspectRatio:
+  // 'none'`, so the viewBox is exactly the space the picture's box is a scaling of.
+  const groups = [{ id: 'flowchart-A-0', transform: 'translate(0, 0)', shapes: [{ localName: 'rect', attributes: { width: '10', height: '10' } }] }]
+  const table = client.diagramNodeTable('<svg/>', { DOMParser: fakeDOMParser(groups, { width: '100%', height: '100%', viewBox: '0 0 636.2734375 865.625' }) })
+  assert.equal(table.w, 636.2734375)
+  assert.equal(table.h, 865.625)
+})
+
+test('the container prefix comes off by identity, so a state or er node reads too', () => {
+  // State and er diagrams do carry `g.node`, under their own family tokens. The root's id is the
+  // container id mermaid was given, so the prefix is matched rather than guessed at.
+  const state = client.diagramNodeTable('<svg/>', {
+    DOMParser: fakeDOMParser(
+      [
+        { id: 'sb-uml-bl_x-state-Idle-0', transform: 'translate(0, 0)', shapes: [{ localName: 'rect', attributes: { width: '10', height: '10' } }] },
+        { id: 'sb-uml-bl_x-state-Waiting-4', transform: 'translate(0, 20)', shapes: [{ localName: 'rect', attributes: { width: '10', height: '10' } }] },
+      ],
+      { id: 'sb-uml-bl_x', viewBox: '0 0 200 100' },
+    ),
+  })
+  assert.deepEqual(Object.keys(state.nodes), ['Idle', 'Waiting'])
+  const er = client.diagramNodeTable('<svg/>', {
+    DOMParser: fakeDOMParser(
+      [{ id: 'sb-uml-bl_x-entity-CUSTOMER', transform: 'translate(5, 5)', shapes: [{ localName: 'rect', attributes: { width: '80', height: '40' } }] }],
+      { id: 'sb-uml-bl_x', viewBox: '0 0 200 100' },
+    ),
+  })
+  assert.deepEqual(plain(er.nodes.CUSTOMER), { x: 5, y: 5, w: 80, h: 40 })
+  // A root with no id of its own still reads, because the family token is looked for as well.
+  const bare = client.diagramNodeTable('<svg/>', {
+    DOMParser: fakeDOMParser([{ id: 'flowchart-A-0', transform: 'translate(1, 2)', shapes: [{ localName: 'rect', attributes: { width: '10', height: '10' } }] }], { viewBox: '0 0 200 100' }),
+  })
+  assert.deepEqual(Object.keys(bare.nodes), ['A'])
+})
+
+test('a diagram whose root carries no size falls back to its viewBox rather than to zero', () => {
+  const groups = [{ id: 'flowchart-A-0', transform: 'translate(0, 0)', shapes: [{ localName: 'rect', attributes: { width: '10', height: '10' } }] }]
+  const table = client.diagramNodeTable('<svg/>', { DOMParser: fakeDOMParser(groups, { viewBox: '0 0 640 480' }) })
+  assert.equal(table.w, 640)
+  assert.equal(table.h, 480)
+})
+
+test('a diagram with no node groups at all yields an empty table, not an absent one', () => {
+  // Sequence, class, state and er diagrams draw nodes with their own classes. An empty table is the
+  // honest answer and resolves every `node` anchor to the block box.
+  const table = client.diagramNodeTable('<svg/>', { DOMParser: fakeDOMParser([]) })
+  assert.deepEqual(plain(table.nodes), {})
+})
+
+test('a diagram with no parser at all is no table, never a throw', () => {
+  // The host half loads this file in a context with no `DOMParser`, and `Diagram` calls this on the
+  // path that renders a card.
+  assert.equal(client.diagramNodeTable('<svg/>', {}), undefined)
+})
+
+// ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
