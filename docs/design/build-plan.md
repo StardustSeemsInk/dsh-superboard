@@ -1,5 +1,10 @@
 # 构建计划
 
+> **状态（2026-10-05）：本文是 M0–M5 期间的计划书，已经**历史化**。**
+> 它停在 M5 / 82 个测试，之后的 UML 渲染、PDF 与图片、文字选择、`masonry` 都没进来。
+> **看现在有什么请读 [`../../README.md`](../../README.md)；看模型契约请读 [`board-model.md`](./board-model.md)。**
+> 保留本文是因为其中的**验收标准与逐里程碑复盘**仍然有效——只是必须带着「这是当时写的」去读。
+
 **前置文档**：[`design-tree.md`](./design-tree.md)（15 条已定决策）、[`board-model.md`](./board-model.md)（可照着实现的契约）、[`../research/dsh-plugin-contract.md`](../research/dsh-plugin-contract.md)（已验证的框架约束）。
 
 原则：**每个里程碑都以「能在运行中的 DSH 里观察到的东西」结束**。不写看不见的代码——这套插件最大的风险不是逻辑写错，而是假设错了框架行为，而这类错误只有在真页面上才会暴露。
