@@ -146,6 +146,12 @@ el.style.transform = `translateY(${(1 - p) * 24}px)`
 | **只有一页的看板没有页签** | 客户端在单页时不渲染 tab 条，`selectPage` 找不到 `.sb-page` | 这不是「缺页」：没有页签就说明那一页已经是当前页，`selectPage` 应当直接返回 |
 | **多挂载必须按挂载点查询** | 同一份文档里的多个 `BoardView` 共享**所有**类名，`document.querySelector('.sb-pageOn')` 会回答第一个挂载，读起来像「点了没反应」 | harness 的 `scope()`/`scopeAll()` 一律在**自己的 mount** 里查 |
 | **`--wait` 是猜出来的** | 场景越重、启动越慢，某天就会开始截到「还没挂完」的帧 | 让 `renderScene` **await** 场景的就绪 promise（截帧器会 await 它的返回值），而不是把 `--wait` 调大 |
+| **`uml` 块是一张还不存在的图** | 挂载返回时图还没渲染完，截到的是几张空卡片，而诊断里 `diagrams: []`、`errors: []` 看起来一切正常 | await 到 `.sb-diagramImage` 数量够了（或 `.sb-diagramError` 出现）再让 `renderScene` 返回：`await api.until(() => document.querySelectorAll('.sb-diagramImage').length >= N || document.querySelector('.sb-diagramError') !== null, …)` |
+| **只有当前页的图会渲染** | 多状态场景里某个状态停在**另一页**，它的图永远不出现。按「模型里所有页的 `uml` 数」去等会一直等到超时（实测：算出来要 16，实际只有 13） | 只统计那一拍**实际显示的那一页**上的 `uml` 块 |
+| **滚动位置不能用增量算** | 卡片的 `getBoundingClientRect()` **跟着滚动移动**，canvas 自己的 rect 不会，于是两者之差是**视口**位置而不是**内容**位置。拿它设 `scrollTop`，结果就取决于「之前滚到哪」——同一个 `t` 抓两次落到不同位置（实测该到 1846，实际停在 148） | 把当前滚动加回去才是内容坐标：`contentBottom = card.rect.bottom - canvas.rect.top + canvas.scrollTop`。这样任意顺序、任意次调用都得到同一个位置 |
+| **量测工具与截帧器不是同一个视口** | `tools/eval.mjs` 曾用 `--window-size`（窗口**外**尺寸），而 `capture/frames.mjs` 用 `Emulation.setDeviceMetricsOverride`（**视口**尺寸）。差的 ~93px 浏览器边框让**每一次量出来的布局都比真实截帧矮 93px**（实测 `innerHeight` 987 对 1080），于是「某个元素在不在画面里」量错，看起来像场景的 bug | eval.mjs 现在施加同一个 override 并 reload 后再等。**任何量测工具都必须与截帧器同视口** |
+| **「group 不能排版」是个错觉** | 两份数据里每个 group 都**恰好只有一个孩子**，六种模板长得一模一样；而没写 `layout` 时默认就是 `flow`，于是「没声明」和「只有一个块」在屏幕上无法区分 | group 的 **body** 和页面走同一套六种模板，而且能嵌套（`src/client.js:3196-3201`、`:3202-3213`）。要验证就去 `_probe-groups.html` 读每个 body 的 **computed style**，别靠看 |
+| **ffmpeg `tile` 只填一格** | `-i shot-%d.jpg -vf "tile=3x2"` 在图片序列上只输出左上角一格，`-start_number` 也不解决 | 用 `filter_complex` + 六个显式 `-i` + `xstack=inputs=6:layout=…`。另外 ffmpeg **没有 `margin` 滤镜**，留白是 `pad` |
 
 ---
 

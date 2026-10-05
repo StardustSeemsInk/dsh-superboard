@@ -97,6 +97,19 @@ try {
   }
 
   await send('Runtime.enable')
+  await send('Page.enable')
+  // The same override the capture path applies, and a reload so the page lays out under it from
+  // the start. `--window-size` sets the OUTER window: the ~93px of browser chrome the page never
+  // sees made every layout measured through the flag disagree with every frame captured through
+  // the override about where the fold is — which is exactly the kind of difference that reads as
+  // a bug in the scene.
+  await send('Emulation.setDeviceMetricsOverride', {
+    width: WIDTH,
+    height: HEIGHT,
+    deviceScaleFactor: SCALE,
+    mobile: false,
+  })
+  await send('Page.reload', {})
   await sleep(WAIT)
 
   const result = await send('Runtime.evaluate', {

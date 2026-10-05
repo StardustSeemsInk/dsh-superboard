@@ -5,16 +5,16 @@
     <title>s2 · 真实看板 · 一次多次查询的任务</title>
     <style>
       html, body { margin: 0; height: 100%; overflow: hidden; background: #11111b; }
-      /* One host per board state. They share every class name, so the harness scopes its
-         queries to a mount; hiding one is display:none, which also keeps the other four
-         out of the compositor while a frame is captured. */
+      /* One host per beat. They share every class name, so the harness scopes its queries to a
+         mount; hiding one is display:none, which also keeps the other five out of the
+         compositor while a frame is captured. */
       .boardState { position: absolute; inset: 0; display: none; }
       .boardState[data-on="1"] { display: block; }
 
-      /* The caption band. Kept out of the board's own DOM so it cannot perturb layout.
-         Its right edge is pulled in at runtime to the reading column's width: the column
-         auto-pins to the NEWEST turn, so a full-width band would bury exactly the line
-         that proves the conversation is still going. */
+      /* The caption band. Kept out of the board's own DOM so it cannot perturb layout. Its
+         right edge is pulled in at runtime to the reading column's width: the column auto-pins
+         to the NEWEST turn, so a full-width band would bury exactly the line that proves the
+         conversation is still going. */
       #caption {
         position: absolute; left: 0; right: 0; bottom: 0; height: 108px;
         display: flex; align-items: center; justify-content: space-between;
@@ -46,12 +46,14 @@
       // conversation keeps growing, the board keeps the answers, and the questions that
       // produced earlier answers scroll out of view and are NOT re-asked.
       //
-      // So there are five board states, each with its own reading column holding the
-      // conversation as it stood at that moment. Switching states is the accumulation.
+      // One page, many groups. Each beat is the SAME page with two more cards on it, so the
+      // accumulation is visible as length rather than as a row of tabs filling up — a page
+      // of five thin pages says less than one page that got rich. The second page (下单前)
+      // is a real tab throughout and is what the last beat clicks to.
       //
-      // The board is rendered by the shipped client; the data is a self-authored demo
-      // task (see /scenes/data/laptop-demo.json) whose brand names are invented, so no
-      // frame of this film is a claim about a real machine.
+      // The board is rendered by the shipped client; the data is a self-authored demo task
+      // (see /scenes/data/laptop-demo.json) whose brand names are invented, so no frame of
+      // this film is a claim about a real machine.
 
       /** The one knob that decides how much of the conversation is legible. */
       const READER_WIDTH = 470
@@ -60,28 +62,28 @@
 
       const REV = 'r0-000000000000'
       const DURATION = 12
-      const STATE_COUNT = 5
+      const STATE_COUNT = 6
 
       /**
-       * Beats, in order. `pages` is how many board pages exist yet; `turns` is how much
+       * Beats, in order. `cards` is how many groups the main page has yet; `turns` is how much
        * of the conversation has happened.
        *
-       * The two grow together on purpose — that IS the claim. Note `turns` never resets:
-       * a later state is never *less* of a conversation.
+       * The two grow together on purpose — that IS the claim. Note neither ever resets: a later
+       * state is never *less* of a conversation and never *fewer* cards.
        */
       const BEATS = [
-        { at: 0, pages: 1, turns: 14, page: 'conclusion',
+        { at: 0, cards: 2, turns: 14, page: '选型', pin: 'top',
           label: '先给结论', sub: '问了一圈，最后只留这几行' },
-        { at: 2, pages: 2, turns: 18, page: 'candidates',
-          label: '候选只剩两台', sub: '第三台因为超重，先出局' },
-        { at: 4, pages: 3, turns: 21, page: 'screen',
-          label: '屏幕和续航，各有代价', sub: 'OLED 好看，但少三个小时' },
-        { at: 6, pages: 4, turns: 24, page: 'ports',
-          label: '接口卡掉一台', sub: '少一个 USB-A，就是不行' },
-        { at: 8, pages: 5, turns: 26, page: 'checklist',
-          label: '把结论变成一页清单', sub: '该做的事，一条条写下来' },
-        { at: 10, pages: 5, turns: 26, page: 'conclusion',
-          label: '对话会滚走，结论不会', sub: '26 条聊天记录在右边往上滚，看板一直在这' },
+        { at: 2, cards: 5, turns: 18, page: '选型', pin: 'newest',
+          label: '价格和取舍，画成图', sub: '柱状图和饼图都是看板自己画的' },
+        { at: 4, cards: 7, turns: 21, page: '选型', pin: 'newest',
+          label: '屏幕和续航，各有代价', sub: '好看的那块屏，换掉三个小时' },
+        { at: 6, cards: 9, turns: 24, page: '选型', pin: 'newest',
+          label: '能钉的都钉上来', sub: '接口清单、实拍图，和结论在同一页' },
+        { at: 8, cards: 12, turns: 26, page: '选型', pin: 'top',
+          label: '对话会滚走，结论不会', sub: '26 条记录在右边往上滚，看板一直在这' },
+        { at: 10, cards: 12, turns: 26, page: '下单前', pin: 'top',
+          label: '最后剩一页待办', sub: '结论落成清单，照着做就行' },
       ]
 
       window.__diag = { stage: 'boot' }
@@ -91,9 +93,9 @@
       /**
        * A 12-hex-char revision, the shape the product shows.
        *
-       * FNV-1a over three different offsets, so the revision changes when the content does
-       * and is a pure function of it — the same page count always yields the same string,
-       * which is what keeps the scene a pure function of `t`.
+       * FNV-1a over three different offsets, so the revision changes when the content does and
+       * is a pure function of it — the same page always yields the same string, which is what
+       * keeps the scene a pure function of `t`.
        */
       function digestOf(text) {
         let out = ''
@@ -120,23 +122,17 @@
        * spreading that one would carry **its** three edges (pointing at block ids this board
        * does not have) and **its** revision into a board that never had either.
        */
-      function buildModel(demo, pageCount) {
-        const pages = demo.pages.slice(0, pageCount).map((page) => {
+      function buildModel(demo, cardCount) {
+        const pages = demo.pages.map((page) => {
           const groups = []
           const blocks = []
-          page.cards.forEach((card, cardIndex) => {
+          const cards = page.slug === '选型' ? page.cards.slice(0, cardCount) : page.cards
+          cards.forEach((card, cardIndex) => {
             const childIds = []
             card.blocks.forEach((spec, blockIndex) => {
               const id = `bl_${page.slug}_${cardIndex}_${blockIndex}`
               childIds.push(id)
-              const common = {
-                id,
-                slug: spec.slug,
-                alias: [],
-                anchors: [],
-                createdAtRev: REV,
-                updatedAtRev: REV,
-              }
+              const common = { id, slug: spec.slug, alias: [], anchors: [], createdAtRev: REV, updatedAtRev: REV }
               if (spec.kind === 'prose') {
                 blocks.push({ ...common, kind: 'prose', markdown: spec.markdown })
               } else if (spec.kind === 'list') {
@@ -150,6 +146,10 @@
                     depth: 0,
                   })),
                 })
+              } else if (spec.kind === 'uml') {
+                blocks.push({ ...common, kind: 'uml', engine: 'mermaid', diagram: spec.diagram, source: spec.source })
+              } else if (spec.kind === 'image') {
+                blocks.push({ ...common, kind: 'image', src: spec.src, alt: spec.alt, caption: spec.caption })
               } else {
                 throw new Error(`unsupported demo block kind: ${spec.kind}`)
               }
@@ -157,14 +157,14 @@
             groups.push({
               id: `bl_${page.slug}_g${cardIndex}`,
               kind: 'group',
-              slug: `${page.slug}-c${cardIndex}`,
+              slug: `${page.slug === '选型' ? 'c' : 't'}${cardIndex + 1}`,
               alias: [],
               anchors: [],
               createdAtRev: REV,
               updatedAtRev: REV,
               title: card.title,
               children: childIds,
-              layout: { template: 'flow' },
+              layout: card.layout ?? { template: 'flow' },
             })
           })
           return {
@@ -182,9 +182,9 @@
           pages,
           regions: [],
           edges: [],
-          revSeq: pageCount,
+          revSeq: cardCount,
           revHash: digest,
-          rev: `r${pageCount}-${digest}`,
+          rev: `r${cardCount}-${digest}`,
         }
       }
 
@@ -198,6 +198,45 @@
         if (clicked.has(key)) return
         clicked.add(key)
         queue = queue.then(() => states[stateIndex].selectPage(slug)).catch(() => {})
+      }
+
+      /** The host element for one beat. */
+      function mount(index) {
+        return document.getElementById(`b${index}`)
+      }
+
+      /**
+       * Put the newest card at the bottom of the window.
+       *
+       * The card's offset **inside the scrolled content** is its viewport position plus the
+       * current `scrollTop`. The second term is what makes this absolute: `getBoundingClientRect`
+       * on the card moves with the scroll while the canvas's own rect does not, so the raw
+       * difference is a viewport position, not a content one — and setting `scrollTop` from it
+       * makes the call depend on where the scroll already was. Adding `scrollTop` back cancels
+       * that, so this returns the same answer at any `t` in any order.
+       */
+      function pinNewest(stateIndex, cardIndex) {
+        const mount = document.getElementById(`b${stateIndex}`)
+        const canvas = mount.querySelector('[data-superboard-canvas]')
+        if (canvas === null) return
+        const groups = [...mount.querySelectorAll('[data-superboard-group]')]
+        const target = groups[Math.min(cardIndex - 1, groups.length - 1)]
+        if (target === undefined) return
+        const canvasRect = canvas.getBoundingClientRect()
+        const contentBottom = target.getBoundingClientRect().bottom - canvasRect.top + canvas.scrollTop
+        // The caption band overlays the bottom of the window, so the useful height is whichever
+        // runs out first: the canvas, or the band.
+        const captionTop = window.innerHeight - 108
+        const visible = Math.max(200, Math.min(canvas.clientHeight, captionTop - canvasRect.top) - 24)
+        canvas.scrollTop = Math.max(0, Math.round(contentBottom - visible))
+      }
+
+      function beatAt(t) {
+        let index = 0
+        for (let candidate = 0; candidate < BEATS.length; candidate += 1) {
+          if (t >= BEATS[candidate].at) index = candidate
+        }
+        return index
       }
 
       async function main() {
@@ -216,28 +255,44 @@
 
         window.__diag.stage = 'mount'
         for (let index = 0; index < STATE_COUNT; index += 1) {
-          const beat = BEATS.find((candidate) => candidate.pages === index + 1)
           states.push(
             await window.SuperboardHarness.startBoard({
               sessionId: 'promo-s2',
               mountId: `b${index}`,
-              mutate: () => buildModel(demo, index + 1),
-              chatTurns: demo.conversation.slice(0, beat.turns),
+              mutate: () => buildModel(demo, BEATS[index].cards),
+              chatTurns: demo.conversation.slice(0, BEATS[index].turns),
             }),
           )
         }
 
-        // Warm the tabs up while every state is briefly laid out, so a mid-scene switch
-        // never has to click a board that is hidden at the time.
+        // Warm the tabs up while every state is briefly laid out, so a mid-scene switch never
+        // has to click a board that is hidden at the time.
         for (let index = 0; index < STATE_COUNT; index += 1) {
           document.getElementById(`b${index}`).dataset.on = '1'
-          ensurePage(index, BEATS.find((beat) => beat.pages === index + 1).page)
+          ensurePage(index, BEATS[index].page)
         }
         await queue
         for (let index = 0; index < STATE_COUNT; index += 1) {
           document.getElementById(`b${index}`).dataset.on = '0'
         }
         await states[0].selectPage(BEATS[0].page)
+
+        // A `uml` block is a picture that does not exist yet when the board mounts, so a frame
+        // taken at mount time is a frame of empty cards. Count what the models ask for and wait
+        // for exactly that many — cheaper and more honest than a fixed sleep. Only the page a
+        // state actually shows is rendered, so a state parked on 下单前 contributes nothing.
+        window.__diag.stage = 'diagrams'
+        const wanted = states.reduce((total, _, index) => {
+          const page = buildModel(demo, BEATS[index].cards).pages
+            .find((candidate) => candidate.slug === BEATS[index].page)
+          return total + (page === undefined ? 0 : page.blocks.filter((b) => b.kind === 'uml').length)
+        }, 0)
+        await window.SuperboardHarness.until(
+          () => document.querySelectorAll('.sb-diagramImage').length >= wanted
+            || document.querySelector('.sb-diagramError') !== null,
+          `${wanted} diagrams`,
+          30000,
+        )
 
         // Keep the caption clear of the reading column.
         const reader = document.querySelector('#b0 [data-superboard-reader]')
@@ -247,10 +302,18 @@
 
         window.__diag.stage = 'ready'
         window.__diag.states = STATE_COUNT
+        window.__diag.wantedDiagrams = wanted
+        window.__diag.diagrams = document.querySelectorAll('.sb-diagramImage').length
+        window.__diag.diagramErrors = [...document.querySelectorAll('.sb-diagramError')]
+          .map((el) => el.textContent.slice(0, 80))
+        window.__diag.media = [...document.querySelectorAll('img.sb-media')]
+          .map((img) => `${img.naturalWidth}x${img.naturalHeight}`)
         window.__diag.turns = [...document.querySelectorAll('#b4 .sb-turn')].length
         window.__diag.pages = document.querySelectorAll('#b4 .sb-page').length
         window.__diag.blocks = states[4].blocks().length
         window.__diag.rev = document.querySelector('#b4 .sb-rev')?.textContent
+        window.__diag.groups = BEATS.map((beat, index) =>
+          document.querySelectorAll(`#b${index} [data-superboard-group]`).length)
         window.__diag.readers = states.map((_, index) => {
           const body = document.querySelector(`#b${index} [data-superboard-reader] .sb-readerBody`)
           return body === null
@@ -260,70 +323,43 @@
                 scrollHeight: body.scrollHeight,
                 clientHeight: body.clientHeight }
         })
+        window.__ready = true
       }
 
-      window.__ready = Promise.resolve().then(main).catch((error) => {
-        window.__diag.stage = 'failed'
-        window.__diag.error = String((error && error.stack) || error)
-        const pre = document.createElement('pre')
-        pre.style.cssText = 'position:absolute;inset:0;padding:20px;color:#f38ba8;font:12px monospace;z-index:99;white-space:pre-wrap'
-        pre.textContent = window.__diag.error
-        document.body.appendChild(pre)
-      })
-
-      // Deterministic: the state and the page are pure functions of t, and every click is
-      // memoized and chained, so a re-capture at any frame index lands on the same picture.
-      window.renderScene = async (t) => {
-        // Block until the five states are mounted. `capture/frames.mjs` awaits what
-        // `renderScene` returns (`awaitPromise: true`), so the first frame waits for boot
-        // instead of capturing a half-mounted page. The alternative — a larger `--wait` —
-        // is a guess that has to be re-guessed every time a scene gets heavier.
+      window.renderScene = async function renderScene(t) {
+        if (window.__ready === undefined) return window.__ready
         await window.__ready
-        if (window.__diag.stage !== 'ready') return undefined
-        let beatIndex = 0
-        for (let index = 0; index < BEATS.length; index += 1) {
-          if (t >= BEATS[index].at) beatIndex = index
+        const index = beatAt(t)
+        const beat = BEATS[index]
+        for (let other = 0; other < STATE_COUNT; other += 1) {
+          document.getElementById(`b${other}`).dataset.on = other === index ? '1' : '0'
         }
-        const beat = BEATS[beatIndex]
-        const stateIndex = beat.pages - 1
-
-        for (let index = 0; index < STATE_COUNT; index += 1) {
-          document.getElementById(`b${index}`).dataset.on = index === stateIndex ? '1' : '0'
+        ensurePage(index, beat.page)
+        await queue
+        // The scroll and the caption are re-applied on every call, from `t` alone, so a frame
+        // is a function of its timestamp rather than of the order the frames were taken in.
+        // The last beat goes back to the top on purpose: the whole claim is that the answer is
+        // still sitting there while the conversation that produced it has scrolled away.
+        if (beat.pin === 'top') {
+          mount(index).querySelector('[data-superboard-canvas]').scrollTop = 0
+        } else {
+          pinNewest(index, beat.cards)
         }
-        ensurePage(stateIndex, beat.page)
-
-        // Pin the reading column to its newest turn, which is what `ReadingColumn` does on
-        // its own (`src/client.js:2493-2497`: `scrollTop = scrollHeight` whenever the turn
-        // count changes). That effect cannot do it here: each state is mounted while hidden,
-        // where `scrollHeight` and `clientHeight` are both 0, so the write is a no-op and
-        // never re-runs. Reproducing it on the visible frame is the same behaviour, not a
-        // different one — and without it the column shows the OLDEST turns, which would say
-        // the opposite of what this shot is for.
-        const body = document.querySelector(`#b${stateIndex} [data-superboard-reader] .sb-readerBody`)
-        if (body !== null && body.scrollHeight > body.clientHeight) {
-          body.scrollTop = body.scrollHeight
-        }
-        window.__diag.lastReader =
-          body === null
-            ? null
-            : {
-                state: stateIndex,
-                page: beat.page,
-                turns: document.querySelectorAll(`#b${stateIndex} .sb-turn`).length,
-                scrollTop: Math.round(body.scrollTop),
-                scrollHeight: body.scrollHeight,
-                clientHeight: body.clientHeight,
-              }
-
         document.getElementById('cap-label').textContent = beat.label
         document.getElementById('cap-sub').textContent = beat.sub
-        document.getElementById('cap-index').textContent = String(beatIndex + 2).padStart(2, '0')
-        // The band stays up for the whole shot. An earlier version faded it in over the
-        // first 0.4 s of every beat, which at six beats in twelve seconds meant a fifth of
-        // the scene had no caption at all — a flicker, not a transition.
-        document.getElementById('caption').style.opacity = '1'
-        return queue
+        const body = document.querySelector(`#b${index} [data-superboard-reader] .sb-readerBody`)
+        if (body !== null) body.scrollTop = body.scrollHeight
       }
+
+      Promise.resolve().then(main).catch((error) => {
+        window.__diag.stage = 'failed'
+        window.__diag.error = String(error && error.stack ? error.stack : error)
+        const marker = document.createElement('pre')
+        marker.id = 'failure'
+        marker.style.cssText = 'position:fixed;left:8px;top:8px;color:#f38ba8;font:12px monospace;z-index:9'
+        marker.textContent = window.__diag.error
+        document.body.appendChild(marker)
+      })
     </script>
   </body>
 </html>

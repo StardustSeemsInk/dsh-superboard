@@ -1,0 +1,237 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <title>sample · 一页装下整件事</title>
+    <style>
+      html, body { margin: 0; background: #11111b; }
+      #mount { position: absolute; inset: 0; }
+    </style>
+  </head>
+  <body data-ds-dark-theme="true">
+    <div id="mount"></div>
+
+    <script src="/vendor/react.production.min.js"></script>
+    <script src="/vendor/react-dom.production.min.js"></script>
+    <script>window.__ModuleLoader__ = { load: (definition) => { window.__sbDef = definition } }</script>
+    <script src="/repo/src/client.js"></script>
+    <script src="/scenes/harness.js"></script>
+    <script>
+      // SAMPLE ONLY — one page, many groups, real charts, real photos. The question this
+      // answers is "would a single rich page look better than five thin ones?".
+      //
+      // Every chart below is a real `uml` block rendered by mermaid 11.17.2 through the
+      // shipped client. Nothing is an image of a chart.
+
+      const REV = 'r0-000000000000'
+      const IMG = 'E:/Dev/dsh-superboard/video/scenes/data/img'
+
+      /** The reader remembers its width here; setting it is the user having dragged it. */
+      localStorage.setItem('dsh.superboard.columnWidth', '470')
+
+      window.__diag = { stage: 'boot' }
+      window.addEventListener('error', (e) => { window.__diag.error = String(e.message) })
+      window.addEventListener('unhandledrejection', (e) => { window.__diag.error = 'rejection: ' + String(e.reason) })
+
+      const CHARTS = {
+        price: `xychart-beta
+    title "到手价 · 元"
+    x-axis ["Aurora", "Meridian", "Tern"]
+    y-axis 7000 --> 9500
+    bar [8900, 8200, 7300]`,
+        weight: `pie showData
+    title "我在意的"
+    "屏幕" : 35
+    "续航" : 25
+    "接口" : 20
+    "重量" : 12
+    "价格" : 8`,
+        tradeoff: `quadrantChart
+    title 两台机器的取舍
+    x-axis 续航短 --> 续航长
+    y-axis 屏幕一般 --> 屏幕好
+    quadrant-1 都想要
+    quadrant-2 屏幕优先
+    quadrant-3 都不占
+    quadrant-4 续航优先
+    Aurora 14 Pro: [0.32, 0.86]
+    Meridian 14: [0.82, 0.45]`,
+        plan: `gantt
+    title 现在买，还是等下一代
+    dateFormat YYYY-MM-DD
+    axisFormat %m/%d
+    section 现在买
+    下单            :done, a1, 2026-10-04, 1d
+    到手            :active, a2, 2026-10-05, 2d
+    section 等下一代
+    发布            :b1, 2027-03-01, 30d
+    到手            :b2, after b1, 21d`,
+      }
+
+      function buildModel() {
+        const blocks = []
+        const groups = []
+        let counter = 0
+
+        function group({ slug, title, layout, children }) {
+          const id = `bl_g${counter++}`
+          const childIds = []
+          for (const child of children) {
+            const childId = `${id}_${child.slug}`
+            childIds.push(childId)
+            const common = { id: childId, slug: child.slug, alias: [], anchors: [], createdAtRev: REV, updatedAtRev: REV }
+            if (child.kind === 'prose') blocks.push({ ...common, kind: 'prose', markdown: child.markdown })
+            else if (child.kind === 'list') {
+              blocks.push({
+                ...common, kind: 'list', ordered: child.ordered === true,
+                items: child.items.map((text, i) => ({ id: `${childId}_i${i}`, text, depth: 0 })),
+              })
+            } else if (child.kind === 'uml') {
+              blocks.push({ ...common, kind: 'uml', engine: 'mermaid', diagram: child.diagram, source: child.source })
+            } else if (child.kind === 'image') {
+              blocks.push({ ...common, kind: 'image', src: `${IMG}/${child.file}`, alt: child.alt, caption: child.caption })
+            } else throw new Error('unsupported: ' + child.kind)
+          }
+          groups.push({
+            id, kind: 'group', slug, alias: [], anchors: [], createdAtRev: REV, updatedAtRev: REV,
+            title, children: childIds,
+            ...(layout === undefined ? {} : { layout }),
+          })
+        }
+
+        group({
+          slug: 'conclusion', title: '① 结论',
+          children: [
+            { kind: 'prose', slug: 'pick', markdown: '**首选：Aurora 14 Pro**\n\n¥8900 · 32G / 1TB · 1.39kg' },
+            { kind: 'prose', slug: 'why', markdown: '唯一同时满足 OLED + HDMI + 2×USB-A，而且没超重的一台。' },
+          ],
+        })
+
+        group({
+          slug: 'candidates', title: '② 三台候选', layout: { template: 'columns', params: { cols: 3 } },
+          children: [
+            { kind: 'prose', slug: 'a', markdown: '**Aurora 14 Pro**\n\n2.8K OLED\n¥8900' },
+            { kind: 'prose', slug: 'b', markdown: '**Meridian 14**\n\n2.2K IPS\n¥8200' },
+            { kind: 'prose', slug: 'c', markdown: '**Tern 14**\n\n1.72kg ✕\n出局' },
+          ],
+        })
+
+        group({
+          slug: 'price', title: '③ 到手价',
+          children: [{ kind: 'uml', slug: 'chart', diagram: 'xychart', source: CHARTS.price }],
+        })
+
+        group({
+          slug: 'weight', title: '④ 我在意的',
+          children: [{ kind: 'uml', slug: 'chart', diagram: 'pie', source: CHARTS.weight }],
+        })
+
+        group({
+          slug: 'tradeoff', title: '⑤ 取舍',
+          children: [{ kind: 'uml', slug: 'chart', diagram: 'quadrantChart', source: CHARTS.tradeoff }],
+        })
+
+        group({
+          slug: 'plan', title: '⑥ 买还是等',
+          children: [{ kind: 'uml', slug: 'chart', diagram: 'gantt', source: CHARTS.plan }],
+        })
+
+        group({
+          slug: 'screen', title: '⑦ 屏幕',
+          children: [
+            { kind: 'prose', slug: 's1', markdown: '2.8K OLED 120Hz，色彩和对比度明显更好。' },
+            { kind: 'list', slug: 's2', items: ['类 DC 调光，低亮度不闪', '长期静止画面有烧屏风险'] },
+          ],
+        })
+
+        group({
+          slug: 'battery', title: '⑧ 续航 · 散热',
+          children: [
+            { kind: 'list', slug: 'b1', items: ['Meridian 14：9.5 小时', 'Aurora 14 Pro：6.5 小时'] },
+            { kind: 'prose', slug: 'b2', markdown: '满载 30 分钟：Aurora 稳在 45 W、表面 42 °C；Meridian 38 W、46 °C。' },
+          ],
+        })
+
+        group({
+          slug: 'ports', title: '⑨ 接口',
+          children: [
+            { kind: 'list', slug: 'p1', items: ['HDMI 2.1 ×1', 'USB-A ×2', '雷电 4 ×2', '3.5mm ×1'] },
+          ],
+        })
+
+        group({
+          slug: 'photo', title: '⑩ 实拍（示意图 · CC0）',
+          children: [
+            { kind: 'image', slug: 'shot', file: 'shot-5.jpg', alt: '实拍示意', caption: 'Wikimedia Commons · CC0 · 示意图，非所评机型' },
+          ],
+        })
+
+        group({
+          slug: 'risk', title: '⑪ 风险',
+          children: [
+            { kind: 'prose', slug: 'r1', markdown: 'OLED 长期静态画面有烧屏可能。\n\n下一代还有 5–6 个月，首发普遍贵 800–1200。' },
+          ],
+        })
+
+        group({
+          slug: 'check', title: '⑫ 下单前自检',
+          children: [
+            { kind: 'list', slug: 'c1', items: ['确认是 32G 而不是 16G', '确认屏是 2.8K 而不是 2.2K', '保修加 299 延到 3 年', '到手先跑一次色彩校准'] },
+          ],
+        })
+
+        return {
+          title: 'Board',
+          pages: [{
+            id: 'pg_sample', slug: '选型', alias: [], createdAtRev: REV,
+            layout: { template: 'grid', params: { cols: 2 } },
+            blocks: [...groups, ...blocks],
+          }],
+          regions: [], edges: [], revSeq: 1, revHash: 'samplerich000', rev: 'r1-samplerich000',
+        }
+      }
+
+      let api = null
+
+      async function main() {
+        const demo = await (await fetch('/scenes/data/laptop-demo.json')).json()
+        api = await window.SuperboardHarness.startBoard({
+          sessionId: 'sample-rich', mountId: 'mount', mutate: () => buildModel(),
+          chatTurns: demo.conversation.slice(0, 26),
+        })
+        // A `uml` block is rendered asynchronously, so a frame taken the moment the board
+        // mounts is a frame of four empty cards. Wait for the pictures, not for the mount.
+        await api.until(
+          () => document.querySelectorAll('.sb-diagramImage').length >= 4
+            || document.querySelector('.sb-diagramError') !== null,
+          'the four charts',
+          25000,
+        )
+        window.__diag.stage = 'ready'
+        window.__diag.groups = document.querySelectorAll('[data-superboard-group]').length
+        window.__diag.diagrams = [...document.querySelectorAll('.sb-diagramImage')].map((img) => ({
+          ok: img.getAttribute('src')?.slice(0, 22),
+          w: img.naturalWidth, h: img.naturalHeight,
+        }))
+        window.__diag.errors = [...document.querySelectorAll('.sb-diagramError')].map((el) => el.textContent.slice(0, 90))
+        window.__diag.media = [...document.querySelectorAll('img.sb-media')].map((img) => ({ w: img.naturalWidth, h: img.naturalHeight }))
+        window.__ready = true
+      }
+
+      window.renderScene = function renderScene() {
+        if (api === null) return window.__ready
+        document.querySelector('[data-superboard-canvas]').scrollTop = 0
+        return window.__ready
+      }
+
+      Promise.resolve().then(main).catch((error) => {
+        window.__diag.stage = 'failed'
+        window.__diag.error = String(error && error.stack ? error.stack : error)
+        const marker = document.createElement('pre')
+        marker.style.cssText = 'position:fixed;left:8px;top:8px;color:#f38ba8;font:12px monospace;z-index:9'
+        marker.textContent = window.__diag.error
+        document.body.appendChild(marker)
+      })
+    </script>
+  </body>
+</html>

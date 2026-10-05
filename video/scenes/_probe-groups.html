@@ -1,0 +1,239 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <title>probe · group 能不能自己排版</title>
+    <style>
+      html, body { margin: 0; background: #11111b; }
+      #mount { position: absolute; inset: 0; }
+      /* A tall window on purpose: this is a verification render, not a film frame, so the
+         whole page has to be visible in one picture. */
+    </style>
+  </head>
+  <body data-ds-dark-theme="true">
+    <div id="mount"></div>
+
+    <script src="/vendor/react.production.min.js"></script>
+    <script src="/vendor/react-dom.production.min.js"></script>
+    <script>window.__ModuleLoader__ = { load: (definition) => { window.__sbDef = definition } }</script>
+    <script src="/repo/src/client.js"></script>
+    <script src="/scenes/harness.js"></script>
+    <script>
+      // One question, one page: does a `group` arrange its own children, with the same
+      // templates a page uses? Seven groups below, each a different answer.
+      //
+      // `layout.params.cells` is written by hand here because the harness mounts a model
+      // directly — `applyAreas` (src/model.js:657) is what normally turns `areas` into
+      // `cells`, and it runs in the host projection, not in the client. The shape below is
+      // exactly what it produces for a group (src/model.js:674-680).
+
+      const REV = 'r0-000000000000'
+      window.__diag = { stage: 'boot' }
+      window.addEventListener('error', (e) => { window.__diag.error = String(e.message) })
+      window.addEventListener('unhandledrejection', (e) => { window.__diag.error = 'rejection: ' + String(e.reason) })
+
+      function leaf(id, slug, spec) {
+        const common = { id, slug, alias: [], anchors: [], createdAtRev: REV, updatedAtRev: REV }
+        if (spec.kind === 'prose') return { ...common, kind: 'prose', markdown: spec.markdown }
+        return {
+          ...common,
+          kind: 'list',
+          ordered: false,
+          items: spec.items.map((text, index) => ({ id: `${id}_i${index}`, text, depth: 0 })),
+        }
+      }
+
+      function buildModel() {
+        const blocks = []
+        const groups = []
+        let counter = 0
+
+        // A group = a title, a layout, and children. Nothing here is special-cased for
+        // groups; these are the same six template names a page takes.
+        function group({ slug, title, layout, children }) {
+          const id = `bl_g${counter++}`
+          const childIds = []
+          for (const child of children) {
+            if (child.children !== undefined) {
+              const inner = group(child)
+              blocks.push(...inner.made)
+              childIds.push(inner.id)
+              continue
+            }
+            const childId = `${id}_${child.slug}`
+            childIds.push(childId)
+            blocks.push(leaf(childId, child.slug, child))
+          }
+          groups.push({
+            id,
+            kind: 'group',
+            slug,
+            alias: [],
+            anchors: [],
+            createdAtRev: REV,
+            updatedAtRev: REV,
+            title,
+            children: childIds,
+            ...(layout === undefined ? {} : { layout }),
+          })
+          return { id, made: [] }
+        }
+
+        group({
+          slug: 'g-cols', title: '① columns cols:3', layout: { template: 'columns', params: { cols: 3 } },
+          children: [
+            { kind: 'prose', slug: 'c1', markdown: '**Aurora 14 Pro**\n\n32G / 1TB · ¥8900' },
+            { kind: 'prose', slug: 'c2', markdown: '**Meridian 14**\n\n32G / 1TB · ¥8200' },
+            { kind: 'prose', slug: 'c3', markdown: '**Tern 14**\n\n16G / 512G · ¥7300　← 1.72kg，超重出局' },
+          ],
+        })
+
+        group({
+          slug: 'g-grid', title: '② grid minCardWidth:220', layout: { template: 'grid', params: { minCardWidth: 220 } },
+          children: [
+            { kind: 'list', slug: 'k1', items: ['屏幕', '2.8K OLED 120Hz'] },
+            { kind: 'list', slug: 'k2', items: ['续航', '6.5 小时'] },
+            { kind: 'list', slug: 'k3', items: ['重量', '1.39 kg'] },
+            { kind: 'list', slug: 'k4', items: ['接口', 'HDMI 2.1 + 2×USB-A'] },
+            { kind: 'list', slug: 'k5', items: ['到手价', '¥8900'] },
+          ],
+        })
+
+        group({
+          slug: 'g-masonry', title: '③ masonry cols:3', layout: { template: 'masonry', params: { cols: 3 } },
+          children: [
+            { kind: 'prose', slug: 'm1', markdown: '**屏幕**\n\nOLED 在低亮度下不闪，长时间看不累眼。' },
+            { kind: 'prose', slug: 'm2', markdown: '**续航**\n\n办公实测 6.5 小时，比 Meridian 少三个小时；那三个小时基本都花在那块更好的屏幕上。' },
+            { kind: 'prose', slug: 'm3', markdown: '**散热**' },
+            { kind: 'prose', slug: 'm4', markdown: '**保修**\n\n整机 2 年、电池 1 年，可以加 299 延到 3 年。' },
+          ],
+        })
+
+        group({
+          slug: 'g-row', title: '④ row', layout: { template: 'row' },
+          children: [
+            { kind: 'prose', slug: 'r1', markdown: 'HDMI 2.1' },
+            { kind: 'prose', slug: 'r2', markdown: '2× USB-A' },
+            { kind: 'prose', slug: 'r3', markdown: '2× 雷电 4' },
+          ],
+        })
+
+        // ⑤ The named-cell path. `cols` and `cells` are what applyAreas leaves behind; the
+        // client reads only `cells` (src/client.js:3168) and keys `align-items:stretch` off
+        // it (src/client.js:292-301), so a spanning card fills its rows.
+        const named = group({
+          slug: 'g-cells', title: '⑤ grid + cells（命名格子）', layout: { template: 'grid', params: { cols: 2 } },
+          children: [
+            { kind: 'prose', slug: 'pick', markdown: '**首选：Aurora 14 Pro**\n\n屏幕和接口都过了线，价格在预算内。' },
+            { kind: 'prose', slug: 'why', markdown: '**为什么**\n\n唯一同时满足 OLED + HDMI + 2×USB-A 的一台。' },
+            { kind: 'prose', slug: 'risk', markdown: '**风险**\n\nOLED 长期静态画面有烧屏可能，@ 须留心。' },
+          ],
+        })
+        groups[groups.length - 1].layout.params.cells = {
+          [`${named.id}_pick`]: { row: 1, col: 1, rowSpan: 2, colSpan: 1 },
+          [`${named.id}_why`]: { row: 1, col: 2, rowSpan: 1, colSpan: 1 },
+          [`${named.id}_risk`]: { row: 2, col: 2, rowSpan: 1, colSpan: 1 },
+        }
+
+        group({
+          slug: 'g-nest', title: '⑥ group 套 group：外层 flow，内层 row',
+          layout: { template: 'flow' },
+          children: [
+            { kind: 'prose', slug: 'n1', markdown: '外层的第一个孩子，一个普通 prose 块。' },
+            {
+              slug: 'g-inner', title: '内层 group · row', layout: { template: 'row' },
+              children: [
+                { kind: 'prose', slug: 'i1', markdown: '内层一' },
+                { kind: 'prose', slug: 'i2', markdown: '内层二' },
+                { kind: 'prose', slug: 'i3', markdown: '内层三' },
+              ],
+            },
+          ],
+        })
+
+        group({
+          slug: 'g-none', title: '⑦ 没有 layout（默认 flow）',
+          children: [
+            { kind: 'prose', slug: 'f1', markdown: '这个 group 一个 layout 都没写。' },
+            { kind: 'prose', slug: 'f2', markdown: '它的孩子仍然被排开——按默认的 `flow`，也就是从上往下摞。' },
+          ],
+        })
+
+        // ⑧ The honest exception. `canvas` maps to `.sb-absBox`, which is
+        // `position:relative; min-height:120px` and nothing else — its own children keep the
+        // normal top-to-bottom flow. "Arranges nothing" is the whole of this template: it is
+        // a section, not a surface to place things on. There is no `at`-based absolute
+        // positioning anywhere in the renderer.
+        group({
+          slug: 'g-canvas', title: '⑧ canvas（sb-absBox，故意什么都不排）', layout: { template: 'canvas' },
+          children: [
+            { kind: 'prose', slug: 'cv1', markdown: 'canvas 里的第一个孩子。' },
+            { kind: 'prose', slug: 'cv2', markdown: '它并没有被放到某个坐标上——canvas 只提供一个盒子。' },
+          ],
+        })
+
+        return {
+          title: 'Board',
+          pages: [{
+            id: 'pg_probe',
+            slug: '选型',
+            alias: [],
+            createdAtRev: REV,
+            layout: { template: 'flow' },
+            blocks: [...groups, ...blocks],
+          }],
+          regions: [],
+          edges: [],
+          revSeq: 1,
+          revHash: 'probegroups00',
+          rev: 'r1-probegroups00',
+        }
+      }
+
+      let api = null
+
+      async function main() {
+        window.__diag.stage = 'mount'
+        api = await window.SuperboardHarness.startBoard({
+          sessionId: 'probe-groups',
+          mountId: 'mount',
+          mutate: () => buildModel(),
+        })
+        const boxes = [...document.querySelectorAll('[data-superboard-group]')]
+        window.__diag.stage = 'ready'
+        window.__diag.groups = boxes.length
+        // The measurement that matters: what each group BODY is actually using to arrange
+        // its children. A class of sb-flow is a real answer, not a missing one.
+        window.__diag.bodies = boxes.map((box) => {
+          const body = box.querySelector('.sb-groupBody')
+          const style = getComputedStyle(body)
+          return {
+            slug: box.dataset.blockSlug,
+            cls: body.className,
+            display: style.display,
+            cols: style.gridTemplateColumns,
+            columnCount: style.columnCount,
+            childCount: body.childElementCount,
+          }
+        })
+        window.__ready = true
+      }
+
+      window.renderScene = function renderScene() {
+        if (api === null) return window.__ready
+        document.querySelector('[data-superboard-canvas]').scrollTop = 0
+        return window.__ready
+      }
+
+      Promise.resolve().then(main).catch((error) => {
+        window.__diag.stage = 'failed'
+        window.__diag.error = String(error && error.stack ? error.stack : error)
+        const marker = document.createElement('pre')
+        marker.id = 'failure'
+        marker.style.cssText = 'position:fixed;left:8px;top:8px;color:#f38ba8;font:12px monospace;z-index:9'
+        marker.textContent = window.__diag.error
+        document.body.appendChild(marker)
+      })
+    </script>
+  </body>
+</html>

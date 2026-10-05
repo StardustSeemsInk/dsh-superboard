@@ -1,152 +1,362 @@
 {
-  "note": "自拟的演示任务，给 S2 用：一次「选一台 14 寸笔记本」的多次查询对话，以及它最后落到看板上的五页。品牌与型号都是编的（Aurora / Meridian / Tern），所以看板上的每条数字都属于演示，不构成对任何真实产品的说法。渲染走的是发布版客户端，只是数据是自拟的。",
+  "note": "自拟的演示数据：品牌名（Aurora / Meridian / Tern）与规格都是编的，不对应任何真实机型。图片是 Wikimedia Commons 上的 CC0 实拍图，只作气氛示意，卡片上也这么写。渲染一律走发布版客户端，只有内容是自己造的。",
   "conversation": [
-    { "role": "user", "text": "想换台 14 寸笔记本，预算 8000 上下，主要写代码，偶尔跑跑本地小模型。有推荐吗？" },
-    { "role": "assistant", "text": "能进候选的有三台：**Aurora 14 Pro**、**Meridian 14**、**Tern 14**，都在 7000–8500 这一段。\n\n先确认两件事：你玩 3A 吗？能接受的重量上限是多少？" },
-    { "role": "user", "text": "不玩 3A，独显可有可无。重量别超过 1.5 kg。" },
-    { "role": "assistant", "text": "那 **Tern 14 直接出局**，整机 1.72 kg。剩下两台的分歧集中在屏幕和续航上。" },
-    { "role": "user", "text": "这两台的屏幕差多少？" },
-    { "role": "assistant", "text": "Aurora 是 **2.8K OLED 120Hz**，Meridian 是 **2.2K IPS 90Hz**。色彩和对比度 Aurora 明显更好，但 OLED 有两个老问题要先确认：调光方式，以及烧屏。" },
-    { "role": "user", "text": "我一天对着屏幕十小时以上，OLED 会不会累眼？" },
-    { "role": "assistant", "text": "看你担心的是哪一种。Aurora 这台是**类 DC 调光**，低亮度下也不闪——如果它是低频 PWM，我会直接劝你放弃。" },
-    { "role": "user", "text": "续航呢？我经常不插电开会。" },
-    { "role": "assistant", "text": "差距不小。**Meridian 办公实测 9.5 小时，Aurora 约 6.5 小时**，多出来的三个小时基本都花在那块屏幕上。" },
-    { "role": "user", "text": "16G 内存够吗？我要跑 7B 量化模型。" },
-    { "role": "assistant", "text": "**不够。** 7B Q4 权重约 4.5 GB，加上系统和编辑器，16G 会一直在换页。**32G 是这条需求的门槛，不是加分项。**" },
-    { "role": "user", "text": "两家都有 32G 版本吗？各加多少钱？" },
-    { "role": "assistant", "text": "都有。**Aurora +900 元，Meridian +700 元。** 加完之后 Aurora 约 8900，Meridian 约 8200。" },
-    { "role": "user", "text": "散热呢？Meridian 会不会压不住？" },
-    { "role": "assistant", "text": "满载 30 分钟：**Aurora 稳在 45 W、表面最高 42 ℃；Meridian 稳在 38 W、表面 46 ℃。** 写代码两台都够，跑模型 Aurora 快一截。" },
-    { "role": "user", "text": "接口是硬要求：要有 HDMI，加至少两个 USB-A。" },
-    { "role": "assistant", "text": "Aurora 是 **HDMI 2.1 + 2×USB-A + 2×雷电 4**；Meridian 是 **HDMI 2.0 + 1×USB-A**。按你的要求，**Meridian 少一个 USB-A**。" },
-    { "role": "user", "text": "那基本就是 Aurora 了。现在买还是等等看下一代？" },
-    { "role": "assistant", "text": "下一代大概还要 **5–6 个月**，而且首发通常贵 800–1200。**急着用就现在买**，不值得等。" },
-    { "role": "user", "text": "渠道和保修呢？" },
-    { "role": "assistant", "text": "官网 24 期免息但发货慢；自营仓次日达，通常只有 12 期。保修是整机 2 年、电池 1 年，可以加 299 延到 3 年。" },
-    { "role": "user", "text": "我天天满负荷用，延保值得吗？" },
-    { "role": "assistant", "text": "值得。**天天满载，再加上 OLED 面板，三年内出问题的概率不低**，299 换三年省心。" },
-    { "role": "user", "text": "好，帮我整理成看板，别让我以后再翻聊天记录了。" },
-    { "role": "assistant", "text": "已经写进看板，五页：**结论 / 候选对比 / 屏幕与续航 / 接口与散热 / 下单前自检**。\n\n首选是 **Aurora 14 Pro · 32G · 2.8K OLED，约 8900 元**。" }
+    {
+      "role": "user",
+      "text": "想换台 14 寸笔记本，预算 8000 上下，主要写代码，偶尔跑跑本地小模型。有推荐吗？"
+    },
+    {
+      "role": "assistant",
+      "text": "能进候选的有三台：**Aurora 14 Pro**、**Meridian 14**、**Tern 14**，都在 7000–8500 这一段。\n\n先确认两件事：你玩 3A 吗？能接受的重量上限是多少？"
+    },
+    {
+      "role": "user",
+      "text": "不玩 3A，独显可有可无。重量别超过 1.5 kg。"
+    },
+    {
+      "role": "assistant",
+      "text": "那 **Tern 14 直接出局**，整机 1.72 kg。剩下两台的分歧集中在屏幕和续航上。"
+    },
+    {
+      "role": "user",
+      "text": "这两台的屏幕差多少？"
+    },
+    {
+      "role": "assistant",
+      "text": "Aurora 是 **2.8K OLED 120Hz**，Meridian 是 **2.2K IPS 90Hz**。色彩和对比度 Aurora 明显更好，但 OLED 有两个老问题要先确认：调光方式，以及烧屏。"
+    },
+    {
+      "role": "user",
+      "text": "我一天对着屏幕十小时以上，OLED 会不会累眼？"
+    },
+    {
+      "role": "assistant",
+      "text": "看你担心的是哪一种。Aurora 这台是**类 DC 调光**，低亮度下也不闪——如果它是低频 PWM，我会直接劝你放弃。"
+    },
+    {
+      "role": "user",
+      "text": "续航呢？我经常不插电开会。"
+    },
+    {
+      "role": "assistant",
+      "text": "差距不小。**Meridian 办公实测 9.5 小时，Aurora 约 6.5 小时**，多出来的三个小时基本都花在那块屏幕上。"
+    },
+    {
+      "role": "user",
+      "text": "16G 内存够吗？我要跑 7B 量化模型。"
+    },
+    {
+      "role": "assistant",
+      "text": "**不够。** 7B Q4 权重约 4.5 GB，加上系统和编辑器，16G 会一直在换页。**32G 是这条需求的门槛，不是加分项。**"
+    },
+    {
+      "role": "user",
+      "text": "两家都有 32G 版本吗？各加多少钱？"
+    },
+    {
+      "role": "assistant",
+      "text": "都有。**Aurora +900 元，Meridian +700 元。** 加完之后 Aurora 约 8900，Meridian 约 8200。"
+    },
+    {
+      "role": "user",
+      "text": "散热呢？Meridian 会不会压不住？"
+    },
+    {
+      "role": "assistant",
+      "text": "满载 30 分钟：**Aurora 稳在 45 W、表面最高 42 ℃；Meridian 稳在 38 W、表面 46 ℃。** 写代码两台都够，跑模型 Aurora 快一截。"
+    },
+    {
+      "role": "user",
+      "text": "接口是硬要求：要有 HDMI，加至少两个 USB-A。"
+    },
+    {
+      "role": "assistant",
+      "text": "Aurora 是 **HDMI 2.1 + 2×USB-A + 2×雷电 4**；Meridian 是 **HDMI 2.0 + 1×USB-A**。按你的要求，**Meridian 少一个 USB-A**。"
+    },
+    {
+      "role": "user",
+      "text": "那基本就是 Aurora 了。现在买还是等等看下一代？"
+    },
+    {
+      "role": "assistant",
+      "text": "下一代大概还要 **5–6 个月**，而且首发通常贵 800–1200。**急着用就现在买**，不值得等。"
+    },
+    {
+      "role": "user",
+      "text": "渠道和保修呢？"
+    },
+    {
+      "role": "assistant",
+      "text": "官网 24 期免息但发货慢；自营仓次日达，通常只有 12 期。保修是整机 2 年、电池 1 年，可以加 299 延到 3 年。"
+    },
+    {
+      "role": "user",
+      "text": "我天天满负荷用，延保值得吗？"
+    },
+    {
+      "role": "assistant",
+      "text": "值得。**天天满载，再加上 OLED 面板，三年内出问题的概率不低**，299 换三年省心。"
+    },
+    {
+      "role": "user",
+      "text": "好，帮我整理成看板，别让我以后再翻聊天记录了。"
+    },
+    {
+      "role": "assistant",
+      "text": "已经写进看板，五页：**结论 / 候选对比 / 屏幕与续航 / 接口与散热 / 下单前自检**。\n\n首选是 **Aurora 14 Pro · 32G · 2.8K OLED，约 8900 元**。"
+    }
   ],
   "pages": [
     {
-      "slug": "conclusion",
-      "layout": { "template": "columns", "params": { "cols": 3 } },
+      "slug": "选型",
+      "layout": {
+        "template": "grid",
+        "params": {
+          "cols": 2
+        }
+      },
       "cards": [
         {
-          "title": "首选",
-          "blocks": [
-            { "slug": "pick", "kind": "prose", "markdown": "**Aurora 14 Pro · 32G**\n\n2.8K OLED 120Hz · 雷电 4 · 类 DC 调光\n\n约 **8900 元**" }
-          ]
-        },
-        {
-          "title": "备选",
-          "blocks": [
-            { "slug": "alt", "kind": "prose", "markdown": "**Meridian 14 · 32G**\n\n2.2K IPS 90Hz · 续航多 3 小时\n\n约 **8200 元**（接口差一个 USB-A）" }
-          ]
-        },
-        {
-          "title": "硬约束",
+          "title": "结论",
           "blocks": [
             {
-              "slug": "limits",
-              "kind": "list",
-              "items": [
-                "14 寸",
-                "重量 ≤ 1.5 kg",
-                "内存 32 GB",
-                "HDMI + 至少 2×USB-A"
-              ]
+              "kind": "prose",
+              "slug": "pick",
+              "markdown": "**首选：Aurora 14 Pro**\n\n¥8900 · 32G / 1TB · 1.39kg"
+            },
+            {
+              "kind": "prose",
+              "slug": "why",
+              "markdown": "唯一同时满足 OLED + HDMI + 2×USB-A，而且没超重的一台。"
             }
           ]
-        }
-      ]
-    },
-    {
-      "slug": "candidates",
-      "layout": { "template": "flow" },
-      "cards": [
+        },
         {
           "title": "三台候选",
+          "layout": {
+            "template": "columns",
+            "params": {
+              "cols": 3
+            }
+          },
           "blocks": [
             {
-              "slug": "table",
               "kind": "prose",
-              "markdown": "| | Aurora 14 Pro | Meridian 14 | Tern 14 |\n|---|---|---|---|\n| 重量 | 1.38 kg | 1.42 kg | 1.72 kg |\n| 屏幕 | 2.8K OLED 120Hz | 2.2K IPS 90Hz | 2.2K IPS 60Hz |\n| 32G 到手价 | 约 8900 | 约 8200 | —— |\n| 结论 | **首选** | 备选 | 出局（超重） |"
+              "slug": "a",
+              "markdown": "**Aurora 14 Pro**\n\n2.8K OLED\n¥8900"
+            },
+            {
+              "kind": "prose",
+              "slug": "b",
+              "markdown": "**Meridian 14**\n\n2.2K IPS\n¥8200"
+            },
+            {
+              "kind": "prose",
+              "slug": "c",
+              "markdown": "**Tern 14**\n\n1.72kg ✕\n出局"
             }
           ]
-        }
-      ]
-    },
-    {
-      "slug": "screen",
-      "layout": { "template": "columns", "params": { "cols": 2 } },
-      "cards": [
+        },
+        {
+          "title": "到手价",
+          "blocks": [
+            {
+              "kind": "uml",
+              "slug": "chart",
+              "diagram": "xychart",
+              "source": "xychart-beta\n    title \"到手价 · 元\"\n    x-axis [\"Aurora\", \"Meridian\", \"Tern\"]\n    y-axis 7000 --> 9500\n    bar [8900, 8200, 7300]"
+            }
+          ]
+        },
+        {
+          "title": "我在意的",
+          "blocks": [
+            {
+              "kind": "uml",
+              "slug": "chart",
+              "diagram": "pie",
+              "source": "pie showData\n    title \"我在意的\"\n    \"屏幕\" : 35\n    \"续航\" : 25\n    \"接口\" : 20\n    \"重量\" : 12\n    \"价格\" : 8"
+            }
+          ]
+        },
+        {
+          "title": "取舍",
+          "blocks": [
+            {
+              "kind": "uml",
+              "slug": "chart",
+              "diagram": "quadrantChart",
+              "source": "quadrantChart\n    title 两台机器的取舍\n    x-axis 续航短 --> 续航长\n    y-axis 屏幕一般 --> 屏幕好\n    quadrant-1 都想要\n    quadrant-2 屏幕优先\n    quadrant-3 都不占\n    quadrant-4 续航优先\n    Aurora 14 Pro: [0.32, 0.86]\n    Meridian 14: [0.82, 0.45]"
+            }
+          ]
+        },
         {
           "title": "屏幕",
           "blocks": [
             {
-              "slug": "panel",
+              "kind": "prose",
+              "slug": "s1",
+              "markdown": "2.8K OLED 120Hz，色彩和对比度明显更好。"
+            },
+            {
               "kind": "list",
+              "slug": "s2",
               "items": [
-                "2.8K OLED：色彩和对比度明显更好",
-                "类 DC 调光：低亮度下不闪，长时间看不累眼",
-                "OLED 的老问题仍在：长期静止画面有烧屏风险"
+                "类 DC 调光，低亮度不闪",
+                "长期静止画面有烧屏风险"
               ]
             }
           ]
         },
         {
-          "title": "续航（办公实测）",
+          "title": "续航 · 散热",
           "blocks": [
-            { "slug": "battery", "kind": "prose", "markdown": "**Meridian 14：9.5 小时**\n\n**Aurora 14 Pro：6.5 小时**\n\n差出来的三小时，基本都花在那块更好的屏幕上。" }
+            {
+              "kind": "list",
+              "slug": "b1",
+              "items": [
+                "Meridian 14：9.5 小时",
+                "Aurora 14 Pro：6.5 小时"
+              ]
+            },
+            {
+              "kind": "prose",
+              "slug": "b2",
+              "markdown": "满载 30 分钟：Aurora 稳在 45 W、表面 42 °C；Meridian 38 W、46 °C。"
+            }
           ]
-        }
-      ]
-    },
-    {
-      "slug": "ports",
-      "layout": { "template": "columns", "params": { "cols": 2 } },
-      "cards": [
+        },
         {
           "title": "接口",
           "blocks": [
             {
-              "slug": "io",
               "kind": "list",
+              "slug": "p1",
               "items": [
-                "Aurora：HDMI 2.1 · 2×USB-A · 2×雷电 4",
-                "Meridian：HDMI 2.0 · 1×USB-A",
-                "按硬要求，**Meridian 少一个 USB-A**"
+                "HDMI 2.1 ×1",
+                "USB-A ×2",
+                "雷电 4 ×2",
+                "3.5mm ×1"
               ]
             }
           ]
         },
         {
-          "title": "散热（满载 30 分钟）",
+          "title": "实拍（示意图）",
           "blocks": [
-            { "slug": "thermal", "kind": "prose", "markdown": "| | 稳定功耗 | 表面最高 |\n|---|---|---|\n| Aurora | 45 W | 42 ℃ |\n| Meridian | 38 W | 46 ℃ |\n\n写代码两台都够用；跑本地模型 Aurora 快一截。" }
+            {
+              "kind": "image",
+              "slug": "shot",
+              "src": "E:/Dev/dsh-superboard/video/scenes/data/img/shot-5.jpg",
+              "alt": "实拍示意",
+              "caption": "Wikimedia Commons · CC0 · 示意图，非所评机型"
+            }
+          ]
+        },
+        {
+          "title": "风险",
+          "blocks": [
+            {
+              "kind": "prose",
+              "slug": "r1",
+              "markdown": "OLED 长期静态画面有烧屏可能。\n\n下一代还有 5–6 个月，首发普遍贵 800–1200。"
+            }
+          ]
+        },
+        {
+          "title": "买还是等",
+          "blocks": [
+            {
+              "kind": "list",
+              "slug": "w1",
+              "items": [
+                "现在买：贵不了多少，急用更划算",
+                "等下一代：还要 5–6 个月，首发普遍贵 800–1200",
+                "结论：急用就现在买，不急就等"
+              ]
+            }
+          ]
+        },
+        {
+          "title": "如果预算降到 7500",
+          "blocks": [
+            {
+              "kind": "list",
+              "slug": "d1",
+              "items": [
+                "Tern 14 重新入围，但要接受 1.72kg",
+                "或者降到 16G / 512G 的 Aurora",
+                "两个都要牺牲一件事，先想清楚牺牲哪个"
+              ]
+            }
           ]
         }
       ]
     },
     {
-      "slug": "checklist",
-      "layout": { "template": "flow" },
+      "slug": "下单前",
+      "layout": {
+        "template": "grid",
+        "params": {
+          "cols": 2
+        }
+      },
       "cards": [
         {
-          "title": "下单前自检",
+          "title": "这周要做的事",
           "blocks": [
             {
-              "slug": "todo",
               "kind": "list",
-              "ordered": true,
+              "slug": "t1",
               "items": [
-                "确认买的是 **32G** 版本，不是 16G",
-                "屏幕确认 **2.8K OLED**，别拿高刷 IPS 顶替",
-                "官网下单可 24 期免息；自营仓通常只有 12 期",
-                "加 **299 元**延保到 3 年整机",
-                "收货先跑一次满载 30 分钟，看表面温度和降频"
+                "确认是 32G 而不是 16G",
+                "确认屏是 2.8K 而不是 2.2K",
+                "保修加 299 延到 3 年"
+              ]
+            }
+          ]
+        },
+        {
+          "title": "到货之后",
+          "blocks": [
+            {
+              "kind": "list",
+              "slug": "t2",
+              "items": [
+                "先跑一次色彩校准",
+                "记下首月实际续航",
+                "OLED 设置静态壁纸轮换"
+              ]
+            }
+          ]
+        },
+        {
+          "title": "钱怎么算",
+          "blocks": [
+            {
+              "kind": "prose",
+              "slug": "t3",
+              "markdown": "机器 ¥8900 + 延保 ¥299，一共 **¥9199**。"
+            },
+            {
+              "kind": "list",
+              "slug": "t4",
+              "items": [
+                "对比的那台便宜 700，但少一个 USB-A",
+                "多出来的三个小时续航值这 700"
+              ]
+            }
+          ]
+        },
+        {
+          "title": "还没定的两件事",
+          "blocks": [
+            {
+              "kind": "list",
+              "slug": "t5",
+              "items": [
+                "要不要现在就把旧机出手",
+                "出差的第二块电源买原厂还是第三方"
               ]
             }
           ]
