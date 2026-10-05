@@ -31,6 +31,7 @@ import {
   closedObject,
   defineBoardTool,
   int,
+  num,
   oneOfStrings,
   openObject,
   opBranch,
@@ -88,6 +89,126 @@ const ANCHOR_HELP =
   "A `node` key is one the diagram itself names: board_read of a `uml` block lists them after " +
   'the source, and a key that is not on that list is still accepted — the list is what the block ' +
   'says its parts are, not a set of restrictions.'
+
+/**
+ * The `at` union.
+ *
+ * A `oneOf` of `const`-discriminated branches rather than one object with a `kind` enum and
+ * every field optional. The loose form would accept `{ kind: 'item' }` with no `itemId`, and the
+ * rejection would then have to come from the fold — one round trip later, in a message the model
+ * has no reason to connect to what it just wrote. Here it is refused at the call, with the field
+ * named.
+ */
+const ANCHOR_AT = {
+  description: 'Which part of the block to aim at. Omit for the whole block.',
+  oneOf: [
+    closedObject({ kind: { const: 'block', type: 'string' } }, ['kind']),
+    closedObject(
+      {
+        kind: { const: 'field', type: 'string' },
+        field: oneOfStrings('Which named field of the block.', ['title', 'code', 'caption', 'filename']),
+      },
+      ['kind', 'field'],
+    ),
+    closedObject(
+      {
+        kind: { const: 'item', type: 'string' },
+        itemId: str('A list item id, as board_read prints it.'),
+      },
+      ['kind', 'itemId'],
+    ),
+    closedObject(
+      {
+        kind: { const: 'lines', type: 'string' },
+        from: int('First line, 1-based.'),
+        to: int('Last line, inclusive.'),
+      },
+      ['kind', 'from', 'to'],
+    ),
+    closedObject(
+      {
+        kind: { const: 'text', type: 'string' },
+        start: int('First character offset.'),
+        end: int('Last character offset.'),
+        quote: str('What you expect that range to say. A mismatch is reported, never rejected.'),
+      },
+      ['kind', 'start', 'end'],
+    ),
+    closedObject(
+      {
+        kind: { const: 'child', type: 'string' },
+        childId: str('The child block to aim at.'),
+      },
+      ['kind', 'childId'],
+    ),
+    closedObject(
+      {
+        kind: { const: 'node', type: 'string' },
+        key: str('A node key the diagram itself names.'),
+      },
+      ['kind', 'key'],
+    ),
+    closedObject(
+      {
+        kind: { const: 'rect', type: 'string' },
+        x: num('Left edge, 0-1 within the block.'),
+        y: num('Top edge, 0-1 within the block.'),
+        w: num('Width, 0-1 within the block.'),
+        h: num('Height, 0-1 within the block.'),
+      },
+      ['kind', 'x', 'y', 'w', 'h'],
+    ),
+    closedObject(
+      {
+        kind: { const: 'point', type: 'string' },
+        x: num('X, 0-1 within the block.'),
+        y: num('Y, 0-1 within the block.'),
+      },
+      ['kind', 'x', 'y'],
+    ),
+  ],
+}
+
+/**
+ * One edge endpoint.
+ *
+ * The string form is what every existing edge uses and what `board_read` prints, so it has to
+ * keep working; the object form is the same string plus somewhere inside the block to land. A
+ * `oneOf` is legal here because the branches cannot both match — one demands a string, the other
+ * an object — and it is the only spelling DSH's subset allows, since type arrays are rejected
+ * (`schema-dsl.js:13-16`).
+ */
+function endpoint(description) {
+  return {
+    description,
+    oneOf: [
+      { type: 'string' },
+      closedObject(
+        {
+          blockId: str('Block to anchor to: slug, id, or retired alias.'),
+          at: ANCHOR_AT,
+        },
+        ['blockId'],
+      ),
+    ],
+  }
+}
+
+/**
+ * The points an arrow should be forced through.
+ *
+ * The coordinate space is the box spanning both endpoints, normalised to `[0,1]` — the space
+ * `docs/design/board-model.md:340` fixes, and the only one an Agent can reason about without
+ * seeing the canvas, because it moves with the two blocks instead of naming pixels that a reflow
+ * would invalidate.
+ */
+function waypointList() {
+  return arrayOf(
+    'Points the arrow must pass through, in order, each { x, y } normalised to the box spanning ' +
+      'both endpoints. Omit to let the renderer pick its own curve.',
+    closedObject({ x: num('X, 0-1 across the endpoint box.'), y: num('Y, 0-1 down it.') }, ['x', 'y']),
+  )
+}
 
 // ---------------------------------------------------------------------------
 // Reading the board
@@ -638,6 +759,17 @@ function operationSchema() {
     // Named `pdfPage`, not `page`, because `page` on this branch already means "the page this
     // block belongs to" (a slug). One name cannot be both a slug and a page number.
     pdfPage: int('pdf-page: 1-based page number.'),
+    crop: closedObject(
+      {
+        x: num('pdf-page: left edge, 0-1 of the page.'),
+        y: num('pdf-page: top edge, 0-1 of the page.'),
+        w: num('pdf-page: width, 0-1 of the page.'),
+        h: num('pdf-page: height, 0-1 of the page.'),
+      },
+      ['x', 'y', 'w', 'h'],
+      'pdf-page: show only this rectangle of the page. Normalised anchors on the block are ' +
+        'relative to it, so naming a figure here also moves what an arrow can point at.',
+    ),
     title: str('group: container title.'),
     children: arrayOf('group: block references on the same page. Groups may nest.'),
     layout: closedObject(
@@ -708,11 +840,12 @@ function operationSchema() {
         opBranch(
           'add_edge',
           {
-            from: str(`Source endpoint. ${ANCHOR_HELP}`),
-            to: str(`Target endpoint. ${ANCHOR_HELP}`),
+            from: endpoint(`Source endpoint. ${ANCHOR_HELP}`),
+            to: endpoint(`Target endpoint. ${ANCHOR_HELP}`),
             rel: oneOfStrings('Relationship type. Omit for a plain visual arrow.', [...EDGE_RELS]),
             label: str('Free-text label, shown on the arrow.'),
             style: oneOfStrings('Arrow style.', ['solid', 'dashed', 'dotted']),
+            waypoints: waypointList(),
             slug: str('Preferred edge address.'),
           },
           ['from', 'to'],
@@ -724,8 +857,9 @@ function operationSchema() {
             rel: oneOfStrings('New relationship type.', [...EDGE_RELS]),
             label: str('New label.'),
             style: oneOfStrings('New style.', ['solid', 'dashed', 'dotted']),
-            from: str('New source endpoint.'),
-            to: str('New target endpoint.'),
+            from: endpoint('New source endpoint.'),
+            to: endpoint('New target endpoint.'),
+            waypoints: waypointList(),
           },
           ['edge'],
         ),

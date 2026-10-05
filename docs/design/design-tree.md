@@ -1,8 +1,14 @@
 # dsh-superboard — design tree
 
-**Status: main tree settled (rounds 1–4); M0–M4 built and tested. Q7 revised at M4.**
+**Status: main tree settled (rounds 1–4). Historical record — the design is built.**
 This file is the working record of the design tree. It becomes a specification once the
 §Remaining unknowns are closed and the user confirms shared understanding.
+
+> **它现在是一份历史记录，不是当前状态的说明。** 写于 M0–M4 期间；此后 UML、PDF 与图片、文字
+> 选择、`masonry`、主题适配都已交付。**要知道现在有什么，读 [`../../README.md`](../../README.md)；
+> 要知道模型契约，读 [`board-model.md`](./board-model.md)。**
+> 这份文件的价值在于**被否决的选项和原因**——那些是别处没有的，所以别丢。
+> 下面第 13 条（Q7「marquee stages a draft」）已在 M4 改掉：框选不再暂存草稿，而是走看板本地的浮条。
 
 | Settled | Remaining |
 |---|---|
@@ -343,7 +349,10 @@ Recomputed after round 4. Nothing here waits on anything.
 10. **Q-F** directed semantic edges with optional labels.
 11. **Q-G** readable slugs as addresses over stable ids; edges anchor to ids.
 12. **Q-H** structured text in v1; visual grounding later as an Agent-initiated bitmap query.
-13. **Q7** marquee stages a draft; explicit send-now chord for the confident case.
+13. **Q7** ~~marquee stages a draft; explicit send-now chord for the confident case.~~ **在 M4 改掉**：
+    框选不再往 composer 里暂存草稿（那条路被证明走不通，见
+    [`../research/dsh-composer-attachments.md`](../research/dsh-composer-attachments.md)），改成看板本地
+    的浮条——摘要进草稿文本、选区作为 JSON 附件，且永不代替用户发送。
 14. **Q-J** strictly conversation-scoped; cross-conversation reference recorded as a future shape.
 15. **Q-K** chat strip: collapsed = status + latest line + unread, expanded = recent turns read-only.
 

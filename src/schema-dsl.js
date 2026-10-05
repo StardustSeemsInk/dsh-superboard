@@ -37,6 +37,17 @@ export function int(description, extra = {}) {
   return { type: 'integer', description, ...extra }
 }
 
+/**
+ * A fractional numeric property.
+ *
+ * Separate from `int` because the anchor vocabulary has normalised coordinates in `[0,1]`
+ * (`docs/design/board-model.md:306-308`, quantised to four decimals by D9 at `:507`). Declaring
+ * those as integers would accept `1` and reject the `0.32` an Agent actually needs to write.
+ */
+export function num(description, extra = {}) {
+  return { type: 'number', description, ...extra }
+}
+
 /** A boolean property. */
 export function bool(description, extra = {}) {
   return { type: 'boolean', description, ...extra }

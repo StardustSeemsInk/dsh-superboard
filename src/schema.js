@@ -57,7 +57,7 @@ const baseBlock = {
 
 const block = z.discriminatedUnion('kind', [
   z.object({ ...baseBlock, kind: z.literal('heading'), level: z.union([z.literal(1), z.literal(2), z.literal(3)]), text: z.string() }),
-  z.object({ ...baseBlock, kind: z.literal('prose'), markdown: z.string(), collapsed: z.boolean().optional() }),
+  z.object({ ...baseBlock, kind: z.literal('prose'), markdown: z.string() }),
   z.object({
     ...baseBlock,
     kind: z.literal('list'),
@@ -67,7 +67,6 @@ const block = z.discriminatedUnion('kind', [
         id: z.string(),
         text: z.string(),
         depth: z.number(),
-        checked: z.boolean().optional(),
       }),
     ),
   }),
@@ -86,7 +85,6 @@ const block = z.discriminatedUnion('kind', [
     kind: z.literal('image'),
     src: z.string(),
     alt: z.string(),
-    naturalSize: z.object({ w: z.number(), h: z.number() }).optional(),
     caption: z.string().optional(),
   }),
   z.object({
@@ -102,7 +100,6 @@ const block = z.discriminatedUnion('kind', [
     kind: z.literal('group'),
     title: z.string().optional(),
     children: z.array(z.string()),
-    collapsed: z.boolean().optional(),
     /**
      * How this container arranges its children.
      *

@@ -1,5 +1,11 @@
 # DSH Plugin API — research report
 
+> **先读哪一份。** 这份是**全量调研**（728 行）：slot 目录、服务、事件，附证据。
+> 如果要的是「必须遵守什么」，读 [`dsh-plugin-contract.md`](./dsh-plugin-contract.md)——它是这份的**浓缩版**，
+> 逐条带行号，而且是 [`../design/build-plan.md`](../design/build-plan.md) 点名的前置文档。
+> 两份内容重叠是**有意**的：浓缩版负责被遵守，这份负责被查证。改任何一边时请同步另一边，或者
+> 至少确认重叠的那几条没有分叉。
+
 **Scope.** DSH (DeepSeek Harness) **0.2.0-rc.2**, installed Desktop build.
 Implementation checkout: `C:\Users\haoch\AppData\Local\Programs\DeepSeek Harness\resources\app.asar` (a 121 MB file, not a directory).
 It was extracted read-only with `npx @electron/asar extract` to:

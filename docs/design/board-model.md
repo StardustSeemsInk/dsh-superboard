@@ -1,10 +1,31 @@
 # 看板数据模型与 Agent 工具面 — 设计契约
 
-**状态：** 待评审（可照着实现的接口契约，不含实现代码）
+**状态：** **已实现并投入使用**，所以这份文件已经是**活文档**——它记录契约，代码照着它写。
+「待评审」是它出生时的状态，那版在 git 历史里。
+
 **目标运行时：** DSH Desktop `0.2.0-rc.2`
 **上游文档：** [`design-tree.md`](./design-tree.md)（已定决策 Q1–Q-H）、[`../research/dsh-plugin-contract.md`](../research/dsh-plugin-contract.md)（硬约束）、[`../research/dsh-host-plugin-api.md`](../research/dsh-host-plugin-api.md)（API 一手调研）
 
 本文只回答一件事：**看板的场景模型长什么样，它如何从 session log 折叠出来，以及 Agent 通过哪些工具读写它。**
+
+> **1579 行，先看这个目录。** 只想把事做对 → §附（一页速查）。查某个字段 → §1。改写入路径 → §2。
+> 动工具面 → §3。改排版 → §4，**但先读 §4.5**，那里记着本节与实现之间已知的偏差。
+>
+> 这里同时是**框架事实的档案**：§0 的 F1–F16 与 §2.6.1 的 I2 事故记录，是仓库里唯一写下这些的地方，
+> 所以改代码前如果结论和本文冲突，先确认是哪一边过时了。
+
+**目录**（`§` 后为节号）
+
+- **§0** 设计所依赖的 DSH 事实（全部已核）
+- **§1** 场景模型 — 1.1 `BoardDoc` / 1.2 `Page` / 1.3 `Block` / 1.4 `Anchor`（块内锚点）/ 1.5 `Edge` / 1.6 `Region` / 1.7 命名与 slug / 1.8 为什么 UML 现在就要定型
+- **§2** 折叠语义 — 权威状态 / 2.2 op 集合 / 2.3 确定性 / 2.4 批校验的执行位置 / 2.5 revision 算法 / 2.6 stale write / 2.6.1 I2 事故 / 2.7 投影入口
+- **§3** Agent 工具面 — 3.1 工具清单 / 3.2 四个工具的精确契约 / 3.3 如何系统性降低笔误
+- **§4** 排版模板 — 4.1 清单 / 4.2 `region` 还是 `group` / 4.3 窄窗口 / 4.4 坐标为什么不属于块 / **4.5 与实现的两处已知偏差** / 4.6 图如何跟随主题 / 4.7 选择手势
+- **§5** 上下文预算（大纲的确切文本、规模估算、降级、工具 schema）
+- **§6** 客户端与镜像
+- **§7** 与已定决策的逐条对应
+- **§8** 风险与未决（最可能错的地方、动工前要验的断言）
+- **§附** 一页速查
 
 标记约定：
 
@@ -183,8 +204,6 @@ interface ProseBlock extends BlockBase {
   kind: 'prose'
   /** 块级 markdown（不含标题与围栏代码；那些用专门块）。 */
   markdown: string
-  /** 折叠态？纯渲染提示。 */
-  collapsed?: boolean
 }
 
 interface ListBlock extends BlockBase {
@@ -199,8 +218,6 @@ interface ListItem {
   text: string
   /** 缩进层级，0 起。 */
   depth: number
-  /** 已勾选（仅用于视觉，不构成任务系统）。 */
-  checked?: boolean
 }
 
 interface CodeBlock extends BlockBase {
@@ -236,8 +253,6 @@ interface ImageBlock extends BlockBase {
   /** 工作区相对路径或绝对路径。禁止 data: URL（会进 log）。 */
   src: string               // 'docs/assets/arch.png'
   alt: string
-  /** 自然尺寸，用于锚点坐标换算。缺失 = 渲染后回填，回填前锚点用归一化坐标。 */
-  naturalSize?: { w: number; h: number }
   caption?: string
 }
 
@@ -257,8 +272,6 @@ interface GroupBlock extends BlockBase {
   title?: string
   /** 子块 id，有序。子块仍然物理存在于同一页的 blocks 数组里（见下）。 */
   children: string[]
-  /** 折叠态。 */
-  collapsed?: boolean
 }
 ```
 
@@ -480,7 +493,7 @@ interface OpBase {
 | `reorder_pages` | `order: string[]` | 必须是**当前全部页 id/slug 的一个排列**；长度不符或缺项即失败（不做「只移动一页」的模糊语义——那会造出两种实现）。 |
 | `delete_page` | `page`, `force?` | 若该页有块或有边端点在页内块上，且 `force !== true`，失败并回报计数；`force` 时删除该页及其块，相关边标 `dangling`。删最后一页失败（`pages.length >= 1` 是不变量）。 |
 | `add_block` | `page`, `kind`, `slug?`, `after?`, `region?` + **该 kind 的内容字段（同层平铺，不是嵌套的 `block` 对象）** | slug 经 `uniqSlug`；`kind:'group'` 时 `children` 必须引用**同页已存在**的块，且每个子块至多属于一个 group。 |
-| `update_block` | `block` + **要改的内容字段（同层平铺，至少一个）** | 允许改的字段：`text/markdown/items/ordered/level/code/lang/filename/source/engine/diagram/src/alt/caption/page/crop/title/collapsed/anchors`。禁止改 `kind`/`id`/`slug`（slug 走 `rename_block` 语义时仍用本 op 的 `slug` 字段）。改 `kind` 是「删+加」，刻意不给 op。 |
+| `update_block` | `block` + **要改的内容字段（同层平铺，至少一个）** | 允许改的字段：`text/markdown/items/ordered/level/code/lang/filename/source/engine/diagram/src/alt/caption/page/crop/title/anchors`。禁止改 `kind`/`id`/`slug`（slug 走 `rename_block` 语义时仍用本 op 的 `slug` 字段）。改 `kind` 是「删+加」，刻意不给 op。 |
 | `move_block` | `block`, `page`, 可选 `after` | 跨页移动时块内的 `AnchorAt.rect` 归一化坐标**保持原值**（它是相对该块自己的媒体，不是相对页面）；`regionId` 若指向的 region 不含新页块，region 的 `blockIds` 自动同步。 |
 | `delete_block` | `block`, `recursive?` | 删块；指向它的边标 `dangling`。`kind:'group'` 默认只解组（保留子块），`recursive:true` 连子块一起删。 |
 | `add_edge` | `from`, `to`, `rel?`, `label?`, `style?`, `slug?` | 两端锚点按 §1.4 校验（kind 兼容性）；重复边（同 from、同 to、同 rel、同 label）被**拒绝**并回报已存在的 edge slug —— 防模型重复画同一支箭。 |
@@ -542,13 +555,13 @@ pages[]           按数组顺序:
     id, kind, slug, regionId|null, at|null(量化后)
     以及该 kind 的内容字段，固定顺序:
       heading : level, text
-      prose   : markdown, collapsed
-      list    : ordered, items[](id, text, depth, checked)
+      prose   : markdown
+      list    : ordered, items[](id, text, depth)
       code    : lang, code, filename
       uml     : engine, diagram, source          ← renderedHash 不参与
-      image   : src, alt, caption, naturalSize
+      image   : src, alt, caption
       pdf-page: src, page, crop, caption
-      group   : title, children[], collapsed
+      group   : title, children[]
     anchors[]     按数组顺序: blockId, at(kind + 该 kind 的字段)
 regions[]         按数组顺序: id, slug, blockIds[], label, layout, tone
 edges[]           按数组顺序: id, slug, rel, label, style,

@@ -148,13 +148,19 @@ test('the skill warns about canvas, which arranges nothing', async () => {
   assert.match(skill.content, /Nothing on the board has coordinates/)
 })
 
-test('the skill names the fields that have no visual effect', async () => {
+test('the skill names the fields that have no visual effect, and only those', async () => {
   const { skill } = await load('board-layout')
-  // These are accepted, stored and hashed, and change nothing on screen. An Agent that spends a
-  // round on `collapsed` has lost a round.
-  for (const field of ['collapsed', 'checked', 'naturalSize', 'crop', 'waypoints']) {
+  // Two fields are still accepted, stored and hashed and change nothing on screen. An Agent that
+  // spends a round on either has lost a round.
+  for (const field of ['rel', 'anchors']) {
     assert.ok(skill.content.includes(field), `the skill does not mention the no-op field ${field}`)
   }
+  // The list used to be five. Three were removed from the model rather than implemented, and the
+  // section has to keep saying so: the reason the old list existed is that an Agent cannot tell a
+  // field the renderer ignores from a field it simply has not used yet.
+  assert.match(skill.content, /were \*\*removed\*\* from the model/)
+  // The other two went the opposite way and are now load-bearing.
+  assert.match(skill.content, /now real/)
 })
 
 test('the skill describes masonry as the waterfall it is, not as a grid', async () => {

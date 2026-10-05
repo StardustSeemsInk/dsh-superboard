@@ -1,5 +1,11 @@
 # DSH 渲染运行时可行性验证
 
+> **先读哪一份。** 本文的 **§11（客户端模块加载 / chunk 路由）** 后来被
+> [`dsh-client-rendering.md`](./dsh-client-rendering.md) 用加载器源码重新推导了一遍，并补上了 PDF 那条路。
+> **要引用「mermaid 怎么作为包内 chunk 懒加载」这个结论，请引 `dsh-client-rendering.md`。**
+> 本文仍然是「客户端到底能栅格化什么」这份更宽的调研的来源，所以两份都留着——重叠的是加载器那一节，
+> 不是全文。
+
 **验证对象**：DSH (DeepSeek Harness) `0.2.0-rc.2` Desktop
 **证据来源**（全部为直接读到的字节）：
 - 解包 asar：`C:\Users\haoch\AppData\Local\Temp\dsh-asar\`（15578 条目；下文简写 `<ASAR>`）

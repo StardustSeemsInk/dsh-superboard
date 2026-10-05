@@ -154,10 +154,18 @@ The board has a second purpose: it is what the user reads. A few consequences:
 
 ## Fields that do nothing
 
-Do not spend effort on these; they are accepted and stored but have no visual effect:
+Do not spend a round on these. They are accepted, stored and hashed, and change nothing on screen:
 
-`collapsed` (on `prose` and `group`), `checked` (on list items), `naturalSize`, `crop`, and
-`waypoints` on edges. Groups never collapse, and a list item's `checked` renders as a plain bullet.
+- **`rel`** on an edge — `depends`, `causes`, and so on. It is metadata for `board_query`, not a
+  visual. An arrow's appearance comes from `style` and `label`.
+- **`anchors`** on a block — free-form anchor records. Nothing reads them.
+
+That list used to be longer, and the difference is worth knowing because it explains a whole class of
+past confusion: `collapsed` (on `prose` and `group`), `checked` (on list items) and `naturalSize`
+(on images) were **removed** from the model rather than implemented — a field no renderer reads and
+no tool declares is worse than absent, because it costs a round to discover. `crop` on a `pdf-page`
+and `waypoints` on an edge went the other way and are now real: a cropped page shows only the
+rectangle you named, and waypoints bend the arrow through the points you gave.
 
 ## Before you call `set_layout`
 

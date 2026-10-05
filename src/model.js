@@ -412,21 +412,12 @@ function encodeBlock(block) {
       parts.push(String(block.level), FIELD_SEP, block.text)
       break
     case 'prose':
-      parts.push(block.markdown, FIELD_SEP, block.collapsed === true ? '1' : '0')
+      parts.push(block.markdown)
       break
     case 'list':
       parts.push(block.ordered === true ? '1' : '0', FIELD_SEP)
       for (const item of block.items) {
-        parts.push(
-          item.id,
-          ':',
-          String(item.depth),
-          ':',
-          item.checked === true ? '1' : '0',
-          ':',
-          item.text,
-          ';',
-        )
+        parts.push(item.id, ':', String(item.depth), ':', item.text, ';')
       }
       break
     case 'code':
@@ -437,15 +428,10 @@ function encodeBlock(block) {
       parts.push(block.engine, FIELD_SEP, block.diagram, FIELD_SEP, block.source)
       break
     case 'image':
-      parts.push(
-        block.src,
-        FIELD_SEP,
-        block.alt,
-        FIELD_SEP,
-        block.caption ?? '',
-        FIELD_SEP,
-        block.naturalSize === undefined ? '' : `${block.naturalSize.w}x${block.naturalSize.h}`,
-      )
+      // No `naturalSize`: the browser measures the rendered `<img>`, and a `rect`/`point` anchor
+      // is normalised against that measured box. An authored pair of numbers could only ever
+      // disagree with the file on disk, silently.
+      parts.push(block.src, FIELD_SEP, block.alt, FIELD_SEP, block.caption ?? '')
       break
     case 'pdf-page':
       // `pageCount` is not here because it is not a field any more: it needs a parse, a parse is
@@ -468,8 +454,6 @@ function encodeBlock(block) {
         block.title ?? '',
         FIELD_SEP,
         block.children.join(','),
-        FIELD_SEP,
-        block.collapsed === true ? '1' : '0',
         FIELD_SEP,
         // A container's layout is content, not presentation: changing it changes the board.
         block.layout === undefined ? '' : encodeLayout(block.layout),

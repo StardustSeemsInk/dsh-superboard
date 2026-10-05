@@ -640,7 +640,7 @@ function buildBlock(op, context, model, page, id) {
     case 'heading':
       return { ...base, level: normaliseLevel(op.level), text: text(op.text, 'text') }
     case 'prose':
-      return { ...base, markdown: text(op.markdown, 'markdown'), ...collapsed(op.collapsed) }
+      return { ...base, markdown: text(op.markdown, 'markdown') }
     case 'list':
       return {
         ...base,
@@ -674,7 +674,6 @@ function buildBlock(op, context, model, page, id) {
         src: text(op.src, 'src'),
         alt: typeof op.alt === 'string' ? op.alt : '',
         ...(typeof op.caption === 'string' ? { caption: op.caption } : {}),
-        ...(op.naturalSize === undefined ? {} : { naturalSize: normaliseSize(op.naturalSize) }),
       }
     case 'pdf-page':
       return {
@@ -691,7 +690,6 @@ function buildBlock(op, context, model, page, id) {
         ...base,
         ...(typeof op.title === 'string' ? { title: op.title } : {}),
         children: normaliseChildren(op.children, page, id),
-        ...collapsed(op.collapsed),
         // The label is best-effort here: a new group has no slug until `add_block` allocates one, so
         // the `areas` *names* are checked there instead, once the slug and the child list are final.
         ...(op.layout === undefined
@@ -795,7 +793,6 @@ function opUpdateBlock(model, op, context) {
     'page',
     'crop',
     'title',
-    'collapsed',
   ]
   let touched = false
   for (const field of patchable) {
@@ -806,7 +803,6 @@ function opUpdateBlock(model, op, context) {
     else if (field === 'crop') patched.crop = normaliseCrop(op.crop)
     else if (field === 'page') patched.page = requirePageNumber(op.pdfPage ?? op.page)
     else if (field === 'ordered') patched.ordered = op.ordered === true
-    else if (field === 'collapsed') patched.collapsed = op.collapsed === true
     else patched[field] = typeof op[field] === 'string' ? op[field].normalize('NFC') : op[field]
   }
   if (Array.isArray(op.anchors)) {
@@ -1006,6 +1002,11 @@ function opAddEdge(model, op, context) {
     ...(op.rel === undefined ? {} : { rel: op.rel }),
     ...(typeof op.label === 'string' ? { label: op.label.normalize('NFC') } : {}),
     ...(op.style === undefined ? {} : { style: op.style }),
+    // `update_edge` has accepted waypoints since the op existed; `add_edge` did not, so a board
+    // never got the chance to set them at creation and had to follow every add with an update.
+    // The schema now declares them on both, and a declared field that the fold drops is worse
+    // than an undeclared one: the Agent is told it worked.
+    ...(Array.isArray(op.waypoints) ? { waypoints: normaliseWaypoints(op.waypoints) } : {}),
     createdAtRev: context.callerRev,
     updatedAtRev: context.callerRev,
   }
@@ -1289,11 +1290,6 @@ function requirePageNumber(value) {
   return page
 }
 
-/** Only spread `collapsed` when the author said something about it. */
-function collapsed(value) {
-  return value === undefined ? {} : { collapsed: value === true }
-}
-
 /** Normalise a list's items, minting a stable id per item so anchors do not drift. */
 function normaliseItems(value, context, model, page) {
   if (!Array.isArray(value)) throw new BoardOpError('"items" must be an array')
@@ -1312,7 +1308,6 @@ function normaliseItems(value, context, model, page) {
       id: mintId(model, { ...context, opIndex: `${context.opIndex}:i${index}` }, 'item', ID_PREFIX.listItem),
       text: text(item.text, `items[${index}].text`),
       depth: Number.isInteger(item.depth) && item.depth >= 0 ? item.depth : 0,
-      ...(item.checked === undefined ? {} : { checked: item.checked === true }),
     }
   })
 }
@@ -1541,12 +1536,6 @@ function normaliseCrop(value) {
     w: quantise(value.w),
     h: quantise(value.h),
   }
-}
-
-/** Normalise an image's natural size. */
-function normaliseSize(value) {
-  if (typeof value !== 'object' || value === null) throw new BoardOpError('"naturalSize" must be an object')
-  return { w: Math.trunc(Number(value.w) || 0), h: Math.trunc(Number(value.h) || 0) }
 }
 
 /** Quantise edge waypoints. */
