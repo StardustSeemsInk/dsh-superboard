@@ -401,3 +401,75 @@ test('the content hash ignores history and counters', () => {
   }
   assert.equal(encodeModelForHash(base), encodeModelForHash(withHistory))
 })
+
+// ---------------------------------------------------------------------------
+// I4 / I6 — the duplicate-id defect, and the gate that stops it at admission
+// ---------------------------------------------------------------------------
+
+test('a same-page move_block keeps exactly one copy of the block', () => {
+  // I4: `from` and `to` are the same Page on a same-page move, so the naive insert list still
+  // held the block. It published two entries under one id, and no op could undo that — the
+  // reference read as `ambiguous between bl_x, bl_x`, and `delete_block` removes every copy at
+  // once, so the block could only be deleted and rebuilt.
+  const state = foldAll([
+    ...applied(10, 'c1', {
+      ops: [
+        { op: 'add_block', page: 'main', kind: 'heading', level: 1, text: '一', slug: 'one' },
+        { op: 'add_block', page: 'main', kind: 'prose', markdown: '二', slug: 'two' },
+      ],
+    }),
+    ...applied(12, 'c2', { ops: [{ op: 'move_block', block: 'one', page: 'main', after: 'two' }] }),
+  ])
+
+  const blocks = state.model.pages[0].blocks
+  assert.equal(blocks.length, 2, 'the page must still hold two blocks, not three')
+  assert.deepEqual(
+    blocks.map((block) => block.slug),
+    ['two', 'one'],
+    'the move must have reordered them',
+  )
+  assert.equal(new Set(blocks.map((block) => block.id)).size, 2, 'ids must stay unique')
+
+  // The observable symptom is a slug that can no longer be resolved, so check that too.
+  const after = foldAll([
+    ...applied(10, 'c1', {
+      ops: [
+        { op: 'add_block', page: 'main', kind: 'heading', level: 1, text: '一', slug: 'one' },
+        { op: 'add_block', page: 'main', kind: 'prose', markdown: '二', slug: 'two' },
+      ],
+    }),
+    ...applied(12, 'c2', { ops: [{ op: 'move_block', block: 'one', page: 'main', after: 'two' }] }),
+    ...applied(14, 'c3', { ops: [{ op: 'update_block', block: 'one', markdown: '被改过' }] }),
+  ])
+  const moved = after.model.pages[0].blocks.find((block) => block.slug === 'one')
+  assert.equal(moved.markdown, '被改过')
+})
+
+test('a duplicated id is refused at admission but tolerated on replay', () => {
+  const base = foldAll([
+    ...applied(10, 'c1', {
+      ops: [{ op: 'add_block', page: 'main', kind: 'prose', markdown: '一', slug: 'a' }],
+    }),
+  ])
+  const page = base.model.pages[0]
+  // A board of the shape the old bug produced: one block id, two entries.
+  const corrupt = { ...base.model, pages: [{ ...page, blocks: [page.blocks[0], { ...page.blocks[0] }] }] }
+  // An op that never mentions `a`, so the rejection can only come from the invariant scan.
+  const ops = [{ op: 'add_block', page: 'main', kind: 'prose', markdown: '新' }]
+  const context = { sessionId: SESSION, callSeq: 1, callerRev: corrupt.rev }
+
+  assert.throws(
+    () => applyOps(structuredClone(corrupt), ops, { ...context, validateInvariants: true }),
+    (error) => {
+      assert.ok(error instanceof BoardOpError)
+      assert.match(error.message, /sharing one id/)
+      assert.match(error.message, /rejected/)
+      return true
+    },
+  )
+
+  // The replay path must go through. `commit` re-folds every batch in the log, and a batch that was
+  // committed while the bug existed is a fact about that board: refusing it here would silently
+  // drop it and everything built on it — the I2 failure mode, arriving by a different door.
+  assert.doesNotThrow(() => applyOps(structuredClone(corrupt), ops, context))
+})

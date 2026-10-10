@@ -259,15 +259,12 @@ parameters: {
     applied: { type: "integer", required: true },
     created: { type: "array", required: true, items: { type: "object", additionalProperties: false, properties: {
       kind:  { type: "string", required: true },    // 'page' | 'block' | 'edge' | 'region' | 'item'
-      id:    { type: "string", required: true },
-      slug:  { type: "string", required: true },    // 实际分配的 slug（可能带 -2 后缀！）
-      ref:   { type: "string", required: true }     // 你在 ops 里给的那个串（新建时等于 slug）
+      slug:  { type: "string", required: true }     // 实际分配的 slug（可能带 -2 后缀！）
     } } },
     renamed: { type: "array", required: true, items: { type: "object", additionalProperties: false, properties: {
-      id:       { type: "string", required: true },
-      from:     { type: "string", required: true },
-      to:       { type: "string", required: true },
-      aliasKept:{ type: "boolean", required: true }
+      id:   { type: "string", required: true },     // 重命名保留的 id，铸于更早的批次，因此权威
+      from: { type: "string", required: true },
+      to:   { type: "string", required: true }
     } } },
     warnings: { type: "array", required: true, items: { type: "string" } },
     dangling: { type: "array", required: true, items: { type: "string" } },
@@ -459,7 +456,8 @@ gestures yet. Ask the user which part they mean instead of guessing.
 |---|---|
 | 每次结果都回带 `rev` | 模型永远有新鲜的 `expected_revision` 可复制，不需要记忆 |
 | `created[].slug` 回带**实际**分配的 slug | 后缀消解（`风险-2`）不会被静默吞掉 |
-| `renamed[]` + `aliasKept` | 重命名后模型知道旧地址仍然能读（但提议用新地址） |
+| `created[]` **不回带 id** | id 是 `(sessionId, callSeq, opIndex, kind)` 的哈希，而 dry run 用的是一个占位的 `callSeq` —— 它推出来的 id 永远不是折叠器将要铸的那个（缺陷 I5）。名字叫 stable 却不能 stable 的字段，比没有这个字段更贵：Agent 会拿它做 `add_edge` 端点，然后要么解析到**别的块**，要么报 not found。slug 由模型与请求的地址推出，与 seq 无关，所以 dry run 的 slug 就是落地后的 slug |
+| `renamed[]` | 重命名保留 id，而那个 id 铸于**更早**的批次，所以在这里是权威的（与 `created[]` 正相反）。旧地址被收进 `alias`，因此旧地址仍然能读 |
 | `resolved[].viaAlias` | 模型知道自己在用过期地址 |
 | 批级错误前缀 "nothing applied" + 当前 rev | 模型不会误以为「部分成功」 |
 | 错误里带 `op[i]` 与合法取值枚举 | 模型能修对，而不是重发同一个错 |

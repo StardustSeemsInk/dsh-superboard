@@ -328,6 +328,52 @@ test('board_apply applies a batch and reports what it created', () => {
   assert.match(result.text, /preview/)
 })
 
+test('created reports addresses, not ids, because a dry run cannot know the real ones', () => {
+  // I5: an id is a hash of `(sessionId, callSeq, opIndex, kind)` and the dry run runs with a
+  // stand-in seq, so an id it derives is never the id the fold assigns. Reporting it under the
+  // name "Stable id" sent Agents to `add_edge` with an endpoint that resolved to the wrong block
+  // or to nothing at all.
+  const doc = emptyBoardDoc('sess-tools')
+  const args = {
+    expected_revision: doc.model.rev,
+    ops: [{ op: 'add_block', page: 'main', kind: 'prose', markdown: '一', slug: 'a' }],
+  }
+  const result = callTool('board_apply', args, doc)
+
+  assert.equal(result.created.length, 1)
+  assert.deepEqual(
+    Object.keys(result.created[0]).sort(),
+    ['kind', 'slug'],
+    'a dry-run id must not be reported at all',
+  )
+
+  // What is reported is the slug, and the slug is the address the folded board really carries —
+  // it is derived from the model and the requested address, never from the seq.
+  const folded = foldEvents(applied(2, 'c1', args), 'sess-tools')
+  const slugs = folded.model.pages.flatMap((page) => page.blocks.map((block) => block.slug))
+  for (const entry of result.created) assert.ok(slugs.includes(entry.slug), `${entry.slug} must exist`)
+})
+
+test('a rename reports the id it preserved, which pre-dates this batch', () => {
+  const doc = seededDoc()
+  const original = doc.model.pages[0].blocks[0]
+  const result = callTool(
+    'board_apply',
+    {
+      expected_revision: doc.model.rev,
+      ops: [{ op: 'update_block', block: original.slug, slug: 'renamed' }],
+    },
+    doc,
+  )
+
+  assert.equal(result.renamed.length, 1)
+  // Unlike `created`, a rename's id was minted by an earlier committed call, so it is authoritative
+  // here and worth reporting: it is what any edge endpoint recorded earlier still points at.
+  assert.equal(result.renamed[0].id, original.id)
+  assert.equal(result.renamed[0].from, original.slug)
+  assert.equal(result.renamed[0].to, 'renamed')
+})
+
 test('a stale expected_revision is refused, with the current one quoted back', () => {
   const doc = seededDoc()
   assert.throws(

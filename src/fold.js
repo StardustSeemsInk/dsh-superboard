@@ -306,6 +306,38 @@ export function applyOps(model, ops, context) {
       throw error
     }
   })
+
+  // I6. `mintId` only promises that a *fresh* id does not collide with an existing one; it cannot
+  // see a path that inserts an already-existing block a second time, which is exactly what
+  // `move_block` did within one page (I4). Without this scan the damage is silent until some later
+  // op addresses the block by slug, and then it reads as `ambiguous between bl_x, bl_x` — two
+  // identical ids, which looks like a name clash rather than a duplicate — with no op able to undo
+  // it, because `delete_block` removes every copy of an id at once.
+  //
+  // **Admission only, never replay.** `commit` re-folds every batch in the log, and a batch that
+  // was committed while the bug existed is a fact about that board: re-litigating it here would
+  // silently drop the batch and everything built on it (the I2 failure mode). So the gate runs
+  // where a batch can still be refused — the tool's dry run — and not on the way back in.
+  if (context.validateInvariants === true) {
+    const home = new Map()
+    for (const page of next.pages) {
+      for (const block of page.blocks) {
+        const previous = home.get(block.id)
+        if (previous !== undefined) {
+          const where =
+            previous === page.slug
+              ? 'another block on this page'
+              : `a block on page ${JSON.stringify(previous)}`
+          throw new BoardOpError(
+            `block ${JSON.stringify(block.slug)} would end up sharing one id (${block.id}) with ${where}. ` +
+              'That state cannot be repaired by any op, so the whole batch was rejected and nothing was written. ' +
+              'This is a defect in the board itself rather than in these ops — please report it.',
+          )
+        }
+        home.set(block.id, page.slug)
+      }
+    }
+  }
   return next
 }
 
@@ -853,29 +885,33 @@ function opUpdateBlock(model, op, context) {
 }
 
 /** `move_block` — reorder within a page or move across pages. */
-
-/** `move_block` — reorder within a page or move across pages. */
 function opMoveBlock(model, op) {
   const found = resolveElement(model, op.block, 'block')
   const from = found.page
   const block = found.element
   const to = resolveElement(model, op.page, 'page').element
+  const samePage = from.id === to.id
 
-  const stripped = { ...from, blocks: from.blocks.filter((candidate) => candidate.id !== block.id) }
-  const blocks = [...to.blocks]
+  const kept = from.blocks.filter((candidate) => candidate.id !== block.id)
+  // I4: on a same-page move `from` and `to` are the *same Page*, so `to.blocks` still holds
+  // `block`. Inserting into it publishes the block twice under one id — a state no op can repair,
+  // because `delete_block` removes every copy of an id at once, so the block can only be deleted
+  // and rebuilt, losing its id and `createdAtRev`. The insert list must therefore start from the
+  // page with the block already taken out. (The cross-page branch was always correct, because a
+  // different page cannot contain the block.)
+  const blocks = samePage ? [...kept] : [...to.blocks]
   if (op.after === undefined) blocks.push(block)
-  else blocks.splice(blocks.indexOf(resolveBlockInPage(to, op.after)) + 1, 0, block)
+  else {
+    const at = blocks.indexOf(resolveBlockInPage(to, op.after))
+    if (at === -1) blocks.push(block)
+    else blocks.splice(at + 1, 0, block)
+  }
 
-  if (from.id === to.id) {
-    return replacePage(model, from.id, (current) => ({
-      ...current,
-      blocks: blocks.map((candidate) =>
-        candidate.id === block.id ? { ...candidate, updatedAtRev: candidate.updatedAtRev } : candidate,
-      ),
-    }))
+  if (samePage) {
+    return replacePage(model, from.id, (current) => ({ ...current, blocks }))
   }
   const pages = model.pages.map((page) => {
-    if (page.id === from.id) return stripped
+    if (page.id === from.id) return { ...from, blocks: kept }
     if (page.id === to.id) return { ...page, blocks }
     return page
   })

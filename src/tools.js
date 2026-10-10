@@ -937,24 +937,29 @@ const applyTool = defineBoardTool({
       changed: bool('False for an empty batch, which is legal and does nothing.'),
       applied: int('How many ops were applied.'),
       created: arrayOf(
-        'Elements this batch created.',
+        'Elements this batch created, by the address the fold assigned them.',
         closedObject(
           {
             kind: str('page, block, edge, region, or item.'),
-            id: str('Stable id.'),
-            slug: str('The address actually assigned, which may carry a suffix.'),
-            ref: str('The address you asked for, when you asked for one.'),
+            slug: str(
+              'The address actually assigned, which may carry a suffix. Refer to the element by this ' +
+                'in later ops. It is derived from the model rather than from the call, so unlike an ' +
+                'id it is already exact here.',
+            ),
           },
-          ['kind', 'id', 'slug', 'ref'],
+          ['kind', 'slug'],
         ),
       ),
       renamed: arrayOf(
         'Elements this batch renamed.',
-        closedObject({ id: str('Stable id.'), from: str('Previous address.'), to: str('New address.') }, [
-          'id',
-          'from',
-          'to',
-        ]),
+        closedObject(
+          {
+            id: str('The element id, which a rename preserves and which pre-dates this batch.'),
+            from: str('Previous address.'),
+            to: str('New address.'),
+          },
+          ['id', 'from', 'to'],
+        ),
       ),
       warnings: arrayOf('Things you should know, such as a slug that was already taken.'),
       dangling: arrayOf('Edges left pointing at a deleted block.'),
@@ -971,8 +976,13 @@ const applyTool = defineBoardTool({
  *
  * The work is a dry run over a clone of the current model, so a batch that fails any op leaves
  * the live board untouched without needing any rollback. The fold applies the same batch again
- * when it sees the committed call — and because element ids are derived from the log position
- * rather than a counter, both runs derive identical ids.
+ * when it sees the committed call.
+ *
+ * The two runs do **not** agree on element ids: an id is a hash of `(sessionId, callSeq, opIndex,
+ * kind)` and only the committed run knows its real `seq`. The dry run's ids are stand-ins, and
+ * they must not leave this function — see I5 in `docs/design/board-bugs.md`. Slugs, by contrast,
+ * are derived from the model, so the dry run's slugs are the ones the board will carry. That is
+ * why everything reported back to the Agent is addressed by slug.
  *
  * @param doc - the current board document.
  * @param args - `{ expected_revision, ops, note }`.
@@ -1001,6 +1011,9 @@ function executeApply(doc, args) {
       callSeq: 'dry-run',
       callerRev: model.rev,
       expectedRevision: args.expected_revision,
+      // I6: the only place a batch can still be refused. `commit` re-folds the log and must not
+      // re-litigate what it finds there, so the model invariants are checked here and nowhere else.
+      validateInvariants: true,
     })
   } catch (error) {
     if (!(error instanceof BoardOpError)) throw error
@@ -1008,18 +1021,33 @@ function executeApply(doc, args) {
   }
 
   const after = snapshotIndex(next)
-  const created = []
-  for (const [id, entry] of after.byId) {
-    if (!before.byId.has(id)) {
-      created.push({ kind: entry.kind, id, slug: entry.slug, ref: entry.slug })
-    }
-  }
+
+  // I5. The dry run mints element ids from a stand-in callSeq, so an id derived here is not the id
+  // the fold will assign — and two of them can collide. Keying the diff by id made that worse than
+  // a wrong field: a minted id that happened to equal a live block's id overwrote that block's
+  // entry, so the genuinely new block was reported as *not* created and the untouched live block
+  // was reported as renamed. Nothing reported back to the Agent carries a dry-run id at all now;
+  // what it carries is addresses, which the fold derives from the model rather than the seq.
+
+  // A rename keeps its id, and that id was minted by an *earlier* committed call, so here it is
+  // authoritative. The fold retires the old address into `alias` (`src/fold.js:870`), and that is
+  // what separates a true rename from the one false positive a collision can still produce: a
+  // brand-new element whose stand-in id happened to equal a live one's looks like a rename of it,
+  // but its `alias` cannot name an address it never had.
   const renamed = []
   for (const [id, entry] of after.byId) {
     const previous = before.byId.get(id)
-    if (previous !== undefined && previous.slug !== entry.slug) {
-      renamed.push({ id, from: previous.slug, to: entry.slug })
-    }
+    if (previous === undefined || previous.slug === entry.slug) continue
+    if (!entry.alias.includes(previous.slug)) continue
+    renamed.push({ id, from: previous.slug, to: entry.slug })
+  }
+
+  // Everything else whose address is new. A rename's *new* address is new too, so those come out.
+  const renamedTo = new Set(renamed.map((entry) => entry.to))
+  const created = []
+  for (const [slug, entry] of after.bySlug) {
+    if (before.bySlug.has(slug) || renamedTo.has(slug)) continue
+    created.push({ kind: entry.kind, slug })
   }
 
   const warnings = warningsFor(before, created, args.ops)
@@ -1055,17 +1083,25 @@ function executeApply(doc, args) {
 /** One-line-per-element index of a model, for diffing before against after. */
 function snapshotIndex(model) {
   const byId = new Map()
+  const bySlug = new Map()
+  const note = (entry) => {
+    const record = { kind: entry.kind, slug: entry.slug, alias: entry.alias ?? [] }
+    byId.set(entry.id, record)
+    bySlug.set(entry.slug, record)
+  }
   let blockCount = 0
   for (const page of model.pages) {
-    byId.set(page.id, { kind: 'page', slug: page.slug })
+    note({ kind: 'page', id: page.id, slug: page.slug, alias: page.alias })
     for (const block of page.blocks) {
-      byId.set(block.id, { kind: 'block', slug: block.slug })
+      note({ kind: 'block', id: block.id, slug: block.slug, alias: block.alias })
       blockCount += 1
     }
   }
-  for (const edge of model.edges) byId.set(edge.id, { kind: 'edge', slug: edge.slug })
-  for (const region of model.regions) byId.set(region.id, { kind: 'region', slug: region.slug })
-  return { byId, blockCount, edgeCount: model.edges.length }
+  for (const edge of model.edges) note({ kind: 'edge', id: edge.id, slug: edge.slug, alias: edge.alias })
+  for (const region of model.regions) {
+    note({ kind: 'region', id: region.id, slug: region.slug, alias: region.alias })
+  }
+  return { byId, bySlug, blockCount, edgeCount: model.edges.length }
 }
 
 /**
