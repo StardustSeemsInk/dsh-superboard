@@ -456,7 +456,7 @@ gestures yet. Ask the user which part they mean instead of guessing.
 |---|---|
 | 每次结果都回带 `rev` | 模型永远有新鲜的 `expected_revision` 可复制，不需要记忆 |
 | `created[].slug` 回带**实际**分配的 slug | 后缀消解（`风险-2`）不会被静默吞掉 |
-| `created[]` **不回带 id** | id 是 `(sessionId, callSeq, opIndex, kind)` 的哈希，而 dry run 用的是一个占位的 `callSeq` —— 它推出来的 id 永远不是折叠器将要铸的那个（缺陷 I5）。名字叫 stable 却不能 stable 的字段，比没有这个字段更贵：Agent 会拿它做 `add_edge` 端点，然后要么解析到**别的块**，要么报 not found。slug 由模型与请求的地址推出，与 seq 无关，所以 dry run 的 slug 就是落地后的 slug |
+| `created[]` **不回带 id** | id 是 `(sessionId, callSeq, opIndex, kind)` 的哈希，而 dry run 用的是一个占位的 `callSeq` —— 它推出来的 id 永远不是折叠器将要铸的那个（缺陷 I8）。名字叫 stable 却不能 stable 的字段，比没有这个字段更贵：Agent 会拿它做 `add_edge` 端点，然后要么解析到**别的块**，要么报 not found。slug 由模型与请求的地址推出，与 seq 无关，所以 dry run 的 slug 就是落地后的 slug |
 | `renamed[]` | 重命名保留 id，而那个 id 铸于**更早**的批次，所以在这里是权威的（与 `created[]` 正相反）。旧地址被收进 `alias`，因此旧地址仍然能读 |
 | `resolved[].viaAlias` | 模型知道自己在用过期地址 |
 | 批级错误前缀 "nothing applied" + 当前 rev | 模型不会误以为「部分成功」 |

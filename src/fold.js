@@ -307,9 +307,9 @@ export function applyOps(model, ops, context) {
     }
   })
 
-  // I6. `mintId` only promises that a *fresh* id does not collide with an existing one; it cannot
+  // I9. `mintId` only promises that a *fresh* id does not collide with an existing one; it cannot
   // see a path that inserts an already-existing block a second time, which is exactly what
-  // `move_block` did within one page (I4). Without this scan the damage is silent until some later
+  // `move_block` did within one page (I7). Without this scan the damage is silent until some later
   // op addresses the block by slug, and then it reads as `ambiguous between bl_x, bl_x` — two
   // identical ids, which looks like a name clash rather than a duplicate — with no op able to undo
   // it, because `delete_block` removes every copy of an id at once.
@@ -893,7 +893,7 @@ function opMoveBlock(model, op) {
   const samePage = from.id === to.id
 
   const kept = from.blocks.filter((candidate) => candidate.id !== block.id)
-  // I4: on a same-page move `from` and `to` are the *same Page*, so `to.blocks` still holds
+  // I7: on a same-page move `from` and `to` are the *same Page*, so `to.blocks` still holds
   // `block`. Inserting into it publishes the block twice under one id — a state no op can repair,
   // because `delete_block` removes every copy of an id at once, so the block can only be deleted
   // and rebuilt, losing its id and `createdAtRev`. The insert list must therefore start from the

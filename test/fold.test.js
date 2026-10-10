@@ -403,11 +403,11 @@ test('the content hash ignores history and counters', () => {
 })
 
 // ---------------------------------------------------------------------------
-// I4 / I6 — the duplicate-id defect, and the gate that stops it at admission
+// I7 / I9 — the duplicate-id defect, and the gate that stops it at admission
 // ---------------------------------------------------------------------------
 
 test('a same-page move_block keeps exactly one copy of the block', () => {
-  // I4: `from` and `to` are the same Page on a same-page move, so the naive insert list still
+  // I7: `from` and `to` are the same Page on a same-page move, so the naive insert list still
   // held the block. It published two entries under one id, and no op could undo that — the
   // reference read as `ambiguous between bl_x, bl_x`, and `delete_block` removes every copy at
   // once, so the block could only be deleted and rebuilt.

@@ -980,7 +980,7 @@ const applyTool = defineBoardTool({
  *
  * The two runs do **not** agree on element ids: an id is a hash of `(sessionId, callSeq, opIndex,
  * kind)` and only the committed run knows its real `seq`. The dry run's ids are stand-ins, and
- * they must not leave this function — see I5 in `docs/design/board-bugs.md`. Slugs, by contrast,
+ * they must not leave this function — see I8 in `docs/design/board-bugs.md`. Slugs, by contrast,
  * are derived from the model, so the dry run's slugs are the ones the board will carry. That is
  * why everything reported back to the Agent is addressed by slug.
  *
@@ -1011,7 +1011,7 @@ function executeApply(doc, args) {
       callSeq: 'dry-run',
       callerRev: model.rev,
       expectedRevision: args.expected_revision,
-      // I6: the only place a batch can still be refused. `commit` re-folds the log and must not
+      // I9: the only place a batch can still be refused. `commit` re-folds the log and must not
       // re-litigate what it finds there, so the model invariants are checked here and nowhere else.
       validateInvariants: true,
     })
@@ -1022,7 +1022,7 @@ function executeApply(doc, args) {
 
   const after = snapshotIndex(next)
 
-  // I5. The dry run mints element ids from a stand-in callSeq, so an id derived here is not the id
+  // I8. The dry run mints element ids from a stand-in callSeq, so an id derived here is not the id
   // the fold will assign — and two of them can collide. Keying the diff by id made that worse than
   // a wrong field: a minted id that happened to equal a live block's id overwrote that block's
   // entry, so the genuinely new block was reported as *not* created and the untouched live block

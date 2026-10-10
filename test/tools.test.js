@@ -329,7 +329,7 @@ test('board_apply applies a batch and reports what it created', () => {
 })
 
 test('created reports addresses, not ids, because a dry run cannot know the real ones', () => {
-  // I5: an id is a hash of `(sessionId, callSeq, opIndex, kind)` and the dry run runs with a
+  // I8: an id is a hash of `(sessionId, callSeq, opIndex, kind)` and the dry run runs with a
   // stand-in seq, so an id it derives is never the id the fold assigns. Reporting it under the
   // name "Stable id" sent Agents to `add_edge` with an endpoint that resolved to the wrong block
   // or to nothing at all.
