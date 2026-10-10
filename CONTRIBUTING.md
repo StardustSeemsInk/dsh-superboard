@@ -145,6 +145,7 @@ provider，不 `import` 官方包），所以目录里只多一行 `name: descri
 | [`docs/design/board-model.md`](docs/design/board-model.md) | 模型契约：块、容器、箭头锚点、region、折叠与 revision 语义（§0–§2 + 速查） | **活文档**，跟得上代码；但只管模型——工具面在下一行，排版/预算/风险在再下一行 |
 | [`docs/design/board-tools.md`](docs/design/board-tools.md) | Agent 工具面：四个工具的精确契约、返回文本与防笔误设计 | **活文档**（原 board-model.md §3，2026-10-05 拆出；§3.2.5 是保留的错误记录） |
 | [`docs/design/board-design-notes.md`](docs/design/board-design-notes.md) | 设计与论证：排版模板、上下文预算、客户端与镜像、决策对应表、风险台账 | **活文档**（原 §4–§8；§4.5 记模板表与实现的偏差，§8 每条都标了结局） |
+| [`docs/design/board-bugs.md`](docs/design/board-bugs.md) | 缺陷档案 I4–I6：同页 `move_block` 复制块（数据损坏）、`created[].id` 不可用、缺唯一性不变量 | **已结案**（`f6f93b6` 修复）。成因与最小复现原样保留——它既是修复的说明书，也是「契约与实现漂移」的一手样本 |
 | [`docs/design/build-plan.md`](docs/design/build-plan.md) | 里程碑划分与各自的验收标准 | **历史**：停在 M5 / 82 个测试，之后的 UML、PDF、图片、文字选择、masonry 都没进去 |
 | [`docs/research/dsh-plugin-contract.md`](docs/research/dsh-plugin-contract.md) | 逐条行号引用的框架约束清单与**修正过的结论**（最容易踩的那些） | **活文档**，且是下面那份的结论修订者——两边冲突时以它为准 |
 | [`docs/research/dsh-plugin-api.md`](docs/research/dsh-plugin-api.md) | DSH 插件 API 全量调研：slot、服务、事件（目录广度仍是最全的） | **冻结的调研**：结论可能已被上面那份修正，且不再与它同步维护 |
