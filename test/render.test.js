@@ -52,6 +52,16 @@ const fakeReact = {
 /** Every `fetch` the client made, as `[url, init]`. Cleared by the tests that assert on it. */
 const fetchCalls = []
 
+/**
+ * The stubbed `localStorage` backing, shared by every render in this file.
+ *
+ * It is module-wide because the client is loaded once, and it is cleared before each render
+ * because the client genuinely remembers user choices here — the reading column persists whether
+ * it is collapsed. Without the clear, the test that calls every handler (to prove none throws)
+ * would collapse the column for every test after it.
+ */
+const storageStore = new Map()
+
 /** Load the client half and return its exports, as `test/client.test.js` does. */
 function loadClient() {
   const source = readFileSync(CLIENT_PATH, 'utf8')
@@ -72,7 +82,7 @@ function loadClient() {
     cancelAnimationFrame: () => {},
     ResizeObserver: undefined,
     localStorage: {
-      store: new Map(),
+      store: storageStore,
       getItem(key) {
         return this.store.has(key) ? this.store.get(key) : null
       },
@@ -241,6 +251,7 @@ function chatSnapshot() {
  * than a named failure.
  */
 function render(element, depth = 0) {
+  storageStore.clear()
   if (element === null || element === undefined || typeof element === 'boolean') return null
   if (typeof element === 'string' || typeof element === 'number') return String(element)
   if (Array.isArray(element)) return element.map((child) => render(child, depth + 1))

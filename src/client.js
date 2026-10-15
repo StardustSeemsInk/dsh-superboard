@@ -193,6 +193,7 @@ window.__ModuleLoader__.load({
       '.sb-readerTitle{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);text-transform:uppercase;letter-spacing:.04em;}',
       '.sb-readerBody{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding-right:2px;}',
       '.sb-readerMore{align-self:center;}',
+      '.sb-buttonIcon{width:24px;padding:0;font-size:14px;line-height:1;}',
       '.sb-splitter{position:absolute;left:0;top:0;bottom:0;width:9px;margin-left:-4px;cursor:col-resize;border-radius:4px;touch-action:none;}',
       '.sb-splitter:hover,.sb-splitterOn{background:var(--dsw-alias-brand-primary);opacity:.35;}',
       '.sb-turn{display:flex;flex-direction:column;gap:3px;border-radius:8px;padding:8px 10px;min-width:0;}',
@@ -3322,6 +3323,10 @@ window.__ModuleLoader__.load({
 
     /** Where the column remembers its width, in px. */
     const COLUMN_WIDTH_KEY = 'dsh.superboard.columnWidth'
+    /** Where it remembers whether it is showing at all. */
+    const COLUMN_OPEN_KEY = 'dsh.superboard.columnOpen'
+    /** The reading column's element id, so the toggle can name what it controls. */
+    const READER_ID = 'sb-reader'
 
     /** Bounds for the dragged width, so the board cannot be squeezed out. */
     const COLUMN_MIN_WIDTH = 260
@@ -3348,6 +3353,33 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Read a stored boolean.
+     *
+     * Absent means "never chosen", which is not the same as false, so the caller supplies the
+     * default. Only the two literals are honoured: a hostile or hand-edited value falls back rather
+     * than being coerced, because `Boolean('false')` is `true`.
+     */
+    function readFlag(key, fallback) {
+      try {
+        const raw = globalThis.localStorage?.getItem(key)
+        if (raw === 'true') return true
+        if (raw === 'false') return false
+        return fallback
+      } catch {
+        return fallback
+      }
+    }
+
+    /** Store a boolean, tolerating a hostile or absent storage. */
+    function writeFlag(key, value) {
+      try {
+        globalThis.localStorage?.setItem(key, value ? 'true' : 'false')
+      } catch {
+        /* as above — the choice is not remembered, the toggle still works */
+      }
+    }
+
+    /**
      * The conversation, beside the board.
      *
      * Only the active `conversation.view` renders, so while the board is open the transcript is
@@ -3358,7 +3390,7 @@ window.__ModuleLoader__.load({
      *
      * It is read-only on purpose. The composer is right below it and is the place to type.
      */
-    function ReadingColumn({ sessionId, useChat, loadOlder, hasOlder, width, onResize }) {
+    function ReadingColumn({ sessionId, useChat, loadOlder, hasOlder, width, onResize, onCollapse }) {
       // Two selectors, and the split is load-bearing.
       //
       // `nodes` is a *stable* keyed store: the Chat builder hands back the same
@@ -3419,6 +3451,7 @@ window.__ModuleLoader__.load({
       return h(
         'aside',
         {
+          id: READER_ID,
           className: 'sb-reader',
           'data-superboard-reader': '',
           'aria-label': '对话记录',
@@ -3431,6 +3464,17 @@ window.__ModuleLoader__.load({
           h('span', { className: 'sb-readerTitle' }, '对话'),
           h('span', { className: 'sb-spacer' }),
           h('span', { className: 'sb-rev' }, `${turns.length} 条`),
+          h(
+            'button',
+            {
+              type: 'button',
+              className: 'sb-button sb-buttonIcon',
+              title: '收起对话栏',
+              'aria-label': '收起对话栏',
+              onClick: onCollapse,
+            },
+            '›',
+          ),
         ),
         h(
           'div',
@@ -3520,6 +3564,19 @@ window.__ModuleLoader__.load({
       const board = useProjection('board')
       // Persisted so the column the user chose survives a tab switch and a reload.
       const [columnWidth, setColumnWidth] = React.useState(() => readNumber(COLUMN_WIDTH_KEY, 420))
+      /**
+       * Whether the reading column is showing.
+       *
+       * Q-K settled this strip as **two** states and only the expanded one was ever built: the
+       * column could be dragged narrower but never put away, so a board that wanted the whole width
+       * had no way to ask for it.
+       *
+       * Collapsed removes the column rather than shrinking it to a rail, and that direction is the
+       * *safer* of the two: the reader is rebuilt on the way back, which re-runs its
+       * pin-to-newest effect. Keeping a zero-width reader mounted would leave the effect measuring
+       * `scrollHeight: 0` — the trap already recorded in `video/scenes/AUTHORING.md`.
+       */
+      const [columnOpen, setColumnOpen] = React.useState(() => readFlag(COLUMN_OPEN_KEY, true))
       const containerRef = React.useRef(null)
       const [pageId, setPageId] = React.useState(null)
       const [width, setWidth] = React.useState(1200)
@@ -3697,6 +3754,18 @@ window.__ModuleLoader__.load({
         const clamped = Math.min(Math.max(Math.round(next), COLUMN_MIN_WIDTH), cap)
         setColumnWidth(clamped)
         writeNumber(COLUMN_WIDTH_KEY, clamped)
+      }
+
+      /**
+       * Show or put away the reading column, and remember which.
+       *
+       * Read from the current state rather than through an updater: the `localStorage` write is a
+       * side effect, and React is free to call an updater twice.
+       */
+      const toggleColumn = () => {
+        const next = !columnOpen
+        setColumnOpen(next)
+        writeFlag(COLUMN_OPEN_KEY, next)
       }
 
       /**
@@ -3932,6 +4001,22 @@ window.__ModuleLoader__.load({
                   { className: 'sb-crossPage' },
                   `${edgeCounts.cross} 条边连到其他页`,
                 ),
+              // The column's control lives here rather than inside the column: collapsed, there is
+              // nowhere inside it to put a button, and a control that moves between states is worse
+              // than one that sits slightly out of the way. `aria-expanded` carries the state for
+              // assistive tech; the label carries it for everyone else.
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: `sb-button sb-buttonOutline${columnOpen ? '' : ' sb-buttonOn'}`,
+                  'aria-expanded': columnOpen,
+                  'aria-controls': READER_ID,
+                  title: columnOpen ? '收起对话栏' : '展开对话栏',
+                  onClick: toggleColumn,
+                },
+                columnOpen ? '收起对话' : '显示对话',
+              ),
             ),
             pages.length > 1 &&
               h(
@@ -4002,14 +4087,19 @@ window.__ModuleLoader__.load({
               },
             }),
           ),
-          h(ReadingColumn, {
-            sessionId,
-            useChat,
-            loadOlder,
-            hasOlder,
-            width: columnWidth,
-            onResize: resizeColumn,
-          }),
+          columnOpen &&
+            h(ReadingColumn, {
+              sessionId,
+              useChat,
+              loadOlder,
+              hasOlder,
+              width: columnWidth,
+              onResize: resizeColumn,
+              onCollapse: () => {
+                setColumnOpen(false)
+                writeFlag(COLUMN_OPEN_KEY, false)
+              },
+            }),
         ),
       )
     }
