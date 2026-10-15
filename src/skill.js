@@ -196,4 +196,4 @@ export function registerBoardSkills(ctx) {
  * hides a missing file behind an empty list; this makes the expectation explicit and lets a test
  * fail when a skill is added without being listed here.
  */
-export const SHIPPED_SKILL_NAMES = Object.freeze(['board-layout'])
+export const SHIPPED_SKILL_NAMES = Object.freeze(['board-layout', 'teaching-on-the-board'])
