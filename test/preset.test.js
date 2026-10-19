@@ -22,10 +22,28 @@
 
 import assert from 'node:assert/strict'
 import { existsSync, readFileSync } from 'node:fs'
+import { createRequire } from 'node:module'
+import { join } from 'node:path'
 import { test } from 'node:test'
 
-/** DSH's own js-yaml, when the extracted application is available. */
+import { asarPathExists, packageExists, PROFILE } from './dsh-asar.js'
+
+/**
+ * DSH's own js-yaml, when the extracted application is available.
+ *
+ * Preferred source is the live profile, whose copy is the one the Loader actually runs; the
+ * extracted 0.2.0 tree is only a fallback for a checkout on a machine that does not run DSH.
+ */
 const DSH_YAML = 'C:/Users/haoch/AppData/Local/Temp/dsh-asar/dsh/node_modules/js-yaml/index.js'
+
+/** The Loader's own YAML implementation, resolved the way the profile resolves it. */
+function liveYaml() {
+  try {
+    return createRequire(join(PROFILE, 'package.json'))('js-yaml')
+  } catch {
+    return undefined
+  }
+}
 
 /**
  * The Loader's entry-list dialect.
@@ -36,7 +54,7 @@ const DSH_YAML = 'C:/Users/haoch/AppData/Local/Temp/dsh-asar/dsh/node_modules/js
  * would have to strip them — and would then be blind to exactly the class of mistake above.
  */
 async function entryListSchema() {
-  const yaml = (await import(`file:///${DSH_YAML}`)).default
+  const yaml = liveYaml() ?? (await import(`file:///${DSH_YAML}`)).default
   const JsExpr = new yaml.Type('tag:yaml.org,2002:js', {
     kind: 'scalar',
     resolve: (data) => typeof data === 'string',
@@ -57,16 +75,18 @@ const PRESETS = [
 
 /**
  * The rows every one of the three presets must carry, because all three derive from the shipped
- * `standard` preset (`dsh-web-app/presets/standard.patch.yml:10-146`).
+ * `standard` preset (`dsh-web-app/presets/standard.patch.yml`).
  */
 const SHARED_PLUGIN_IDS = [
   'persona',
   'agent-instructions',
+  'time-context',
   'tool-bash',
   'tool-pwsh',
   'tool-fs',
   'tool-fs-search',
   'tool-jobs',
+  'tool-schedule',
   'skill-filesystem',
   'tool-skill',
   'command-goal',
@@ -78,6 +98,7 @@ const SHARED_PLUGIN_IDS = [
   'tool-web',
   'present',
   'tool-plugin-manager',
+  'tool-plugin-market',
 ]
 
 /**
@@ -103,8 +124,22 @@ function findPlugin(plugins, id) {
   return undefined
 }
 
-/** Load and parse the patch exactly as the Loader would. */
-async function loadPatch() {
+/**
+ * Every `name` a plugin list mounts, including rows inside `cordis:group`s.
+ *
+ * @param plugins - a preset's plugin list.
+ * @returns the names, in declaration order.
+ */
+function mountedNames(plugins) {
+  const names = []
+  for (const plugin of plugins) {
+    if (typeof plugin?.name === 'string') names.push(plugin.name)
+    if (Array.isArray(plugin?.config)) names.push(...mountedNames(plugin.config))
+  }
+  return names
+}
+
+/** Load and parse the patch exactly as the Loader would. */async function loadPatch() {
   const { yaml, schema } = await entryListSchema()
   const text = readFileSync(new URL('../cordis.patch.yml', import.meta.url), 'utf8')
   const doc = yaml.load(text, { schema })
@@ -190,6 +225,71 @@ test('each preset restates the shipped standard plugin list', async () => {
       )
     }
   }
+})
+
+test('no preset asks for a persona variable this runtime does not register', async () => {
+  if (!haveDsh) return
+  const { text } = await loadPatch()
+  // The persona template is rendered with a fixed variable set. `{{cwd}}` was registered in
+  // 0.2.0 and dropped in 0.2.1 (`dsh-system-prompt/README.md`); an unresolved reference fails
+  // prompt assembly for *every* request of that preset, so a stale suffix takes the whole mode
+  // down rather than degrading it. `{{model}}` is the only variable the shipped presets still use.
+  const referenced = new Set([...text.matchAll(/\{\{(\w+)\}\}/g)].map((match) => match[1]))
+  assert.deepEqual(
+    [...referenced].filter((name) => name !== 'model'),
+    [],
+    'a preset references a persona variable the runtime does not register',
+  )
+})
+
+test('no preset restates a row whose package this runtime no longer ships', async () => {
+  if (!haveDsh) return
+  const { doc } = await loadPatch()
+  const rows = insertedRows(doc)
+  // `dsh-tool-subagent` survives, but the codex and claude-code providers were removed in 0.2.1,
+  // and `tool-ralph` left the shipped roster. A disabled row still has to be parseable to be
+  // skipped, so keeping these would pin the restatement to a plugin set nobody runs.
+  const retired = ['tool-subagent-codex', 'tool-subagent-claude-code', 'tool-ralph']
+  for (const preset of PRESETS) {
+    const plugins = rows.find((candidate) => candidate.id === preset.rowId).config.plugins
+    for (const id of retired) {
+      assert.equal(
+        findPlugin(plugins, id),
+        undefined,
+        `${preset.rowId} still carries the "${id}" row, which this runtime no longer ships`,
+      )
+    }
+    // `backgroundMode` was a 0.2.0 config key. 0.2.1 dropped it from the schema, and schemastery
+    // ignores unknown keys, so leaving it behind is silent rather than fatal — which is exactly
+    // why it is worth an assertion.
+    assert.ok(
+      !JSON.stringify(plugins).includes('backgroundMode'),
+      `${preset.rowId} still sets backgroundMode, which this runtime does not read`,
+    )
+  }
+})
+
+test('every row a preset mounts names a package the installed runtime ships', async (t) => {
+  // A row for a package that no longer exists is invisible until the row stops being disabled:
+  // the Loader skips a disabled entry before it resolves anything, so a dead name sits there
+  // harmlessly — until someone flips it on and the preset fails to compose. 0.2.1 removed the
+  // codex and claude-code providers, and the rows shipping until now still named them.
+  if (!haveDsh) return
+  if (!asarPathExists('dsh/package.json')) return t.skip('no app.asar on this machine — nothing to check against')
+  const { doc } = await loadPatch()
+  const rows = insertedRows(doc)
+  const missing = new Set()
+  for (const preset of PRESETS) {
+    const plugins = rows.find((candidate) => candidate.id === preset.rowId).config.plugins
+    for (const name of mountedNames(plugins)) {
+      // Only scoped package names are checkable this way: `cordis:group` is a Loader concept and
+      // `dsh-superboard/preset` is this bundle itself, which resolves from the live profile.
+      if (!name.startsWith('@')) continue
+      const pkg = name.split('/').slice(0, 2).join('/')
+      if (!packageExists(pkg)) missing.add(`${preset.rowId} → ${name}`)
+    }
+  }
+  assert.deepEqual([...missing], [], 'row(s) name a package the installed runtime does not have')
 })
 
 test('no preset declares a duplicate child id', async () => {
@@ -332,6 +432,21 @@ test('the engineer preset steers to the grilling skill', async () => {
     /available|if /i,
     'the guidance should treat optional capabilities as conditional',
   )
+})
+
+test('the teacher preset keeps the checklist item that a question must not carry its answer', async () => {
+  if (!haveDsh) return
+  const { doc } = await loadPatch()
+  const rows = insertedRows(doc)
+  const teacher = rows
+    .find((row) => row.id === 'preset-teacher')
+    .config.plugins.find((plugin) => plugin.id === 'board-guidance').config.section
+  // The rule comes from a real lesson: a question about rotating about the x axis handed the
+  // learner `Rz` in its own wording, so the one choice the question existed to test was made for
+  // them — and made wrongly. `docs/suggestions/teaching-method-observations.md` §3.1 records it;
+  // this pins the sentence that turns it into behaviour.
+  assert.match(teacher, /skeleton in the question/, 'the no-scaffold rule left the teacher preset')
+  assert.match(teacher, /hand over the key choice/, 'the self-check that makes the rule enforceable')
 })
 
 test('no preset guidance names billion-context, which supplies its own prompt', async () => {

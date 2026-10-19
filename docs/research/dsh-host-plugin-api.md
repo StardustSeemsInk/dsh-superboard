@@ -282,6 +282,17 @@ And **L93**:
 
 > - **Compatibility is declarative.** Current installers and loaders do not enforce `dsh.manifestVersion` or `engines.dsh`; declaring a range does not reject incompatible hosts or validate SemVer syntax.
 
+> ⚠️ **勘误（2026-10-19，对 DSH 0.2.1-rc.2 重新验证）：上面这句已经不成立。**
+> `dsh-app-boot\lib\index.js` 的 `evaluatePluginCompatibility()` / `unmetRequirements()` 现在**真的**执行这道闸：
+> 清单有 `engines.dsh` 就只看它，否则逐个检查 `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` 的 **peerDependencies**
+> 是否接受运行时版本（`workspace:^|~|*` 视为当前版本，预发布版参与比较）。
+> 更麻烦的是失败方式：`loadProfileDirectory()` 把不满足的 bundle **catch 后跳过**，进 `skippedBundles`，
+> **一行日志都不打**。于是 0.2.0-rc.2 → 0.2.1-rc.2 的升级把 `dsh-superboard` 整个静默摘掉了——
+> 它照抄了官方插件「peer 写精确版本」的写法（本文件 §1515、§1818 记录的正是那个约定），
+> 而精确版本不接受自己的后继。`dsh.manifestVersion` 仍然只是声明。
+> 现在 `package.json` 用 `engines.dsh: ">=0.2.0-rc.2 <0.3.0"`，并由 `test/compatibility.test.js`
+> 对着**真实安装的** `app.asar` 里的运行时版本复核。详见 [`CONTRIBUTING.md`](../../CONTRIBUTING.md) 的「运行时兼容」。
+
 Every key below was confirmed against the code that actually reads it.
 
 | Key | Shape | Required? | Read by |
@@ -294,7 +305,7 @@ Every key below was confirmed against the code that actually reads it.
 | `dsh.client.immediately` | `boolean` | optional | `dsh-client-modules\lib\index.js:68` |
 | `dsh.profile.bundles` | `string[]`, **ordered** | profile `package.json` only | `dsh-app-boot\lib\index.js:858`, `:921`, `:1064`, `:1112` |
 | top-level `icon` | path relative to manifest dir | optional | `host-plugin.md:45` |
-| `engines.dsh` | SemVer range | optional, **not enforced** | `dsh-package-manifest\README.md:53`, `:93` |
+| `engines.dsh` | SemVer range | optional; **enforced since 0.2.1** (see the erratum above) | `dsh-package-manifest\README.md:53`, `:93`; `dsh-app-boot\lib\index.js` `unmetRequirements()` |
 
 `dsh.client` parsing, verbatim, `ASAR\dsh\node_modules\@deepseek-ai\dsh-client-modules\lib\index.js` **L63–74**:
 

@@ -28,6 +28,8 @@
 
 import assert from 'node:assert/strict'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { test } from 'node:test'
 
 import { applyOps } from '../src/fold.js'
@@ -124,8 +126,11 @@ test('the CMap URL is a filesystem path ending in a forward slash, as pdf.js dem
 })
 
 test('a page that needs a CMap gets its text, which is what the path above is for', async (t) => {
-  const dir = 'E:/Dev/.tmp-superboard-pdf-test'
-  const file = `${dir}/cid.pdf`
+  // The fixture goes in the OS temp area, not beside the checkout: a sibling of the repo is outside
+  // every sandbox's write scope, and the failure then reads as a broken CMap path rather than an
+  // unwritable directory. `tmpdir()` is where the host expects throwaway files anyway.
+  const dir = join(tmpdir(), 'dsh-superboard-cid-fixture')
+  const file = join(dir, 'cid.pdf')
   try {
     mkdirSync(dir, { recursive: true })
     writeFileSync(file, buildCidPdf('看板测试中文'))

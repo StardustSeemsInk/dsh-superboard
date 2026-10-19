@@ -2,7 +2,7 @@
 
 **状态：** **已实现并投入使用**，所以这份文件是**活文档**——它记录契约，代码照着它写。「待评审」是它出生时的状态，那版在 git 历史里。
 
-**目标运行时：** DSH Desktop `0.2.0-rc.2`
+**目标运行时：** DSH Desktop `0.2.1-rc.2`（清单与预设随之调整，见 [`../../CONTRIBUTING.md`](../../CONTRIBUTING.md)「运行时兼容」）
 **上游文档：** [`design-tree.md`](./design-tree.md)（已定决策 Q1–Q-H）、[`../research/dsh-plugin-contract.md`](../research/dsh-plugin-contract.md)（硬约束）、[`../research/dsh-host-plugin-api.md`](../research/dsh-host-plugin-api.md)（API 一手调研）
 
 本文只讲模型本身：**看板的场景模型长什么样，以及它如何从 session log 折叠出来。**

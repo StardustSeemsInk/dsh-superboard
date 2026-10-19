@@ -45,11 +45,29 @@ console.log('投影:', p, '工具:', t)
 
 **另一个坑**：`exports` 里要声明 `./package.json` 和 `./cordis.patch.yml`。DSH 读插件清单的主路径是按目录找 `package.json`（不看 `exports`），但存在一条 `require.resolve('<pkg>/package.json')` 的回退路径，缺了它那条路会静默失败。所有能工作的第三方插件都声明了它。
 
+## 运行时兼容（DSH 升级怎么做掉这个插件）
+
+**目标运行时：DSH Desktop `0.2.1-rc.2`。**
+
+`dsh-app-boot/lib/index.js` 的 `evaluatePluginCompatibility()` / `unmetRequirements()` 决定一个 profile bundle 能不能加载：清单里有 `engines.dsh` 就**只看**它，否则逐个检查 `@deepseek-ai/dsh` / `@deepseek-ai/dsh-*` 的 **peerDependencies** 能否接受运行时版本（`workspace:^|~|*` 视为当前版本，预发布版参与比较）。不满足的 bundle 被 `loadProfileDirectory()` **catch 后跳过**，进 `skippedBundles`——**什么都不打印**。
+
+所以症状是：DSH 一升级，看板标签与四个 `board_*` 工具**一起消失**，日志里没有一行解释。2026-10-17 的 0.2.0-rc.2 → 0.2.1-rc.2 升级正是如此：本仓库照抄了官方插件的写法，把三个 `@deepseek-ai/dsh-*` peer 写成**精确版本** `0.2.0-rc.2`，而精确版本不接受自己的后继。
+
+现在的写法（`package.json`）：`engines.dsh: ">=0.2.0-rc.2 <0.3.0"`，三个 peer 用同一区间。**不要改回精确版本，也不要只改一处。** `test/compatibility.test.js` 会读**这台机器上真实安装的** `app.asar` 里的运行时版本，用 profile 自己的 `semver` 复核这条声明——精确版本会让它失败（已做变异测试）。
+
+升级 DSH 后的验收顺序：
+
+1. `node --test --test-isolation=none test/compatibility.test.js` —— 先看清单还认不认新运行时。
+2. 对照新版出厂预设，看三个自定义预设有没有漂移（见 [`test/preset.test.js`](test/preset.test.js)：`SHARED_PLUGIN_IDS` 就是那份「必须重述的行」清单）。
+3. 重启 DSH，确认看板标签、四个工具、三个预设都在。
+
+**预设也要跟着版本走。** 预设是**重述**而不是继承，所以新版出厂预设加行、删行、改文案时，我们那三份会静默落后：0.2.1 新增了 `time-context` / `tool-schedule` / `tool-plugin-market`，删掉了 codex / claude-code 两个 provider 与 `tool-ralph` 行，并把 `tool-subagent` 的 `backgroundMode` 配置键整个拿掉（schemastery 忽略未知键，所以留着不炸、只是死字段）。另外 **`{{cwd}}` 这个 persona 变量在 0.2.1 被移除**：`dsh-system-prompt` 只在模板里替换已注册的变量，未解析的引用会让**该预设的每一次请求**在组装提示词时失败——不是降级，是整个预设不可用。
+
 ## 测试
 
 ```bash
-npm test        # 428 个测试，node:test，无框架
-npm run verify  # 测试 + 确认 host 半导出 apply()
+node --test --test-isolation=none "test/*.test.js"   # 438 个测试，node:test，无框架
+npm run verify                                        # 同上 + 确认 host 半导出 apply()
 ```
 
 ## 目录结构

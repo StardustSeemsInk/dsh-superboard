@@ -14,11 +14,18 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
-const DEFAULT_ASAR = 'C:\\Users\\haoch\\AppData\\Local\\Programs\\DeepSeek Harness\\resources\\app.asar'
+const DEFAULT_ASAR = join(
+  process.env.LOCALAPPDATA ?? join(homedir(), 'AppData', 'Local'),
+  'Programs',
+  'DeepSeek Harness',
+  'resources',
+  'app.asar',
+)
 const ASAR = process.env.DSH_ASAR ?? DEFAULT_ASAR
 
 /** Packages worth having on hand for canvas / panel / storage work. */
