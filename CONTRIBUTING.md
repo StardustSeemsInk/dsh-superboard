@@ -63,6 +63,8 @@ console.log('投影:', p, '工具:', t)
 
 **预设也要跟着版本走。** 预设是**重述**而不是继承，所以新版出厂预设加行、删行、改文案时，我们那三份会静默落后：0.2.1 新增了 `time-context` / `tool-schedule` / `tool-plugin-market`，删掉了 codex / claude-code 两个 provider 与 `tool-ralph` 行，并把 `tool-subagent` 的 `backgroundMode` 配置键整个拿掉（schemastery 忽略未知键，所以留着不炸、只是死字段）。另外 **`{{cwd}}` 这个 persona 变量在 0.2.1 被移除**：`dsh-system-prompt` 只在模板里替换已注册的变量，未解析的引用会让**该预设的每一次请求**在组装提示词时失败——不是降级，是整个预设不可用。
 
+**新包不等于能加载。** `~/.dsh/profiles/node_modules/@deepseek-ai/*` 不是安装出来的，而是**指向全局 npm 包**的 junction（`npm i -g @deepseek-ai/dsh`，包内 `node_modules` 嵌着三百多个）。全局包升级只更新嵌套的包，**不会补齐顶层 junction**：0.2.1 里 `dsh-tool-schedule` 有包、没链接，名字从 profile 根解析不到（`node -e` 里一试就知道）。缺哪个就补一个 junction 指过去，别去改 `name:`。
+
 ## 测试
 
 ```bash
