@@ -76,6 +76,12 @@
             name: '@deepseek-ai/dsh-tool-jobs'
           - id: tool-schedule
             name: '@deepseek-ai/dsh-tool-schedule'
+            # Shipped only from DSH 0.2.1 on; a 0.2.0-rc.2 runtime has no such
+            # package. Guarded the same way `tool-plugin-market` already is, and
+            # for the same reason: an entry that cannot resolve is not skipped
+            # quietly, it fails to load. Drop this line once the profile's
+            # @deepseek-ai bundles move past 0.2.0-rc.2.
+            disabled: true
           - id: skill-filesystem
             name: '@deepseek-ai/dsh-skill-filesystem'
           - id: tool-skill
@@ -263,6 +269,12 @@
             name: '@deepseek-ai/dsh-tool-jobs'
           - id: tool-schedule
             name: '@deepseek-ai/dsh-tool-schedule'
+            # Shipped only from DSH 0.2.1 on; a 0.2.0-rc.2 runtime has no such
+            # package. Guarded the same way `tool-plugin-market` already is, and
+            # for the same reason: an entry that cannot resolve is not skipped
+            # quietly, it fails to load. Drop this line once the profile's
+            # @deepseek-ai bundles move past 0.2.0-rc.2.
+            disabled: true
           - id: skill-filesystem
             name: '@deepseek-ai/dsh-skill-filesystem'
           - id: tool-skill
@@ -461,6 +473,12 @@
             name: '@deepseek-ai/dsh-tool-jobs'
           - id: tool-schedule
             name: '@deepseek-ai/dsh-tool-schedule'
+            # Shipped only from DSH 0.2.1 on; a 0.2.0-rc.2 runtime has no such
+            # package. Guarded the same way `tool-plugin-market` already is, and
+            # for the same reason: an entry that cannot resolve is not skipped
+            # quietly, it fails to load. Drop this line once the profile's
+            # @deepseek-ai bundles move past 0.2.0-rc.2.
+            disabled: true
           - id: skill-filesystem
             name: '@deepseek-ai/dsh-skill-filesystem'
           - id: tool-skill
