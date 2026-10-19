@@ -35,6 +35,8 @@
     "vendor:mermaid": "node scripts/vendor-mermaid.mjs",
     "vendor:pdfjs": "node scripts/vendor-pdfjs.mjs",
     "vendor": "npm run vendor:mermaid && npm run vendor:pdfjs",
+    "presets:check": "node scripts/restate-presets.mjs",
+    "presets:write": "node scripts/restate-presets.mjs --write",
     "test": "node --test \"test/**/*.test.js\"",
     "test:in-process": "node --test --test-isolation=none \"test/**/*.test.js\"",
     "verify": "node --test \"test/**/*.test.js\" && node -e \"import('dsh-superboard').then(m => { if (typeof m.apply !== 'function') throw new Error('host half does not export apply()'); console.log('host half ok, exports:', Object.keys(m).join(', ')) })\""

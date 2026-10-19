@@ -65,10 +65,19 @@ console.log('投影:', p, '工具:', t)
 
 **新包不等于能加载。** `~/.dsh/profiles/node_modules/@deepseek-ai/*` 不是安装出来的，而是**指向全局 npm 包**的 junction（`npm i -g @deepseek-ai/dsh`，包内 `node_modules` 嵌着三百多个）。全局包升级只更新嵌套的包，**不会补齐顶层 junction**：0.2.1 里 `dsh-tool-schedule` 有包、没链接，名字从 profile 根解析不到（`node -e` 里一试就知道）。缺哪个就补一个 junction 指过去，别去改 `name:`。
 
+**升级后要跑一次生成器。** profile 补丁里那四条 `preset-` 行是从出厂预设**重述**来的副本（只摘掉 `compaction` 组，其余逐字节不变），升级不会让它们自动跟上：
+
+```bash
+npm run presets:check    # 只报告漂移；有漂移退出码 1，可以放进升级后的自检
+npm run presets:write    # 重新生成，先备份成 cordis.patch.yml.bak-before-restate
+```
+
+`--patch` / `--presets` 可指向别处，默认是 desktop profile 与它安装的 `@deepseek-ai/dsh-web-app/presets`。**不要手改那四条行**——`test/restate-presets.test.js` 钉的就是「只摘掉一个列表项、其余字节不变」，手改会让这条保证失效。
+
 ## 测试
 
 ```bash
-node --test --test-isolation=none "test/*.test.js"   # 438 个测试，node:test，无框架
+node --test --test-isolation=none "test/*.test.js"   # 447 个测试，node:test，无框架
 npm run verify                                        # 同上 + 确认 host 半导出 apply()
 ```
 
@@ -95,7 +104,7 @@ docs/design/        设计树、模型契约、工具契约、设计说明、里
 docs/research/      针对真实 DSH 0.2.0-rc.2 验证过的约束与 API 调研
 docs/assets/        文档与 README 里引用的图（含宣传片的 GIF 与海报）
 scripts/            开发工具（官方包参考提取、vendor 重建）
-test/               428 个测试
+test/               447 个测试
 video/              发布宣传片的工程（分镜、场景、配乐合成、构建）
 vendor/             随包发布的第三方运行时：mermaid、pdf.js、React
 ```
@@ -183,6 +192,6 @@ provider，不 `import` 官方包），所以目录里只多一行 `name: descri
 
 > `board-model.md` 的头部被仓库里的 `file:line` 引用钉死：`src/client.js`、`src/schema-dsl.js`、`src/tools.js` 与 `video/` 里有指向它的 `:265`、`:306-308`、`:318`、`:340`、`:507`，所以 §0 必须从第 38 行开始——改头部时别增删行。
 
-**已知的漂移**（记在这里，改的时候顺手修）：`README.md` 与本文的「400 个测试」都过时了（`npm test` 现在是 428）；
+**已知的漂移**（记在这里，改的时候顺手修）：测试数已对齐 `npm test` 的 447，这一条清空；
 `board-design-notes.md` §4.5 那张模板表仍是评审前的，已被 `skills/board-layout/SKILL.md:42-49` 取代。
 （`board-model.md` 原先「§3 写着五个工具」的漂移已随 2026-10-05 的按体裁拆分修掉：工具是四个，`board_feedback` 从未实现。）
