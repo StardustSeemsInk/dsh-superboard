@@ -71,13 +71,21 @@ export function restatePreset (text, id) {
  * — because the header wording has been rewritten before, and a text marker
  * silently rots when it does.
  *
+ * The **tail** is everything after the last preset row, returned separately so a
+ * rewrite can put it back. It exists because the first version of this generator
+ * did not: it emitted `head + banner + the four presets` and silently dropped
+ * every top-level row that lived *below* the preset block. In this profile that
+ * was `agent-preset-registry` (which decides the default and selected preset)
+ * and `mcp-dsh-computer-use-win`. `--check` could not see it, because it only
+ * ever compares the preset rows against the shipped ones.
+ *
  * @param {string} patch - the live profile patch.
- * @returns {{head: string, rows: Map<string, string>}}
+ * @returns {{head: string, rows: Map<string, string>, tail: string}}
  */
 export function splitPatch (patch) {
   const all = patch.split(/\r?\n/)
   const firstRow = all.findIndex((l) => /^- id: preset-/.test(l))
-  if (firstRow === -1) return { head: patch.replace(/\n+$/, ''), rows: new Map() }
+  if (firstRow === -1) return { head: patch.replace(/\n+$/, ''), rows: new Map(), tail: '' }
 
   let bannerStart = -1
   for (let i = firstRow - 1; i >= 0; i--) {
@@ -88,13 +96,23 @@ export function splitPatch (patch) {
   const rows = new Map()
   const lines = all.slice(bannerStart)
   let current
-  for (const line of lines) {
+  let tailStart = -1
+  for (const [offset, line] of lines.entries()) {
+    // A top-level row that is not a preset ends the preset block. Everything from here on belongs
+    // to someone else and must survive the rewrite untouched.
+    if (/^- id: /.test(line) && !/^- id: preset-/.test(line)) { tailStart = bannerStart + offset; break }
     const m = line.match(/^- id: (preset-(\S+))\s*$/)
     if (m) { current = m[2]; rows.set(current, line); continue }
     if (current) rows.set(current, `${rows.get(current)}\n${line}`)
   }
   for (const [id, row] of rows) rows.set(id, row.replace(/\n+$/, ''))
-  return { head: all.slice(0, bannerStart).join('\n').replace(/\n+$/, ''), rows }
+
+  const blockEnd = tailStart === -1 ? all.length : tailStart
+  return {
+    head: all.slice(0, bannerStart).join('\n').replace(/\n+$/, ''),
+    rows,
+    tail: all.slice(blockEnd).join('\n').replace(/^\n+/, '').replace(/\n+$/, ''),
+  }
 }
 
 const HEADER = `
@@ -123,6 +141,22 @@ const HEADER = `
 # block to hand the presets back to the bundle, compaction group and all.
 `
 
+/**
+ * Every top-level `- id:` in a patch, in file order.
+ *
+ * Used as the before/after guard around a rewrite: the point is not to compare values (a preset is
+ * *meant* to change) but to prove that no row disappeared.
+ *
+ * @param {string} patch - patch text.
+ * @returns {string[]} ids.
+ */
+export function topLevelIds (patch) {
+  return patch.split(/\r?\n/).flatMap((line) => {
+    const m = line.match(/^- id: (\S+)\s*$/)
+    return m === null ? [] : [m[1]]
+  })
+}
+
 function main (argv) {
   const arg = (name, fallback) => {
     const i = argv.indexOf(name)
@@ -146,7 +180,7 @@ function main (argv) {
   if (wanted.length === 0) throw new Error('no preset files found — wrong --presets dir?')
 
   const live = readFileSync(patchPath, 'utf8')
-  const { head, rows } = splitPatch(live)
+  const { head, rows, tail } = splitPatch(live)
 
   let drift = 0
   for (const { id, row } of wanted) {
@@ -172,6 +206,24 @@ function main (argv) {
   copyFileSync(patchPath, `${patchPath}.bak-before-restate`)
   let out = `${head}\n${HEADER}\n`
   for (const { row } of wanted) out += `${row}\n\n`
+  // Put back whatever lived below the preset block. Dropping it is not a cosmetic loss: in this
+  // profile the tail holds `agent-preset-registry` (the default and selected preset) and the
+  // MCP server row. The first version dropped both, and `--check` could not see it.
+  if (tail !== '') out += `${tail}\n`
+
+  // **Prove the rewrite before committing it.** `--check` compares preset rows against the shipped
+  // ones and cannot notice a row that the rewrite dropped entirely; this can. A profile patch that
+  // silently loses its registry row is a much worse outcome than a failed regeneration.
+  const before = topLevelIds(live)
+  const after = topLevelIds(out)
+  const lost = before.filter((id) => !after.includes(id))
+  if (lost.length > 0) {
+    throw new Error(
+      `refusing to write: the rewrite would drop ${lost.length} top-level row(s) — ${lost.join(', ')}. ` +
+        `The patch is unchanged; the previous one is at ${patchPath}.bak-before-restate.`,
+    )
+  }
+
   writeFileSync(patchPath, out)
   console.log(`\nwrote ${patchPath} (${live.length} -> ${out.length} B); backup at ${patchPath}.bak-before-restate`)
   return 0

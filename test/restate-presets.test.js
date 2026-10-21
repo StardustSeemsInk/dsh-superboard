@@ -6,7 +6,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 
-import { restatePreset, splitPatch, PRESET_IDS } from '../scripts/restate-presets.mjs'
+import { restatePreset, splitPatch, topLevelIds, PRESET_IDS } from '../scripts/restate-presets.mjs'
 
 const SHIPPED = `# Agent preset standard: the shipped one.
 - insert:
@@ -78,10 +78,59 @@ test('the patch is split into a head and per-preset rows, and they round-trip', 
   assert.equal(rows.get('ptc'), b, 'row B round-trips byte for byte')
 })
 
+test('rows that live BELOW the preset block come back as the tail, not as part of a preset', () => {
+  // This is the data-loss regression. The first generator emitted only `head + banner + presets`,
+  // so every top-level row after the preset block vanished from the profile on `--write`. In the
+  // real profile that was `agent-preset-registry` (which decides the default and selected preset)
+  // and the MCP server row — and `--check` could not see it, because it only compares preset rows.
+  const row = restatePreset(SHIPPED, 'standard').row
+  const below = '- id: agent-preset-registry\n  name: "@deepseek-ai/dsh-agent-preset-registry"\n  config:\n    default: standard\n    selectedDefault: engineer\n\n- id: mcp-dsh-computer-use-win\n  name: dsh-computer-use-win\n'
+  const live = `- id: above\n  disabled: true\n\n${'# ' + '-'.repeat(75)}\n${row}\n\n${below}`
+  const { head, rows, tail } = splitPatch(live)
+  assert.equal(head, '- id: above\n  disabled: true')
+  assert.deepEqual([...rows.keys()], ['standard'])
+  assert.equal(rows.get('standard'), row, 'the preset row stops at the next top-level row')
+  assert.equal(tail, below.replace(/\n+$/, ''), 'everything below the block is the tail, verbatim')
+  assert.match(tail, /agent-preset-registry/)
+  assert.match(tail, /mcp-dsh-computer-use-win/)
+})
+
 test('a patch with no preset rows yields an empty map rather than throwing', () => {
-  const { head, rows } = splitPatch('- id: x\n  disabled: true\n')
+  const { head, rows, tail } = splitPatch('- id: x\n  disabled: true\n')
   assert.equal(rows.size, 0)
   assert.equal(head, '- id: x\n  disabled: true')
+  assert.equal(tail, '')
+})
+
+test('a rewrite keeps the tail, so a preset edit cannot delete unrelated rows', () => {
+  const row = restatePreset(SHIPPED, 'standard').row
+  const below = '- id: keep-me\n  disabled: false\n'
+  const live = `${'# ' + '-'.repeat(75)}\n${row}\n\n${below}`
+  const { head, rows, tail } = splitPatch(live)
+  // What `--write` now builds, in the same order the generator uses.
+  const rebuilt = `${head}\n${rows.get('standard')}\n\n${tail}\n`
+  assert.match(rebuilt, /- id: keep-me\n {2}disabled: false/, 'the row below survives a rewrite')
+})
+
+test('the before/after guard sees a dropped row, which is what --check could not', () => {
+  const row = restatePreset(SHIPPED, 'standard').row
+  const live = `${'# ' + '-'.repeat(75)}\n${row}\n\n- id: agent-preset-registry\n  name: x\n`
+  const before = topLevelIds(live)
+  assert.deepEqual(before, ['preset-standard', 'agent-preset-registry'])
+
+  // The exact bug the first generator had: emit head + banner + presets, forget the tail.
+  const { head, rows } = splitPatch(live)
+  const broken = `${head}\n# banner\n\n${rows.get('standard')}\n\n`
+  const after = topLevelIds(broken)
+  assert.deepEqual(
+    before.filter((id) => !after.includes(id)),
+    ['agent-preset-registry'],
+    'the guard names the row the old rewrite would have silently deleted',
+  )
+})
+
+test('a nested `- id:` is not mistaken for a top-level row', () => {
+  assert.deepEqual(topLevelIds('- id: a\n  config:\n    - id: notTop\n'), ['a'])
 })
 
 test('every preset this profile owns is restated — minimal included', () => {
