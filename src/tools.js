@@ -1296,8 +1296,12 @@ const importTool = defineBoardTool({
     'conversation is read from its log and folded on demand. Both id forms work: a bare uuid, or a ' +
     'uuid prefixed with `session-`.\n\n' +
     '**Reuse the `ops` array.** It is a complete, correctly ordered `board_apply` batch for that ' +
-    'page: blocks with every group after its own children, then edges. Slugs already taken in this ' +
-    'board get a `-imported` suffix, so applying twice is additive rather than destructive.\n\n' +
+    'page: blocks with every group after its own children, then edges. The names in it are fixed ' +
+    'by the source, so every chunk of every page agrees on them — but that also means a name that ' +
+    'already exists on THIS board will collide when you apply it, and `board_apply` will say so ' +
+    'and name the element. That is deliberate: this tool writes nothing and the board can change ' +
+    'between your calls, so it cannot know what is free, and a name that shifted per call would ' +
+    'make one chunk\'s edges point at another chunk\'s blocks. Rename in the batch if you hit that.\n\n' +
     '**Read one page at a time.** Called without `page`, it lists the source pages with their block ' +
     'counts and a preview, and returns no ops — because a whole board in one response runs to ' +
     'hundreds of kilobytes and would be truncated, and a truncated JSON batch looks applicable ' +

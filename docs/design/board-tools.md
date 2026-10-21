@@ -7,8 +7,8 @@
 [`board-design-notes.md`](./board-design-notes.md)。
 
 > **节的编号沿用拆分前的原始编号**（本文件从 §3 开始，3.1 / 3.2 / 3.2.1… 一个没动），所以其它文档里的
-> `§3.2.x` 引用仍然对得上。§3.2.5 记的是**从未实现**的 `board_feedback`，留着只是让 §3.1 的勘误可追溯——
-> 不要照着它写代码，工具是四个。
+> `§3.2.x` 引用仍然对得上。§3.2.6 记的是**从未实现**的 `board_feedback`，留着只是让 §3.1 的勘误可追溯——
+> 不要照着它写代码，工具清单以 §3.1 为准（今天是五个）。
 
 ---
 
@@ -22,16 +22,21 @@
 | `board_read` | 按页/按引用读全文 | 需要正文原文时（引用、改写、核对） |
 | `board_apply` | 事务性 op 批 + revision 闸 | **唯一**的写入口 |
 | `board_query` | 基于语义边的关系查询 | 「谁依赖 X」「X 和 Y 之间是什么」「哪些块孤立」 |
+| `board_import` | 读另一个会话的看板，返回可 apply 的 op 批次 | 「接着上次那件事做」「把旧对话的看板搬过来」 |
 
 > **勘误（2026-10-05）**：这一节原先列了第五个工具 `board_feedback`（「读用户最近一次框选反馈」）。
 > **它从未实现**，`src/tools.js` 里没有它，`grep board_feedback src/` 也是零命中。框选反馈走的是
 > **输入框附件**那条路：摘要是草稿文本、选区是 JSON 附件，两者都在 composer 里，不需要工具。
-> 所以工具是**四个**，不是五个——README 的「刻意只有四个」才是对的。下面的小节号保留原样，
+> 所以当时是**四个**，不是五个——README 的「刻意只有四个」才是对的。下面的小节号保留原样，
 > 免得打乱其它地方的交叉引用。
+>
+> **更新（2026-10-22）**：现在是**五个**，第五个是 `board_import`（`3a994a9`）。
 
-**为什么只有 4 个：** 每个工具都占提示词预算，且模型在 4 个里选对的概率远高于在 12 个里。页的增删改**不单独开工具**，它们是 `board_apply` 的 op——这样一次「建页 + 放 3 个块 + 连 2 条箭」是一个事务、一个 rev、一次往返。
+**为什么不是更少：** 每个工具都占提示词预算，且模型在少数几个里选对的概率远高于在 12 个里。页的增删改**不单独开工具**，它们是 `board_apply` 的 op——这样一次「建页 + 放 3 个块 + 连 2 条箭」是一个事务、一个 rev、一次往返。
 
-### 3.2 四个工具的精确契约
+**为什么 `board_import` 自己不写：** 看板是**自己的 `board_apply` 调用序列的折叠结果**——`src/fold.js:115`、`:124`、`:133` 都以 `if (data?.name !== BOARD_TOOL_NAME) return state` 开头。所以它只返回批次与可读 markdown，由 Agent 自己 apply。这同时保住了「一个写入口」，也让分块与重新排版成为可能。
+
+### 3.2 工具的精确契约
 
 下面的 `parameters` 一律写作 **DSH 裸属性表**：无顶层 `type:"object"`，`required: true` 写在每个属性上（F1）。`output.schema` 是**值根**（`type` 在根上），对象必须显式 `additionalProperties: boolean`（F3），属性的 `required: true` 同样写在属性上（F2）。
 
@@ -367,7 +372,67 @@ board_query dependents_of 登录服务 → 2 hits (r19-77c1e0ba9d34)
 `empty: true` 时 render 输出 `hint` 全文而不是「0 hits」——空结果的价值全在那句话里。
 
 
-#### 3.2.5 `board_feedback`
+#### 3.2.5 `board_import`
+
+> 这个工具是 2026-10-20 加的，2026-10-22 改成**只读**（`3a994a9`）。它占了 `3.2.5`，于是从未实现的
+> `board_feedback` 移到 `3.2.6`——那四份引用它的文档都已同步改号，见 §3.1 的勘误。
+
+```
+description:
+  "Read another conversation's board, so you can rebuild it here. **This tool writes nothing** —
+   it returns the source board in full, plus an op batch you can hand to `board_apply` yourself.
+
+   Why read-only: the board is the fold of its own `board_apply` calls, so `board_apply` is the
+   only way anything can ever be on a board. A second tool that wrote would be a second write
+   path, and the two would drift. So this one reads, and you apply.
+
+   Use it when the user says 'bring that board over' or when this conversation should continue
+   from a board an earlier one built. The source does not have to be open — a stored
+   conversation is read from its log and folded on demand. Both id forms work: a bare uuid, or a
+   uuid prefixed with `session-`.
+
+   **Reuse the `ops` array.** It is a complete, correctly ordered `board_apply` batch for that
+   page: blocks with every group after its own children, then edges. The names in it are fixed by
+   the source, so every chunk of every page agrees on them — but that also means a name that
+   already exists on THIS board will collide when you apply it, and `board_apply` will say so and
+   name the element. That is deliberate: this tool writes nothing and the board can change between
+   your calls, so it cannot know what is free, and a name that shifted per call would make one
+   chunk's edges point at another chunk's blocks. Rename in the batch if you hit that.
+
+   **Read one page at a time, and one chunk at a time.** Called without `page`, it lists the source
+   pages with their block counts and a preview, and returns no ops — because a whole board in one
+   response runs to hundreds of kilobytes and would be truncated, and a truncated JSON batch looks
+   applicable without being so. Call it again with `page` to get that page's ops, 8 at a time via
+   `chunk`: a 23-op page is already more JSON than a model reliably reproduces in one tool call.
+
+   You do not have to send the ops verbatim, and should not send them blindly: feel free to
+   rearrange, drop or rewrite what does not fit here."
+
+parameters: {
+  from: { type: "string", required: true,
+    description: "The source session id, e.g. the value in that conversation's URL or header." },
+  page: { type: "string", required: false,
+    description: "Which page to return ops for. Omit to list the source pages and their block counts." },
+  chunk: { type: "integer", required: false,
+    description: "Which chunk of that page's ops to return. A page is served 8 ops at a time. Defaults to 1." },
+  reuse_page: { type: "string", required: false,
+    description: "Slug of an existing EMPTY page the first imported page should fill instead of creating one. Defaults to `main` when this board is untouched." }
+}
+```
+
+`output.schema` 是 `{source_title, from, pages, blocks, edges, skipped_edges, ops, text}`；`ops` 故意声明成
+**开放的 object 数组**，因为那就是 `board_apply` 的 op 词汇表，而那张判别联合已经在 `board_apply` 上声明过
+一次——在这里再抄一遍就是第二份要手工同步的定义，而抄错的那份会拒掉另一个工具能接受的批次。
+
+**三条读取分支**（按顺序）：`sessionQuery.observeSession` → 活会话 `sessions.get` + `projections.stateOf`
+→ 存盘日志 `sessionPersistence` + `projections.hydrate`。中间那条不是可选优化：`ctx.get('sessionQuery')`
+在 **headless profile 里是 `undefined`**，只靠第一支就意味着「桌面端能用、别处都拒绝」，而那个拒绝读起来
+像「这个会话不存在」。
+
+**分页与分块是为了「可复制」，不是为了「可存储」。** 整块看板一次返回约 192 KB 会被截断；一页 23 个 op 的
+格式化 JSON 实测会让模型产出 `tool input is invalid JSON`。所以一次一页、一页 8 个 op，且 op 一行一个。
+
+#### 3.2.6 `board_feedback`（从未实现）
 
 > **这个工具从未实现过**（`grep board_feedback src/` 零命中）。保留这一小节只是为了给 §3.1 的勘误和 §7 的 Q-H 行留出处。
 > 框选反馈今天走**看板本地的反馈托盘**（`5da72d2`），不走工具，也不需要工具。

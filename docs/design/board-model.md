@@ -19,7 +19,7 @@
 - **§0** 设计所依赖的 DSH 事实（全部已核）
 - **§1** 场景模型 — 1.1 `BoardDoc` / 1.2 `Page` / 1.3 `Block` / 1.4 `Anchor`（块内锚点）/ 1.5 `Edge` / 1.6 `Region` / 1.7 命名与 slug / 1.8 为什么 UML 现在就要定型
 - **§2** 折叠语义 — 2.1 权威状态 / 2.2 op 集合 / 2.3 确定性 / 2.4 批校验的执行位置 / 2.5 revision 算法 / 2.6 stale write / 2.6.1 I2 事故 / 2.7 投影入口
-- **§3** Agent 工具面 → [`board-tools.md`](./board-tools.md)（3.1 工具清单 / 3.2 四个工具的精确契约 / 3.3 如何系统性降低笔误）
+- **§3** Agent 工具面 → [`board-tools.md`](./board-tools.md)（3.1 工具清单 / 3.2 工具的精确契约 / 3.3 如何系统性降低笔误）
 - **§4** 排版模板 → [`board-design-notes.md`](./board-design-notes.md)（4.5 是模板表与实现之间的已知偏差）
 - **§5** 上下文预算（大纲格式、降级阶梯、schema 常驻成本）→ 同上
 - **§6** 客户端与镜像（渲染、`.dsh-superboard/` 只读镜像）→ 同上
@@ -763,8 +763,9 @@ Region     = { id, slug, alias[], blockIds[], label?, tone?, createdAtRev }   //
              → 顺序施加 ops → revSeq+1 → 重算 revHash
 rev        = 'r' + revSeq + '-' + sha256(encodeModelForHash(model))[0..11]
 
-工具       = board_outline / board_read / board_apply / board_query（四个；board_feedback 从未实现）
+工具       = board_outline / board_read / board_apply / board_query / board_import（五个；board_feedback 从未实现）
 写入口     = 只有 board_apply（事务批 + expected_revision 必填 + isConcurrencySafe:false）
+             board_import 只读：看板是它自己 board_apply 序列的折叠结果，别的工具写不进去
 常驻文本   = board-design-notes.md §5.1 的格式，预算 4000 字符，L0→L5 逐级降级，头部行与诊断区块永不省略
              另计 board-design-notes.md §5.4：board_apply 的编译后 schema 常驻请求头，~4–6k 字符
 ```

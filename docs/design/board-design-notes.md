@@ -324,7 +324,7 @@ D  ⚠ 1 render failure
 | Q-E 模板优先 | 6 个模板（`flow`/`row`/`columns`/`grid`/`masonry`/`canvas`）；坐标已从块上删除，自由摆放只属于空间性组件 | §4.1, §4.4 |
 | Q-F 有向语义边 | `Edge{from,to,rel?,label?}`，方向即语义，`board_query` 按方向查 | §1.5, §3.2.4 |
 | Q-G slug 主地址 | 三层地址 + `uniqSlug` 含 alias + 边锚 id | §1.7 |
-| Q-H 结构化文本反馈 | 选区 → 看板本地托盘里可逐条撤销的条目（原文 + 块/边关系），不返回位图；`board_feedback` **从未实现** | §6.1, §3.2.5 |
+| Q-H 结构化文本反馈 | 选区 → 看板本地托盘里可逐条撤销的条目（原文 + 块/边关系），不返回位图；`board_feedback` **从未实现** | §6.1, §3.2.6 |
 
 ---
 

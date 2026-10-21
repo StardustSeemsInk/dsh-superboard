@@ -77,7 +77,7 @@ npm run presets:write    # 重新生成，先备份成 cordis.patch.yml.bak-befo
 ## 测试
 
 ```bash
-node --test --test-isolation=none "test/*.test.js"   # 447 个测试，node:test，无框架
+node --test --test-isolation=none "test/*.test.js"   # 485 个测试，node:test，无框架
 npm run verify                                        # 同上 + 确认 host 半导出 apply()
 ```
 
@@ -104,7 +104,7 @@ docs/design/        设计树、模型契约、工具契约、设计说明、里
 docs/research/      针对真实 DSH 0.2.0-rc.2 验证过的约束与 API 调研
 docs/assets/        文档与 README 里引用的图（含宣传片的 GIF 与海报）
 scripts/            开发工具（官方包参考提取、vendor 重建）
-test/               447 个测试
+test/               485 个测试
 video/              发布宣传片的工程（分镜、场景、配乐合成、构建）
 vendor/             随包发布的第三方运行时：mermaid、pdf.js、React
 ```
@@ -172,7 +172,7 @@ provider，不 `import` 官方包），所以目录里只多一行 `name: descri
 | --- | --- | --- |
 | [`docs/design/design-tree.md`](docs/design/design-tree.md) | 设计访谈的四轮问题与 15 条决定，含被否决的选项和原因 | 活文档（头部日期与第 13 条已过时） |
 | [`docs/design/board-model.md`](docs/design/board-model.md) | 模型契约：块、容器、箭头锚点、region、折叠与 revision 语义（§0–§2 + 速查） | **活文档**，跟得上代码；但只管模型——工具面在下一行，排版/预算/风险在再下一行 |
-| [`docs/design/board-tools.md`](docs/design/board-tools.md) | Agent 工具面：五个工具的精确契约、返回文本与防笔误设计 | **活文档**（原 board-model.md §3，2026-10-05 拆出；§3.2.5 是保留的错误记录） |
+| [`docs/design/board-tools.md`](docs/design/board-tools.md) | Agent 工具面：五个工具的精确契约、返回文本与防笔误设计 | **活文档**（原 board-model.md §3，2026-10-05 拆出；§3.2.6 是保留的错误记录） |
 | [`docs/design/board-design-notes.md`](docs/design/board-design-notes.md) | 设计与论证：排版模板、上下文预算、客户端与镜像、决策对应表、风险台账 | **活文档**（原 §4–§8；§4.5 记模板表与实现的偏差，§8 每条都标了结局） |
 | [`docs/design/board-bugs.md`](docs/design/board-bugs.md) | 缺陷档案 I7–I9：同页 `move_block` 复制块（数据损坏）、`created[].id` 不可用、缺唯一性不变量 | **已结案**（`f6f93b6` 修复）。成因与最小复现原样保留——它既是修复的说明书，也是「契约与实现漂移」的一手样本 |
 | [`docs/design/build-plan.md`](docs/design/build-plan.md) | 里程碑划分与各自的验收标准 | **历史**：停在 M5 / 82 个测试，之后的 UML、PDF、图片、文字选择、masonry 都没进去 |
@@ -192,6 +192,6 @@ provider，不 `import` 官方包），所以目录里只多一行 `name: descri
 
 > `board-model.md` 的头部被仓库里的 `file:line` 引用钉死：`src/client.js`、`src/schema-dsl.js`、`src/tools.js` 与 `video/` 里有指向它的 `:265`、`:306-308`、`:318`、`:340`、`:507`，所以 §0 必须从第 38 行开始——改头部时别增删行。
 
-**已知的漂移**（记在这里，改的时候顺手修）：测试数已对齐 `npm test` 的 447，这一条清空；
+**已知的漂移**（记在这里，改的时候顺手修）：测试数已对齐 `npm test` 的 485，这一条清空；
 `board-design-notes.md` §4.5 那张模板表仍是评审前的，已被 `skills/board-layout/SKILL.md:42-49` 取代。
-（`board-model.md` 原先「§3 写着五个工具」的漂移已随 2026-10-05 的按体裁拆分修掉：工具是四个，`board_feedback` 从未实现。）
+（`board-model.md` 原先「§3 写着五个工具」的漂移已随 2026-10-05 的按体裁拆分修掉；`board_feedback` 从未实现。2026-10-22 加上了第五个真工具 `board_import`，所以「四个」这个数字又变了一次。）
