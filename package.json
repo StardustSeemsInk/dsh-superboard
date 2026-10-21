@@ -45,6 +45,7 @@
     "zod": "^4.6.5"
   },
   "peerDependencies": {
+    "@deepseek-ai/dsh-session": ">=0.2.0-rc.2 <0.3.0",
     "@deepseek-ai/dsh-session-projection": ">=0.2.0-rc.2 <0.3.0",
     "@deepseek-ai/dsh-system-prompt": ">=0.2.0-rc.2 <0.3.0",
     "@deepseek-ai/dsh-tools": ">=0.2.0-rc.2 <0.3.0"

@@ -176,37 +176,229 @@ export function importOps(model, opts = {}) {
 }
 
 /**
- * Read another session's board and produce the ops that recreate it.
+ * Read another session's board.
  *
- * @param deps - `{ sessions, projections }`, both resolved from `ctx.inject`.
+ * Two shapes of session share one path here, and the difference is not cosmetic. A session that
+ * is **live** in this process has a projection the registry has already folded, and `stateOf`
+ * hands it over synchronously. A session that is **stored but cold** — the user switched away, or
+ * the process restarted — has no in-memory session at all, so `ctx.sessions.get` returns
+ * `undefined` and there is nothing to read. `sessionQuery.read` is the host seam that covers both:
+ * it prefers the live session, and otherwise reads the stored log and folds a fresh `Session` from
+ * it (`dsh-session-query/lib/index.js:350-397`), then hydrates every registered projection over
+ * that fold (`:509-513` → `dsh-session-projection/lib/index.js:329-361`).
+ *
+ * Without it, "import the board from that conversation" would only work for conversations that
+ * happen to still be in memory, which is the one case where the user does not need it.
+ *
+ * Both branches end up with a wire value, and both wire values carry `model`; only the wire drops
+ * `pending` and `sessionId`, neither of which an import wants. So the source id in the error
+ * message is the *stored* one, and reading either shape returns the same thing.
+ *
+ * @param deps - `{ sessionQuery, sessions, projections }`, any of which may be a getter.
  * @param sessionId - the source session.
- * @returns `{ ops, title, pages, blocks, edges }` — the ops, plus what the caller reports back.
- * @throws {BoardOpError} when the session is unknown or has no board projection.
+ * @returns `{ model, title }` — the source board's wire model.
+ * @throws {BoardOpError} when no session has that id, or it never had this plugin mounted.
  */
-export function readSourceBoard(deps, sessionId) {
-  const sessions = deps?.sessions
-  const projections = deps?.projections
-  if (sessions === undefined || projections === undefined) {
-    throw new BoardOpError('importing needs both the session store and the projection registry')
-  }
+export async function readSourceBoard(deps, sessionId) {
+  const read = (value) => (typeof value === 'function' ? value() : value)
+  const sessionQuery = read(deps?.sessionQuery)
+  const sessions = read(deps?.sessions)
+  const projections = read(deps?.projections)
   if (typeof sessionId !== 'string' || sessionId === '') {
     throw new BoardOpError('which session should the board be imported from? Pass its id.')
   }
-  const session = sessions.get(sessionId)
-  if (session === undefined) {
+
+  let model
+  if (typeof sessionQuery?.observeSession === 'function') {
+    // The cold-capable path. `sessionQuery` is a service whose method is `observeSession`, **not**
+    // `read`: `read` is the private observation reader's method, one layer down
+    // (`dsh-session-query/lib/index.js:350`), while the service exposes
+    // `observeSession(sessionId, options)` (`:1064-1066`). Calling a method that does not exist
+    // throws inside this `try` and would be reported as "the session could not be read", which is
+    // a lie about the session.
+    //
+    // `projectionMode` defaults to "all", which is what we want: the registry hydrates every unit
+    // and hands the board back inside `values`.
+    let observation
+    try {
+      observation = await sessionQuery.observeSession(sessionId)
+    } catch (error) {
+      throw new BoardOpError(describeQueryFailure(sessionId, error))
+    }
+    const board = observation?.projections?.values?.board
+    if (board === undefined) {
+      throw new BoardOpError(
+        `session ${JSON.stringify(sessionId)} has no board projection, so this plugin was not ` +
+          'mounted while that conversation ran. There is no board to import from it.',
+      )
+    }
+    model = board.model
+  } else if (projections !== undefined) {
+    // No `sessionQuery` in this profile. That service is *optional* and, as this project learned
+    // the hard way (board issue I11), a plugin that fails to load is logged and skipped rather
+    // than fatal — so its absence says nothing about the session. Read the stored log directly
+    // instead, through the services that are always there.
+    //
+    // The live store is checked first but is not required: it is only ever a fast path, and in a
+    // process that has never reopened that conversation it holds nothing. Persistence is what makes
+    // the cold case work, and it is the same bytes `sessionQuery` would have read.
+    const live = sessions?.get?.(sessionId)
+    if (live !== undefined) {
+      const state = projections.stateOf(live, 'board')
+      if (state === undefined) throw noBoard(sessionId)
+      model = state.model
+    } else {
+      const persistence = read(deps?.persistence)
+      if (persistence === undefined) {
+        throw new BoardOpError(
+          `session ${JSON.stringify(sessionId)} is not open in this process, and this profile has ` +
+            'neither a session query service nor session persistence, so a stored one cannot be read.',
+        )
+      }
+      // `session` is carried through only so a test can inject the module; production leaves it
+      // undefined and `readStoredBoard` loads its peer dependency.
+      model = await readStoredBoard(
+        { persistence, projections, session: deps?.session },
+        sessionId,
+      )
+    }
+  } else {
     throw new BoardOpError(
-      `session ${JSON.stringify(sessionId)} is not open in this process. Only open sessions can be read; ` +
-        'an id from a log that nothing has restored has no fold to read.',
+      'importing needs the session store and the projection registry, or a session query service',
     )
   }
-  const state = projections.stateOf(session, 'board')
-  if (state === undefined) {
+
+  if (model === null || typeof model !== 'object') {
+    throw new BoardOpError(`session ${JSON.stringify(sessionId)} returned no board model`)
+  }
+  return { model, title: model.title ?? '' }
+}
+
+/**
+ * Read a stored session's board without the optional `sessionQuery` service.
+ *
+ * `sessionQuery` is the tidy way to do this, and it is what `dsh-session-query` exists for. But it
+ * is an **optional** service: in the headless profile it does not register at all, and a service
+ * that fails to load is logged and skipped rather than fatal (board issue I11). So an import that
+ * depended on it would work in the desktop app and refuse every conversation in a fresh profile —
+ * with the misleading explanation that the session "is not open in this process".
+ *
+ * The pieces it is built from are always present: `sessionPersistence.open` reads a stored log,
+ * `dsh-session`'s `Session` folds one, and the projection registry hydrates over it. This is the
+ * same shape `dsh-session-query` uses (`lib/index.js:34-54` for the read, `:367-379` for the
+ * prepared session, `:509-513` for the hydration) — reproduced rather than reached for, because
+ * the service may not be there.
+ *
+ * The log is read **read-only** and the folded session is never entered into the store: this must
+ * not make that conversation live, must not touch its write handle, and must not change its
+ * revision. Everything here is a borrowed view.
+ *
+ * @param deps - `{ persistence, projections }`.
+ * @param sessionId - the stored session.
+ * @returns the source board's wire model.
+ */
+async function readStoredBoard(deps, sessionId) {
+  const { persistence, projections } = deps
+  const sessionModule = deps.session ?? (await loadSessionModule())
+  const { Session, SessionLogOffset, interruptedTurnClosers } = sessionModule
+  let handle
+  let read
+  try {
+    handle = await persistence.open(sessionId, 'read')
+    read = await handle.read(0, undefined)
+  } catch (error) {
+    throw new BoardOpError(describeStorageFailure(sessionId, error))
+  } finally {
+    // Close even on the failure path: a leaked read handle holds a file open on Windows.
+    if (handle !== undefined) {
+      try {
+        await handle.close()
+      } catch {
+        // A close failure cannot change the outcome we already decided on.
+      }
+    }
+  }
+
+  const events = [...read.events, ...interruptedTurnClosers(read.events)]
+  let session
+  try {
+    // The second argument is the **seed**, not a base sequence: the constructor validates it is
+    // contiguous from 0 and folds it itself (`dsh-session/lib/index.js:1399-1413`). Handing it a
+    // zero offset here would build an empty session and the board would come back as "never
+    // mounted" — the exact sort of wrong-but-quiet this import is meant to avoid.
+    session = new Session(sessionId, events, handle.header, 'snapshot', handle.inheritedEventCount)
+  } catch (error) {
     throw new BoardOpError(
-      `session ${JSON.stringify(sessionId)} has no board projection, which means the plugin was not ` +
-        'mounted when it ran.',
+      `session ${JSON.stringify(sessionId)} could not be folded: ${
+        typeof error?.message === 'string' ? error.message : String(error)
+      }`,
     )
   }
-  return { model: state.model, title: state.model?.title ?? '' }
+
+  // `hydrate(session, checkpoint, events, baseSeq)` installs the folded state on the session's
+  // cells and returns the wire snapshot. An empty checkpoint means "fold from the beginning",
+  // which is exactly what a session nothing has cached needs.
+  const snapshot = projections.hydrate(session, {}, events, SessionLogOffset(0))
+  const board = snapshot?.values?.board
+  if (board === undefined) throw noBoard(sessionId)
+  return board.model
+}
+
+/** The refusal every path uses when a session exists but never mounted this plugin. */
+function noBoard(sessionId) {
+  return new BoardOpError(
+    `session ${JSON.stringify(sessionId)} has no board projection, so this plugin was not mounted ` +
+      'while that conversation ran. There is no board to import from it.',
+  )
+}
+
+let sessionModulePromise
+/** `dsh-session` is a peer dependency, so it resolves from the host that mounted this plugin. */
+function loadSessionModule() {
+  sessionModulePromise ??= import('@deepseek-ai/dsh-session')
+  return sessionModulePromise
+}
+
+/** Map a persistence failure onto an import refusal, distinguishing missing from corrupt. */
+function describeStorageFailure(sessionId, error) {
+  const name = error?.name ?? ''
+  const message = typeof error?.message === 'string' ? error.message : String(error)
+  if (name === 'SessionPersistenceNotFoundError' || /not found/i.test(message)) {
+    return (
+      `no session has the id ${JSON.stringify(sessionId)}. Copy it from that conversation's URL — ` +
+      'every session id on this machine is either a bare uuid or a uuid prefixed with `session-`, ' +
+      'and both forms are read as given.'
+    )
+  }
+  if (name === 'SessionPersistenceCorruptionError' || /corrupt/i.test(message)) {
+    return `session ${JSON.stringify(sessionId)} could not be read: its stored log is corrupt (${message})`
+  }
+  return `session ${JSON.stringify(sessionId)} could not be loaded from storage (${message})`
+}
+
+/**
+ * Turn a `sessionQuery` failure into an import refusal that names which failure it was.
+ *
+ * The three cases are told apart because they lead to different advice: a bad id is a typo, an
+ * unknown session is an id from elsewhere, and a corrupt log is neither.
+ */
+function describeQueryFailure(sessionId, error) {
+  const code = error?.code ?? ''
+  const message = typeof error?.message === 'string' ? error.message : String(error)
+  if (code === 'SESSION_QUERY_SESSION_NOT_FOUND') {
+    return (
+      `no session has the id ${JSON.stringify(sessionId)}. Copy it from that conversation's URL — ` +
+      'every session id present on this machine is either a bare uuid or a uuid prefixed with `session-`, ' +
+      'and both forms are read as given.'
+    )
+  }
+  if (code === 'SESSION_QUERY_CORRUPT_SESSION') {
+    return `session ${JSON.stringify(sessionId)} could not be read: its stored log is corrupt (${message})`
+  }
+  if (code === 'SESSION_QUERY_SOURCE_CONFLICT' || code === 'SESSION_QUERY_PERSISTENCE_FAILED') {
+    return `session ${JSON.stringify(sessionId)} could not be loaded from storage (${message})`
+  }
+  return `reading session ${JSON.stringify(sessionId)} failed: ${message}`
 }
 
 /** Block kinds an import can carry, for the tool's own description and for a guard. */

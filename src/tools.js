@@ -339,11 +339,26 @@ export function renderOutlineText(doc, options = {}) {
   const include = options.include ?? 'all'
   const budget = Math.min(Number(options.maxChars ?? OUTLINE_DEFAULT_CHARS) || OUTLINE_DEFAULT_CHARS, OUTLINE_MAX_CHARS)
 
-  // A board nobody has written to has nothing worth saying. Returning a header and a page name
-  // would spend prompt budget on every request of every conversation that never opens the tab.
+  // A board nobody has written to has nothing worth saying, so it says almost nothing. But it must
+  // not say *nothing*: `board_apply` and `board_import` both require `expected_revision`, and this
+  // is where it is meant to come from. An outline of a fresh board that returned an empty string
+  // left the Agent with no legal way to learn the revision — it had to guess `r0-…`, and one real
+  // run guessed it correctly and then reported that `board_outline` "returned no text (twice)".
+  // One line is the cheapest possible fix: the rev, and the fact that the board is empty.
+  //
+  // The per-step injected outline (`index.js`) keeps the silent behaviour, because there the text
+  // costs prompt budget on every request of every conversation that never opens the tab — that
+  // caller passes `silentWhenEmpty: true`.
   const hasContent = model.pages.some((page) => page.blocks.length > 0) || model.edges.length > 0
   if (!hasContent && doc.lastOpError === undefined) {
-    return { text: '', truncated: false }
+    if (options.silentWhenEmpty !== false) return { text: '', truncated: false }
+    return {
+      text:
+        `Board "${model.title}" — ${model.rev}\n` +
+        `the board is empty. Pass ${model.rev} as expected_revision to add the first block, ` +
+        'or to import a board from another conversation.',
+      truncated: false,
+    }
   }
 
   let pages = model.pages
@@ -1152,7 +1167,10 @@ function renderApplySummary({ pendingRev, applied, created, renamed, warnings, d
   const lines = [`Board updated: ${applied} op(s) applied.`]
   if (created.length > 0) {
     lines.push(
-      `created: ${created.map((entry) => `${entry.kind} ${entry.slug} (${entry.id})`).join(', ')}`,
+      // No `entry.id`: created entries carry `{kind, slug}` only, because a dry-run id is not the id
+      // the fold will mint (I8). Printing `(${entry.id})` here said `(undefined)` on every created
+      // element — a field that was removed in one place and still read in another.
+      `created: ${created.map((entry) => `${entry.kind} ${entry.slug}`).join(', ')}`,
     )
   }
   if (renamed.length > 0) {
@@ -1267,70 +1285,226 @@ const queryTool = defineBoardTool({
 const importTool = defineBoardTool({
   name: 'board_import',
   description:
-    "Copy another conversation's board into this one. The board is the fold of its own " +
-    'board_apply log, so an import is not a file: it reads the source session\'s board projection ' +
-    'and replays it as an ordinary board_apply batch. Use it when the user says "bring that board ' +
-    'over" or when a new conversation should continue from a board an earlier one built.\n\n' +
-    'Requires the source session id. Only sessions open in this process can be read — an id from a ' +
-    'log nothing has reopened has no fold to read.\n\n' +
-    'Ids are never carried across: an id is a hash of its own session and call, so everything is ' +
-    're-addressed by slug and the fold mints fresh ids. A slug already taken in this board gets a ' +
-    'suffix rather than overwriting, so importing twice is additive and never destructive.\n\n' +
-    'On an empty board the placeholder page `main` is filled by the first imported page instead ' +
-    'of being left behind as an empty tab. Pass expected_revision like every other write.',
-  isConcurrencySafe: () => false,
+    "Read another conversation's board, so you can rebuild it here. **This tool writes nothing** " +
+    '— it returns the source board in full, plus an op batch you can hand to `board_apply` ' +
+    "yourself.\n\n" +
+    'Why read-only: the board is the fold of its own `board_apply` calls, so `board_apply` is the ' +
+    'only way anything can ever be on a board. A second tool that wrote would be a second write ' +
+    'path, and the two would drift. So this one reads, and you apply.\n\n' +
+    'Use it when the user says "bring that board over" or when this conversation should continue ' +
+    'from a board an earlier one built. The source does not have to be open — a stored ' +
+    'conversation is read from its log and folded on demand. Both id forms work: a bare uuid, or a ' +
+    'uuid prefixed with `session-`.\n\n' +
+    '**Reuse the `ops` array.** It is a complete, correctly ordered `board_apply` batch for that ' +
+    'page: blocks with every group after its own children, then edges. Slugs already taken in this ' +
+    'board get a `-imported` suffix, so applying twice is additive rather than destructive.\n\n' +
+    '**Read one page at a time.** Called without `page`, it lists the source pages with their block ' +
+    'counts and a preview, and returns no ops — because a whole board in one response runs to ' +
+    'hundreds of kilobytes and would be truncated, and a truncated JSON batch looks applicable ' +
+    'without being so. Call it again with `page` set to get that page\'s ops.\n\n' +
+    'You do not have to send the ops verbatim, and should not send them blindly: feel free to ' +
+    'rearrange, drop or rewrite what does not fit here. The point is that this conversation ' +
+    'continues from that work, not that it reproduces it byte for byte.',
+  isConcurrencySafe: () => true,
   parameters: closedObject(
     {
       from: str('The source session id, e.g. the value in that conversation\u2019s URL or header.'),
-      expected_revision: str("This board's rev string, from your most recent board_* result."),
-      reuse_page: str(
-        'Slug of an existing EMPTY page to fill with the first imported page. Defaults to `main` ' +
-          'when the board is untouched, and to nothing (so every page is added fresh) otherwise.',
+      page: str(
+        'Which page to return ops for. Omit to list the source pages and their block counts — ' +
+          'the first call is always the listing.',
       ),
-      note: str('One short line describing this batch. Shown in the transcript, not on the board.'),
+      chunk: int(
+        'Which chunk of that page\'s ops to return. A page is served 8 ops at a time, because ' +
+          'the Agent has to copy them back as a tool argument and a long JSON array invites a ' +
+          'malformed call. Defaults to 1; the response says when there is another chunk.',
+      ),
+      reuse_page: str(
+        'Slug of an existing EMPTY page that the first imported page should fill instead of ' +
+          'creating a new one. Defaults to `main` when this board is untouched (so a blank tab is ' +
+          'not left beside the import), and to nothing otherwise.',
+      ),
     },
-    ['from', 'expected_revision'],
+    ['from'],
   ),
   outputSchema: closedObject(
     {
-      ok: bool('Always true on success; failures throw.'),
-      rev: str('The revision this board was at when the import was accepted.'),
-      pending_rev: str('The revision the import will settle at. A preview.'),
-      source_title: str('The title the imported board carried.'),
-      applied: int('How many ops the import expanded to, one per page, block and edge.'),
-      created: arrayOf(
-        'Elements the import created, by the address the fold assigned.',
-        closedObject({ kind: str('page, block, edge, region, or item.'), slug: str('The address actually assigned.') }, [
-          'kind',
-          'slug',
-        ]),
+      source_title: str('The title the source board carried.'),
+      from: str('The session the board was read from.'),
+      pages: int('How many pages the source board has.'),
+      blocks: int('How many blocks the source board has.'),
+      edges: int('How many edges this response carries. Zero on a listing.'),
+      skipped_edges: int('Edges left out because an endpoint no longer exists in the source.'),
+      // Deliberately `openObject`: this is the `board_apply` op vocabulary, which that tool already
+      // declares. Repeating it here would be a second copy of a discriminated union that has to be
+      // kept in step by hand, and a drifted copy would reject a batch the other tool accepts.
+      ops: arrayOf(
+        'A ready-to-apply `board_apply` batch for one page. Empty when listing.',
+        openObject('One board_apply op.'),
       ),
-      skipped_edges: int('Edges dropped because an endpoint no longer existed in the source.'),
-      text: str("Human-readable summary, also returned as this tool's content."),
+      text: str('The listing, or the page\'s ops plus that page as readable markdown.'),
     },
-    ['ok', 'rev', 'pending_rev', 'source_title', 'applied', 'created', 'skipped_edges', 'text'],
+    ['source_title', 'from', 'pages', 'blocks', 'edges', 'skipped_edges', 'ops', 'text'],
   ),
   render: (_args, value) => textResult(value.text),
 })
 
 /**
- * Run an import.
+ * Read an import.
  *
- * The import is expanded into an ordinary op batch and handed to `executeApply`, so there is
- * **one** write path and one set of invariants — the revision gate, the dry run, the diff and the
- * preview all apply unchanged. A second path that wrote the board directly would be a second set
- * of rules, and the two would drift.
+ * This tool **writes nothing**. It reads the source board, builds the op batch that would
+ * recreate it, and hands that batch back for the Agent to apply — so there is exactly one write
+ * path, `board_apply`, and one set of invariants. An import that applied its own batch would be a
+ * second write path, and a batch applied without being seen could not be adapted to the board it
+ * lands on.
  *
- * The only thing this function decides is the op batch, plus which empty page (if any) the first
- * imported page should fill.
+ * It used to call `executeApply` directly, and that was a real defect rather than a style choice:
+ * the fold only replays calls whose name is `board_apply` (`src/fold.js:115`, `:124`, `:133`), so
+ * the import reported `r1-…` and a batch size while the board stayed empty. Two identical imports
+ * both reporting `r1-f8daf12f546f` is what that looks like. Nothing caught it because every test
+ * stubbed the projection instead of folding what the call actually left behind.
  *
- * @param deps - `{ sessions, projections }`.
- * @param doc - this board's document.
- * @param args - `{ from, expected_revision, reuse_page, note }`.
+ * @param deps - `{ sessionQuery, sessions, projections, persistence }`.
+ * @param doc - this board's document, read only for which slugs are already taken.
+ * @param args - `{ from, reuse_page }`.
  * @returns the outcome, shaped for the tool's output schema.
  */
-function executeImport(deps, doc, args) {
-  const source = readSourceBoard(deps, args.from)
+/**
+ * Render a whole board as readable markdown, for an import to show its source.
+ *
+ * Not `renderElementMarkdown`: that one is an *address inspector* — every element carries its slug
+ * and id so the Agent can patch it — and it stops at a group's children. An import needs the
+ * opposite emphasis: the content, expanded all the way down, because the Agent is going to read it
+ * and decide what to keep. The slugs are already in `ops`, which is the machine-readable half.
+ *
+ * Groups are opened as a heading and their children rendered beneath, in the same order the group
+ * lays them out — so a nested group reads the way it looks.
+ *
+ * @param model - the source board's wire model.
+ * @returns markdown.
+ */
+function renderSourceBoard(model, options = {}) {
+  const lines = options.includeTitle === false ? [] : [`# ${model.title === '' ? 'untitled' : model.title}`, '']
+
+  for (const page of model.pages) {
+    lines.push(`## ${page.slug}`, '')
+    const blocks = Array.isArray(page.blocks) ? page.blocks : []
+    const byId = new Map(blocks.map((block) => [block.id, block]))
+    const claimed = new Set()
+    for (const block of blocks) {
+      if (block.kind === 'group') for (const id of block.children ?? []) claimed.add(id)
+    }
+    const seen = new Set()
+
+    const emit = (block, depth) => {
+      if (seen.has(block.id)) return
+      seen.add(block.id)
+      const pad = '  '.repeat(depth)
+      if (block.kind === 'group') {
+        lines.push(`${pad}### ${block.title ?? '(untitled group)'}`, '')
+        for (const id of block.children ?? []) {
+          const child = byId.get(id)
+          if (child !== undefined) emit(child, depth + 1)
+        }
+        lines.push('')
+        return
+      }
+      const body = renderBlock({ ...block, slug: '' }).replace(/^▸\s+  \[[a-z-]+\]  \([^)]*\)\n?/, '')
+      // Indent a nested block so a group's contents stay visually inside it.
+      lines.push(pad === '' ? body : body.split('\n').map((line) => `${pad}${line}`).join('\n'), '')
+    }
+
+    for (const block of blocks) if (!claimed.has(block.id)) emit(block, 0)
+    // A block claimed by a group that does not exist would otherwise never be printed.
+    for (const block of blocks) emit(block, 0)
+    lines.push('')
+  }
+
+  const edges = Array.isArray(model.edges) ? model.edges : []
+  if (edges.length > 0) {
+    const slugOf = new Map()
+    for (const page of model.pages) {
+      for (const block of page.blocks ?? []) slugOf.set(block.id, block.slug)
+    }
+    lines.push('## relations')
+    for (const edge of edges) {
+      const fromId = typeof edge.from === 'string' ? edge.from : edge.from?.blockId
+      const toId = typeof edge.to === 'string' ? edge.to : edge.to?.blockId
+      const label = edge.label === undefined ? '' : `（${edge.label}）`
+      lines.push(`- ${slugOf.get(fromId) ?? '?'} → ${slugOf.get(toId) ?? '?'}${edge.rel === undefined ? '' : ` — ${edge.rel}`}${label}`)
+    }
+    lines.push('')
+  }
+
+  return lines.join('\n')
+}
+
+/**
+ * Print an op batch the way it has to be sent back: one op per line.
+ *
+ * Not `JSON.stringify(ops, null, 2)` — indenting every field of a 20-block page roughly triples the
+ * text for no benefit, and this text is the only copy the Agent sees (`ops` is structured output,
+ * which never reaches it). One op per line is the compact form that is still diffable and still
+ * editable: the Agent can drop a line or change a value without having to re-indent anything.
+ *
+ * @param ops - the batch.
+ * @returns the text, or a note when there is nothing to send.
+ */
+function printOps(ops) {
+  if (ops.length === 0) return '(nothing to apply — this page has no elements)'
+  return `[\n  ${ops.map((op) => JSON.stringify(op)).join(',\n  ')}\n]`
+}
+
+/**
+ * How many ops one response may carry.
+ *
+ * This is a *copying* budget, not a storage one. The Agent's only copy of the batch is this text,
+ * and it has to re-emit it as a tool argument — a 23-op page is already thousands of characters of
+ * JSON, and the first real attempt at importing one failed with `tool input is invalid JSON`
+ * because the model had to reproduce it by hand. Eight ops keeps every chunk comfortably inside a
+ * single tool call.
+ */
+const IMPORT_OPS_PER_CHUNK = 8
+
+/**
+ * One page's worth of a batch, in the order the batch already has.
+ *
+ * Ops are not tagged with a page in every branch (`add_edge` names only blocks), so the split is by
+ * the owning page of each op.
+ *
+ * **A cross-page edge is deliberately left out.** An `add_edge` needs both endpoints to exist, so an
+ * edge from this page to another one cannot be applied until that other page has been imported too.
+ * Putting it in this page's batch makes the *whole* batch fail — and it fails atomically, so the
+ * page does not arrive either. That is exactly what happened the first time this was tried for
+ * real: `op[21] add_edge: no block matches "n-answer"`, and nothing applied. Cross-page edges
+ * travel with the last page instead, where both ends are finally present.
+ *
+ * @param ops - the whole batch.
+ * @param pageSlug - the page to take.
+ * @param pageOfSlug - resolves the page that owns a block or page slug.
+ * @param isLastPage - whether every other page has been applied by the time this one is.
+ * @returns that page's ops.
+ */
+function opsOfPage(ops, pageSlug, pageOfSlug, isLastPage = false) {
+  return ops.filter((op) => {
+    if (op.op === 'add_page' || op.op === 'update_page' || op.op === 'delete_page') return op.page === pageSlug
+    if (op.op === 'add_block' || op.op === 'update_block' || op.op === 'delete_block' || op.op === 'move_block') {
+      return op.page === pageSlug || pageOfSlug(op.page) === pageSlug
+    }
+    if (op.op === 'add_edge') {
+      const from = typeof op.from === 'string' ? op.from : op.from?.blockId
+      const to = typeof op.to === 'string' ? op.to : op.to?.blockId
+      const fromPage = pageOfSlug(from)
+      const toPage = pageOfSlug(to)
+      // Same-page edges belong here. Cross-page ones wait for the last page.
+      if (fromPage === pageSlug && toPage === pageSlug) return true
+      return isLastPage && (fromPage === pageSlug || toPage === pageSlug)
+    }
+    return false
+  })
+}
+
+async function executeImport(deps, doc, args) {
+  const source = await readSourceBoard(deps, args.from)
   const model = source.model
 
   // A brand-new board is one empty page called `main`. Filling it means the imported board does
@@ -1343,44 +1517,144 @@ function executeImport(deps, doc, args) {
         ? doc.model.pages[0].slug
         : undefined
 
-  // Slugs that are already taken would collide, so the import asks the fold for a free address
-  // instead of overwriting. Asking up front keeps the reported ops equal to the applied ones.
-  const taken = new Set()
-  for (const page of doc.model.pages) {
-    taken.add(page.slug)
-    for (const block of page.blocks ?? []) taken.add(block.slug)
-    for (const edge of doc.model.edges ?? []) taken.add(edge.slug)
-  }
-  const slugFor = (slug) => (taken.has(slug) ? `${slug}-imported` : slug)
+  // **The names this batch uses must not depend on what is currently on the board.**
+  //
+  // The first version suffixed any slug already taken in the target. That is unstable by
+  // construction, because the import *changes* the target: chunk 1 filled `main`, so the next call
+  // saw `main` taken and re-slugged the very same page to `main-imported`, its blocks moved with it,
+  // and a later chunk's edges then named blocks that no longer existed under those names. The Agent
+  // noticed and patched it by hand; a smaller model would have shipped a broken board.
+  //
+  // So the mapping is now a pure function of the source and the reuse decision: identical on every
+  // call, whatever landed in between. A genuine collision with pre-existing content is left to fail
+  // loudly at `board_apply`, which names the element and is the only place that can see everything;
+  // `reuse_page` is the escape hatch for the ordinary case, and a page the source itself names is
+  // never treated as a collision.
+  const slugFor = (slug) => slug
   const ops = importOps(model, { slugFor, reusePage: reused })
 
-  const applied = executeApply(doc, {
-    expected_revision: args.expected_revision,
-    ops,
-    note: args.note,
-  })
-
-  const sourceEdgeCount = (model.edges ?? []).length
+  const sourceBlocks = model.pages.reduce((total, page) => total + (page.blocks ?? []).length, 0)
   const importedEdgeCount = ops.filter((op) => op.op === 'add_edge').length
-  const skipped = sourceEdgeCount - importedEdgeCount
-  const text = [
-    `Imported 「${source.title === '' ? source.model?.title ?? 'untitled' : source.title}」 from session ${args.from}.`,
-    `${ops.filter((op) => op.op === 'add_page').length} page(s), ${ops.filter((op) => op.op === 'add_block').length} block(s), ${importedEdgeCount} edge(s) → rev ${applied.pending_rev}.`,
-    skipped > 0 ? `${skipped} edge(s) skipped: an endpoint no longer exists in the source.` : '',
-    reused === undefined ? '' : `Filled the empty page 「${reused}」 rather than adding another beside it.`,
-  ]
-    .filter((line) => line !== '')
-    .join('\n')
+  const skipped = (model.edges ?? []).length - importedEdgeCount
+  const title = model.title === '' || model.title === undefined ? 'untitled' : model.title
+
+  // Which page holds a block, for splitting a batch by page.
+  const pageOf = new Map()
+  for (const page of model.pages) {
+    const target = page.slug === (model.pages[0]?.slug ?? '') && reused !== undefined ? reused : slugFor(page.slug)
+    for (const block of page.blocks ?? []) pageOf.set(slugFor(block.slug ?? block.id), target)
+  }
+  const pageOfSlug = (slug) => pageOf.get(slug)
+
+  const header = [
+    `「${title}」 from session ${args.from} — ${model.pages.length} page(s), ${sourceBlocks} block(s), ${importedEdgeCount} edge(s).`,
+    'Nothing has been written to this board yet. It is read-only: bring it over with `board_apply`.',
+    skipped > 0 ? `${skipped} edge(s) were left out: an endpoint no longer exists in the source.` : '',
+  ].filter((line) => line !== '')
+
+  // A whole board in one response is not readable and would be truncated: 108 blocks runs to
+  // roughly 190 KB of JSON, and a truncated JSON array is worse than useless because it looks
+  // applicable and is not. So the batch is served one page at a time, and the pages are listed
+  // first so the Agent knows what to ask for.
+  const targets = model.pages.map((page, index) => ({
+    source: page.slug,
+    target: page.slug === (model.pages[0]?.slug ?? '') && reused !== undefined ? reused : slugFor(page.slug),
+    page,
+    isLast: index === model.pages.length - 1,
+  }))
+  const wanted = typeof args.page === 'string' ? args.page : undefined
+  if (wanted === undefined) {
+    const listing = targets.map((entry) => {
+      const blocks = entry.page.blocks ?? []
+      const title = blocks.find((block) => block.kind === 'heading')?.text ?? ''
+      const firstProse = blocks.find((block) => block.kind === 'prose')?.markdown ?? ''
+      const preview = (title !== '' ? title : firstProse).replace(/\s+/g, ' ').slice(0, 60)
+      return `  page ${entry.target}  ${blocks.length} block(s)  ${preview}${preview === '' ? '' : '…'}`
+    })
+    return {
+      source_title: model.title ?? '',
+      from: args.from,
+      pages: model.pages.length,
+      blocks: sourceBlocks,
+      edges: importedEdgeCount,
+      skipped_edges: skipped,
+      ops: [],
+      text: [
+        ...header,
+        reused === undefined
+          ? ''
+          : `The first page will fill the empty page 「${reused}」 rather than sitting beside it.`,
+        'Call board_import again with `page` set to one of these, to get that page\'s ops:',
+        '',
+        ...listing,
+        '',
+        'Apply them in the order listed: each page with its own `board_apply`, using the `rev` from',
+        'the previous result. Cross-page edges are held back until the last page, because an edge',
+        'cannot be added before both of its ends exist.',
+        'You may rearrange, drop or rewrite anything that does not fit — the goal is that this',
+        'conversation continues from that work, not that it reproduces it byte for byte.',
+      ]
+        .filter((line) => line !== '')
+        .join('\n'),
+    }
+  }
+
+  const chosen = targets.find((entry) => entry.target === wanted || entry.source === wanted)
+  if (chosen === undefined) {
+    throw new BoardOpError(
+      `no page matches ${JSON.stringify(wanted)}. The source board has: ${targets
+        .map((entry) => entry.target)
+        .join(', ')}. Call board_import without \`page\` to list them with their block counts.`,
+    )
+  }
+
+  const allPageOps = opsOfPage(ops, chosen.target, pageOfSlug, chosen.isLast)
+  const chunkCount = Math.max(1, Math.ceil(allPageOps.length / IMPORT_OPS_PER_CHUNK))
+  const chunk = Number.isInteger(args.chunk) ? args.chunk : 1
+  if (chunk < 1 || chunk > chunkCount) {
+    throw new BoardOpError(
+      `page ${JSON.stringify(chosen.target)} has ${chunkCount} chunk(s) of ${IMPORT_OPS_PER_CHUNK} ` +
+        `op(s) each; \`chunk\` must be between 1 and ${chunkCount}.`,
+    )
+  }
+  const pageOps = allPageOps.slice((chunk - 1) * IMPORT_OPS_PER_CHUNK, chunk * IMPORT_OPS_PER_CHUNK)
+
+  const pageModel = { title: model.title, pages: [chosen.page], edges: [] }
+  const pageCount = (chosen.page.blocks ?? []).length
+  const pageEdgeCount = allPageOps.filter((op) => op.op === 'add_edge').length
+  const heldEdges = ops.filter((op) => op.op === 'add_edge').length - pageEdgeCount
+  const more = chunk < chunkCount
 
   return {
-    ok: true,
-    rev: applied.rev,
-    pending_rev: applied.pending_rev,
-    source_title: source.model?.title ?? '',
-    applied: ops.length,
-    created: applied.created,
+    source_title: model.title ?? '',
+    from: args.from,
+    pages: model.pages.length,
+    blocks: sourceBlocks,
+    edges: pageOps.filter((op) => op.op === 'add_edge').length,
     skipped_edges: skipped,
-    text,
+    ops: pageOps,
+    text: [
+      ...header,
+      '',
+      `── page 「${chosen.target}」 — ${pageCount} block(s); ${allPageOps.length} op(s) in ` +
+        `${chunkCount} chunk(s), this is chunk ${chunk} (${pageOps.length} op(s)) ──`,
+      '',
+      `Apply chunk ${chunk} with \`board_apply\`, passing these as \`ops\` exactly as they appear:`,
+      '',
+      printOps(pageOps),
+      more
+        ? `\nThen call board_import again with page="${chosen.target}" and chunk=${chunk + 1}, ` +
+          'using the rev from that board_apply.'
+        : '',
+      heldEdges > 0
+        ? `\n${heldEdges} cross-page edge(s) are held back: an edge needs both ends to exist, so ` +
+          'they arrive with the last page.'
+        : '',
+      chunk === 1 ? '\n── the same page as readable markdown ──\n' : '',
+      chunk === 1 ? renderSourceBoard(pageModel, { includeTitle: false }) : '',
+    ]
+      .filter((line) => line !== '')
+      .join('\n'),
   }
 }
 
@@ -1588,9 +1862,11 @@ export const BOARD_TOOLS = Object.freeze([outlineTool, readTool, applyTool, quer
  * @param projections - the session-projection registry, from `ctx.inject`.
  * @param reports - the browser's render reports, or `undefined` without a web server.
  * @param pdfFacts - the host's parse facts, or `undefined`.
+ * @param sessionQuery - the cold-capable session reader, or a getter for it. Optional: without it
+ *   an import can only read sessions that are still live in this process.
  * @returns the disposers, so the caller can own them in its own effect.
  */
-export function registerBoardTools(ctx, projections, reports, pdfFacts, sessions) {
+export function registerBoardTools(ctx, projections, reports, pdfFacts, sessionQuery) {
   const read = (exec) => readBoard(projections, exec)
   // Reports are volatile and per-session, so they are resolved at call time rather than held in
   // the projection — see `RenderReports` for why an observation about the DOM cannot live there.
@@ -1663,12 +1939,36 @@ export function registerBoardTools(ctx, projections, reports, pdfFacts, sessions
     },
   )
   queryTool.execute = (args, exec) => executeQuery(read(exec), args)
-  // The import needs the session store to resolve *another* session, which no other board tool
-  // does — they only ever touch the calling one. `sessions` arrives as a **getter** rather than a
-  // value: a service this plugin does not inject may finish loading after this registration runs,
-  // and capturing `undefined` once would be permanent.
-  const sessionStore = typeof sessions === 'function' ? sessions : () => sessions
-  importTool.execute = (args, exec) => executeImport({ sessions: sessionStore(), projections }, read(exec), args)
+  // The import needs to resolve *another* session, which no other board tool does — they only ever
+  // touch the calling one. It is a **read**, so it never touches `expected_revision`: the batch it
+  // returns is applied by `board_apply`, which is the only writer.
+  //
+  // `sessionQuery` arrives as a **getter** rather than a value: a service this plugin does not
+  // inject may finish loading after this registration runs, and capturing `undefined` once would be
+  // permanent — the import would refuse a session that is right there.
+  //
+  // `sessions`, `projections` and `persistence` ride along for profiles without a session query
+  // service. `sessionQuery` is genuinely optional — in a headless profile it does not register at
+  // all, and a plugin that fails to load is logged and skipped rather than fatal — so an import
+  // that needed it would work in the desktop app and refuse every conversation elsewhere. With
+  // persistence the stored log is read directly, which is what the query service does internally
+  // anyway. All resolved lazily, for the same late-loading reason.
+  const resolve = (value) => (typeof value === 'function' ? value() : value)
+  importTool.execute = async (args, exec) => {
+    // Reading another session never touches this board's state, but the caller's own document still
+    // supplies the taken-slug set and the untouched-page test.
+    const doc = read(exec)
+    return executeImport(
+      {
+        sessionQuery: resolve(sessionQuery),
+        sessions: resolve(ctx.get?.('sessions')),
+        projections,
+        persistence: resolve(ctx.get?.('sessionPersistence')),
+      },
+      doc,
+      args,
+    )
+  }
   return BOARD_TOOLS.map((tool) => ctx.tools.register(tool))
 }
 
@@ -1701,7 +2001,8 @@ function readBoard(projections, exec) {
 
 /** `board_outline`. */
 function executeOutline(doc, args, renderReports = [], pdfFacts = []) {
-  const rendered = renderOutlineText(doc, { ...args, renderReports, pdfFacts })
+  // The tool exists to be asked; a one-line answer on an empty board is exactly the answer.
+  const rendered = renderOutlineText(doc, { ...args, renderReports, pdfFacts, silentWhenEmpty: false })
   const model = doc.model
 
   const failedFacts = pdfFacts.filter((fact) => fact.status === 'failed')

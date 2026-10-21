@@ -601,8 +601,22 @@ test('board_query finds a directed path and reports the hops', () => {
 // Outline rendering
 // ---------------------------------------------------------------------------
 
-test('an empty board renders no outline at all', () => {
-  assert.equal(renderOutlineText(emptyBoardDoc('s'), {}).text.trim(), '')
+test('an empty board still tells the Agent the revision, because every write needs one', () => {
+  // The regression this pins: a fresh board rendered an empty outline, `board_apply` and
+  // `board_import` both require `expected_revision`, and the only documented source of it returned
+  // nothing. A real run had to guess. One line is a cheap outline; a guess is not.
+  const doc = emptyBoardDoc('s')
+  const { text } = renderOutlineText(doc, { silentWhenEmpty: false })
+  assert.match(text, new RegExp(doc.model.rev), 'the rev is the whole point')
+  assert.match(text, /the board is empty/)
+  assert.match(text, /expected_revision/)
+})
+
+test('the per-step injected outline stays silent on an empty board', () => {
+  // The other caller rides every request of every conversation that never opens the tab, so it
+  // keeps paying nothing. The default is the silent one; the tool opts in to saying something.
+  assert.equal(renderOutlineText(emptyBoardDoc('s'), {}).text, '')
+  assert.equal(renderOutlineText(emptyBoardDoc('s'), { silentWhenEmpty: true }).text, '')
 })
 
 test('a rejected batch is stated in the outline, so the Agent need not re-read to learn it', () => {

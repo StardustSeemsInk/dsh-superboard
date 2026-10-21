@@ -124,15 +124,16 @@ export function apply(ctx) {
     })
 
     ctx.inject(['tools'], (scope) => {
-      // `sessions` is optional: only `board_import` needs it, because it is the only tool that
-      // reads a session other than the calling one. A profile without the session store keeps all
-      // the other board tools and gets a clear refusal from the import.
+      // `sessionQuery` is optional: only `board_import` needs it, because it is the only tool that
+      // reads a session other than the calling one, and it is the only seam that can reach a
+      // session that is stored but not live. A profile without it keeps every other board tool
+      // and gets a clear refusal from the import.
       //
       // Resolved **at call time**, not here. A service this plugin does not inject may load after
       // this registration runs, and capturing `undefined` once would then be permanent — the tool
       // would refuse a session that is right there. `ctx.get('name')` in production resolves the
       // same service lazily (`dsh-agent-preset-registry/lib/types/invariant.js:36`).
-      registerBoardTools(scope, projections, reports, pdfFacts, () => scope.get?.('sessions'))
+      registerBoardTools(scope, projections, reports, pdfFacts, () => scope.get?.('sessionQuery'))
     })
 
     ctx.inject(['systemPrompt'], (scope) => {

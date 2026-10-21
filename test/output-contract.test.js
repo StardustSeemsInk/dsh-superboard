@@ -89,15 +89,23 @@ function richDoc() {
   ])
 }
 
-/** Register the tools against a fake registry and return a caller bound to one board. */
-function harness(doc, reports, sessions) {
+/**
+ * Register the tools against a fake registry and return a caller bound to one board.
+ *
+ * `opts.sessionQuery` is handed over as a getter, the way `index.js` does it, so a test can make
+ * the service appear after registration. `opts.sessions` backs the narrower fallback path.
+ */
+function harness(doc, reports, opts = {}) {
   const registered = []
   registerBoardTools(
-    { tools: { register: (definition) => (registered.push(definition), () => {}) } },
+    {
+      tools: { register: (definition) => (registered.push(definition), () => {}) },
+      get: (name) => (name === 'sessions' ? opts.sessions : undefined),
+    },
     { stateOf: () => doc },
     reports,
     undefined,
-    sessions,
+    () => opts.sessionQuery,
   )
   return {
     registered,
@@ -112,6 +120,20 @@ function harness(doc, reports, sessions) {
       })
     },
     tool: (name) => registered.find((each) => each.name === name),
+  }
+}
+
+/** A `sessionQuery` stub that serves one board and reports any other id as not found. */
+function queryServing(id, model) {
+  return {
+    observeSession: async (asked) => {
+      if (asked !== id) {
+        const error = new Error(`session "${asked}" not found`)
+        error.code = 'SESSION_QUERY_SESSION_NOT_FOUND'
+        throw error
+      }
+      return { header: { id }, projections: { values: { board: { modelVersion: 5, model, diag: { blocks: [] } } } } }
+    },
   }
 }
 
@@ -174,9 +196,12 @@ test('board_outline asked for edges alone satisfies the contract', () => {
 })
 
 test('board_outline against an empty board satisfies the contract', () => {
-  const { value, content } = drive('board_outline', {}, emptyBoardDoc('sess-out'))
+  const doc = emptyBoardDoc('sess-out')
+  const { value, content } = drive('board_outline', {}, doc)
   assert.equal(value.truncated, false)
-  assert.equal(content[0].text, '')
+  // Empty, but not silent: the tool's job is to hand over the revision every write requires.
+  assert.match(content[0].text, new RegExp(doc.model.rev))
+  assert.equal(value.rev, doc.model.rev)
 })
 
 test('board_read of every element kind satisfies the contract', () => {
@@ -334,16 +359,14 @@ test('the whole tool set is covered by this file', () => {
   }
 })
 
-test('board_import carries another session\u2019s board and satisfies its own output schema', () => {
+test('board_import carries another session\u2019s board and satisfies its own output schema', async () => {
   // A source board with one nested group, so the import is not a flat copy. Built by folding, so
-  // it is a real board rather than a hand-written lookalike. `stateOf` returns the *document*
-  // (model plus diagnostics), which is why it is wrapped rather than used bare.
+  // it is a real board rather than a hand-written lookalike.
   const sourceModel = applyOpsFn(emptyBoardDoc('sess-source').model, [
     { op: 'add_page', page: 'from-graph' },
     { op: 'add_block', page: 'from-graph', kind: 'prose', slug: 'inner-note', markdown: '被导入的正文' },
     { op: 'add_block', page: 'from-graph', kind: 'group', slug: 'wrapper', title: '外壳', children: ['inner-note'] },
   ], { sessionId: 'sess-source', callSeq: 1, strict: false })
-  const sourceDoc = { model: sourceModel, diag: {} }
   const sessions = {
     get: (id) => (id === 'sess-source' ? { id } : undefined),
   }
@@ -351,22 +374,48 @@ test('board_import carries another session\u2019s board and satisfies its own ou
   // The projection returns the *source* board for the source session, and the target board for
   // the calling one — exactly what the real registry does.
   const projections = {
-    stateOf: (session) => (session.id === 'sess-source' ? sourceDoc : doc),
+    stateOf: (session) => (session.id === 'sess-source' ? { model: sourceModel, diag: {} } : doc),
   }
   const registered = []
   registerBoardTools(
-    { tools: { register: (definition) => (registered.push(definition), () => {}) } },
+    {
+      tools: { register: (definition) => (registered.push(definition), () => {}) },
+      // This test pins the narrow fallback path on purpose: no query service, so the source has to
+      // be live in the store. The cold path is covered by its own tests.
+      get: (name) => (name === 'sessions' ? sessions : undefined),
+    },
     projections,
     undefined,
     undefined,
-    sessions,
+    undefined,
   )
   const tool = registered.find((each) => each.name === 'board_import')
-  const value = tool.execute(
-    { from: 'sess-source', expected_revision: doc.model.rev },
+  // First call: the listing. It must name the pages and return no ops — a whole board in one
+  // response is what got truncated to the point of being unusable.
+  const listing = await tool.execute(
+    { from: 'sess-source' },
     { agent: { session: { id: 'sess-target' } }, callId: 'test', name: 'board_import', arguments: {} },
   )
+  if (dsh !== undefined) {
+    assert.deepEqual(
+      dsh.validateJsonSchemaValue(tool.output.schema, listing, 'value'),
+      [],
+      'the listing would fail with ToolOutputError',
+    )
+  }
+  assert.equal(listing.source_title, 'Board')
+  assert.equal(listing.pages, 2, 'the placeholder page plus the source page')
+  assert.ok(listing.blocks > 0, 'the source board is reported')
+  assert.equal(listing.skipped_edges, 0)
+  assert.deepEqual(listing.ops, [], 'the listing carries no ops')
+  assert.match(listing.text, /page from-graph/)
+  assert.match(listing.text, /Call board_import again with `page`/)
 
+  // Second call: one page's batch.
+  const value = await tool.execute(
+    { from: 'sess-source', page: 'from-graph' },
+    { agent: { session: { id: 'sess-target' } }, callId: 'test', name: 'board_import', arguments: {} },
+  )
   if (dsh !== undefined) {
     assert.deepEqual(
       dsh.validateJsonSchemaValue(tool.output.schema, value, 'value'),
@@ -374,70 +423,280 @@ test('board_import carries another session\u2019s board and satisfies its own ou
       'board_import would fail with ToolOutputError',
     )
   }
-  assert.equal(value.ok, true)
-  assert.equal(value.source_title, 'Board')
-  assert.ok(value.applied > 0, 'the import expands to a real batch')
+  // **The whole contract in one assertion**: the import writes nothing. The target board is
+  // untouched and every op is handed back for the Agent to apply.
+  assert.equal(doc.model.rev, 'r0-000000000000', 'board_import must not write')
+  assert.equal(doc.model.pages.length, 1)
+  assert.equal(doc.model.pages[0].blocks.length, 0)
+  assert.ok(Array.isArray(value.ops) && value.ops.length > 0, 'a batch is returned')
   assert.ok(
-    value.created.some((entry) => entry.slug === 'wrapper'),
-    'the group is reported by its address',
+    value.ops.some((op) => op.op === 'add_block' && op.slug === 'wrapper'),
+    'the group is in the batch by address',
   )
-  assert.equal(value.skipped_edges, 0)
-  assert.match(value.text, /Imported/)
+  assert.ok(
+    value.ops.some((op) => op.op === 'add_block' && op.slug === 'inner-note'),
+    'so is the child it names',
+  )
+  assert.match(value.text, /Nothing has been written/)
+  // The text has to carry the batch: `ops` is structured output the model never sees, so a result
+  // that only puts it in the JSON field is a result the Agent cannot act on.
+  assert.match(value.text, /"op":"add_block"/, 'the batch is printed, not just returned structurally')
+  assert.match(value.text, /被导入的正文/, 'the source is also rendered as readable markdown')
+  assert.doesNotMatch(value.text, /\(undefined\)/, 'a removed field must not still be read somewhere')
   const content = tool.output.render({}, value)
   assert.equal(content.length, 1)
 })
 
-test('board_import refuses an unknown source session without touching the board', () => {
+/** The listing lines of an import response, as `{ slug, blocks }`. */
+function listedPages(text) {
+  const found = []
+  for (const line of text.split('\n')) {
+    const match = /^ {2}page (\S+) {2}(\d+) block\(s\)/.exec(line)
+    if (match !== null) found.push({ slug: match[1], blocks: Number(match[2]) })
+  }
+  return found
+}
+
+test('the names a chunk uses do not change as the import lands', async () => {
+  // The regression: with `slugFor` computed from the target board, chunk 1 filled `main`, so chunk 2
+  // saw `main` taken and re-slugged the SAME page to `main-imported` — and later chunk's edges then
+  // named blocks that no longer existed under those names. The mapping has to be a pure function of
+  // the source, stable across every call, because the import itself mutates the board between calls.
+  const sourceModel = applyOpsFn(emptyBoardDoc('sess-source').model, [
+    { op: 'add_page', page: 'grow' },
+    { op: 'add_block', page: 'grow', kind: 'prose', slug: 'one', markdown: 'a' },
+    { op: 'add_edge', from: 'one', to: 'one', rel: 'relates' },
+  ], { sessionId: 'sess-source', callSeq: 1, strict: false })
+
   const doc = emptyBoardDoc('sess-target')
-  const h = harness(doc, undefined, { get: () => undefined })
-  assert.throws(
-    () => h.call('board_import', { from: 'nowhere', expected_revision: doc.model.rev }),
-    (error) => {
-      assert.match(error.message, /not open in this process/)
-      return true
+  // A `stateOf` that actually advances as the test applies batches would be the real thing; here the
+  // board is filled in between the two calls, which is exactly the situation that broke.
+  const registered = []
+  registerBoardTools(
+    {
+      tools: { register: (definition) => (registered.push(definition), () => {}) },
+      get: () => ({ get: (id) => (id === 'sess-source' ? { id } : undefined) }),
     },
+    {
+      stateOf: (session) => (session?.id === 'sess-source' ? { model: sourceModel, diag: {} } : doc),
+    },
+    undefined,
+    undefined,
+    undefined,
+  )
+  const tool = registered.find((each) => each.name === 'board_import')
+  const first = await tool.execute(
+    { from: 'sess-source' },
+    { agent: { session: { id: 'sess-target' } }, callId: 't', name: 'board_import', arguments: {} },
+  )
+  const names = listedPages(first.text).map((entry) => entry.slug)
+  assert.ok(names.includes('grow'), 'the listing names the source slug')
+  assert.deepEqual(listedPages(first.text).find((entry) => entry.slug === 'grow').blocks, 1)
+
+  // Apply the first chunk, so the target now HAS `grow` and the page's blocks.
+  const after = applyOpsFn(doc.model, first.ops.length === 0 ? [] : first.ops, {
+    sessionId: 'sess-target',
+    callSeq: 1,
+    callerRev: doc.model.rev,
+    expectedRevision: doc.model.rev,
+    strict: false,
+  })
+  doc.model = after
+
+  // The second call is made against a board that already contains everything the first returned.
+  const listingAgain = await tool.execute(
+    { from: 'sess-source' },
+    { agent: { session: { id: 'sess-target' } }, callId: 't', name: 'board_import', arguments: {} },
+  )
+  const namesAgain = listedPages(listingAgain.text).map((entry) => entry.slug)
+  assert.deepEqual(namesAgain, names, 'and still names every page exactly the same way afterwards')
+  assert.doesNotMatch(listingAgain.text, /-imported/, 'nothing gets a suffix just for having landed')
+})
+
+test('a cross-page edge is held back rather than breaking the page it is listed under', async () => {
+  // An `add_edge` needs both endpoints, and the batch is applied one page at a time — so an edge
+  // whose ends live on different pages cannot travel with either of the first ones. Putting it in
+  // a page's batch failed the WHOLE batch the first time this was tried for real
+  // (`op[21] add_edge: no block matches "n-answer"`), so the page did not arrive either.
+  const sourceModel = applyOpsFn(emptyBoardDoc('sess-source').model, [
+    { op: 'add_page', page: 'second' },
+    { op: 'add_block', page: 'main', kind: 'prose', slug: 'here', markdown: 'a' },
+    { op: 'add_block', page: 'second', kind: 'prose', slug: 'there', markdown: 'b' },
+    { op: 'add_block', page: 'main', kind: 'prose', slug: 'also-here', markdown: 'c' },
+    { op: 'add_edge', from: 'here', to: 'also-here', rel: 'relates' },
+    { op: 'add_edge', from: 'here', to: 'there', rel: 'next' },
+  ], { sessionId: 'sess-source', callSeq: 1, strict: false })
+
+  const doc = emptyBoardDoc('sess-target')
+  const registered = []
+  registerBoardTools(
+    {
+      tools: { register: (definition) => (registered.push(definition), () => {}) },
+      get: () => ({ get: (id) => (id === 'sess-source' ? { id } : undefined) }),
+    },
+    { stateOf: (session) => (session?.id === 'sess-source' ? { model: sourceModel, diag: {} } : doc) },
+    undefined,
+    undefined,
+    undefined,
+  )
+  const tool = registered.find((each) => each.name === 'board_import')
+
+  const first = await tool.execute(
+    { from: 'sess-source', page: 'main' },
+    { agent: { session: { id: 'sess-target' } }, callId: 't', name: 'board_import', arguments: {} },
+  )
+  const firstEdges = first.ops.filter((op) => op.op === 'add_edge')
+  assert.equal(firstEdges.length, 1, 'only the same-page edge is here')
+  assert.equal(firstEdges[0].to, 'also-here')
+  assert.match(first.text, /cross-page edge\(s\) are held back/)
+
+  // ...and it really does apply, which is the property the split exists for.
+  const after = applyOpsFn(doc.model, first.ops, {
+    sessionId: 'sess-target',
+    callSeq: 1,
+    callerRev: doc.model.rev,
+    expectedRevision: doc.model.rev,
+    strict: false,
+  })
+  assert.equal(after.pages.find((page) => page.slug === 'main').blocks.length, 2)
+
+  const last = await tool.execute(
+    { from: 'sess-source', page: 'second' },
+    { agent: { session: { id: 'sess-target' } }, callId: 't', name: 'board_import', arguments: {} },
+  )
+  assert.equal(
+    last.ops.filter((op) => op.op === 'add_edge').length,
+    1,
+    'the cross-page edge arrives with the last page',
   )
 })
 
-test('a session store that loads after registration is still found', () => {
+test('the ops an import returns actually fold into the source board', async () => {
+  // The batch being present is not the claim; the claim is that it applies. This replays it through
+  // the real folder, which is the only thing that proves the post-order walk and the slug
+  // re-addressing are right.
+  const sourceModel = applyOpsFn(emptyBoardDoc('sess-source').model, [
+    { op: 'add_page', page: 'from-graph' },
+    { op: 'add_block', page: 'from-graph', kind: 'prose', slug: 'inner-note', markdown: '正文' },
+    { op: 'add_block', page: 'from-graph', kind: 'group', slug: 'wrapper', title: '外壳', children: ['inner-note'] },
+  ], { sessionId: 'sess-source', callSeq: 1, strict: false })
+
+  const doc = emptyBoardDoc('sess-target')
+  // `harness`'s projection serves the target for every session, so this test wires its own.
+  const registered = []
+  registerBoardTools(
+    {
+      tools: { register: (definition) => (registered.push(definition), () => {}) },
+      get: () => ({ get: (id) => (id === 'sess-source' ? { id } : undefined) }),
+    },
+    { stateOf: (session) => (session?.id === 'sess-source' ? { model: sourceModel, diag: {} } : doc) },
+    undefined,
+    undefined,
+    undefined,
+  )
+  const tool = registered.find((each) => each.name === 'board_import')
+  const read = await tool.execute(
+    { from: 'sess-source', page: 'from-graph' },
+    { agent: { session: { id: 'sess-target' } }, callId: 't', name: 'board_import', arguments: {} },
+  )
+
+  // Apply what it handed back, through the real folder, the way the Agent would.
+  const after = applyOpsFn(doc.model, read.ops, {
+    sessionId: 'sess-target',
+    callSeq: 1,
+    callerRev: doc.model.rev,
+    expectedRevision: doc.model.rev,
+    strict: false,
+  })
+  const page = after.pages.find((each) => each.slug === 'from-graph')
+  assert.ok(page !== undefined, 'the page arrives')
+  assert.deepEqual(
+    page.blocks.map((block) => block.slug).sort(),
+    ['inner-note', 'wrapper'],
+    'both blocks arrive, and the group after its child',
+  )
+  const group = page.blocks.find((block) => block.slug === 'wrapper')
+  const child = page.blocks.find((block) => block.slug === 'inner-note')
+  assert.deepEqual(group.children, [child.id], 'the group names the NEWLY MINTED id, not the source one')
+})
+
+test('board_import reads a stored session that is not live, through the query service', async () => {
+  // The case the feature exists for: the user names a conversation from yesterday. Nothing about
+  // it is in memory, and `harness`'s projection returns `undefined` for every session — so a
+  // passing import proves the cold read, not the store.
+  const doc = emptyBoardDoc('sess-target')
+  const sourceModel = applyOpsFn(emptyBoardDoc('sess-source').model, [
+    { op: 'add_block', page: 'main', kind: 'prose', slug: 'yesterday', markdown: '昨天那块看板' },
+  ], { sessionId: 'sess-source', callSeq: 1, strict: false })
+  const h = harness(doc, undefined, {
+    sessionQuery: queryServing('session-a9d7be68-e5f1-46bb-830f-1e386e55faa8', sourceModel),
+  })
+  const value = await h.call('board_import', {
+    from: 'session-a9d7be68-e5f1-46bb-830f-1e386e55faa8',
+    page: 'main',
+  })
+  assert.ok(value.ops.some((op) => op.op === 'add_block' && op.slug === 'yesterday'))
+  assert.match(value.text, /昨天那块看板/)
+  assert.equal(doc.model.rev, 'r0-000000000000', 'reading a cold session still writes nothing')
+})
+
+test('a refused source leaves the board untouched', async () => {
+  const doc = emptyBoardDoc('sess-target')
+  const h = harness(doc, undefined, { sessionQuery: queryServing('someone-else', { pages: [] }) })
+  await assert.rejects(
+    () => h.call('board_import', { from: 'nowhere' }),
+    (error) => {
+      assert.match(error.message, /no session has the id/)
+      return true
+    },
+  )
+  assert.equal(doc.model.rev, 'r0-000000000000', 'a refusal is not a write')
+  assert.equal(doc.model.pages.length, 1)
+})
+
+test('a session query service that loads after registration is still found', async () => {
   // Services a plugin does not `inject` may finish loading after the tools register. Capturing the
   // store once at registration would freeze `undefined` and the import would refuse a session that
   // is right there — so it is resolved per call. The registry below starts empty and gains its
   // service afterwards, which is the only way to catch that regression.
   const doc = emptyBoardDoc('sess-target')
   const tools = {}
-  let sessions
-  const sourceDoc = {
-    model: applyOpsFn(emptyBoardDoc('sess-source').model, [
-      { op: 'add_block', page: 'main', kind: 'prose', slug: 'note', markdown: '晚到的服务也读得到' },
-    ], { sessionId: 'sess-source', callSeq: 1, strict: false }),
-    diag: {},
-  }
+  let sessionQuery
+  const sourceModel = applyOpsFn(emptyBoardDoc('sess-source').model, [
+    { op: 'add_block', page: 'main', kind: 'prose', slug: 'note', markdown: '晚到的服务也读得到' },
+  ], { sessionId: 'sess-source', callSeq: 1, strict: false })
   registerBoardTools(
-    { tools: { register: (definition) => (tools[definition.name] = definition, () => {}) } },
-    { stateOf: (session) => (session.id === 'sess-source' ? sourceDoc : doc) },
+    {
+      tools: { register: (definition) => (tools[definition.name] = definition, () => {}) },
+      get: () => undefined,
+    },
+    { stateOf: () => doc },
     undefined,
     undefined,
     // A getter, because that is how `index.js` passes it: the value must be read per call.
-    () => sessions,
+    () => sessionQuery,
   )
-  // Nothing registered yet: the call must say so, not throw a TypeError on `undefined.get`.
-  assert.throws(
-    () => tools.board_import.execute({ from: 'sess-source', expected_revision: doc.model.rev }, { agent: { session: { id: 'sess-target' } } }),
+  // Nothing yet: the call must say so, not throw a TypeError on `undefined.read`. The refusal names
+  // what is missing rather than pretending a session that exists does not.
+  await assert.rejects(
+    () => tools.board_import.execute({ from: 'sess-source' }, { agent: { session: { id: 'sess-target' } } }),
     (error) => {
-      assert.match(error.message, /needs both the session store and the projection registry/)
+      assert.match(error.message, /is not open in this process/)
+      assert.match(error.message, /neither a session query service nor session persistence/)
       return true
     },
   )
-  // Now it appears. The same tool instance must import for real — which is the only proof that the
-  // late-arriving store was used rather than a frozen `undefined`.
-  sessions = { get: (id) => (id === 'sess-source' ? { id } : undefined) }
-  const value = tools.board_import.execute(
-    { from: 'sess-source', expected_revision: doc.model.rev },
+  // Now it appears. The same tool instance must read for real — which is the only proof that the
+  // late-arriving service was used rather than a frozen `undefined`.
+  sessionQuery = queryServing('sess-source', sourceModel)
+  const value = await tools.board_import.execute(
+    { from: 'sess-source', page: 'main' },
     { agent: { session: { id: 'sess-target' } }, callId: 'x', name: 'board_import', arguments: {} },
   )
-  assert.equal(value.ok, true)
-  assert.ok(value.created.some((entry) => entry.slug === 'note'), 'the late-loaded store was actually used')
+  assert.ok(
+    value.ops.some((op) => op.op === 'add_block' && op.slug === 'note'),
+    'the late-loaded service was actually used',
+  )
 })
 
 // ---------------------------------------------------------------------------
