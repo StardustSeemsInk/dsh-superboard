@@ -178,6 +178,9 @@ window.__ModuleLoader__.load({
       '.sb-buttonPrimary{background:var(--dsw-alias-state-business-primary);color:var(--dsw-alias-label-primary-foreground);font-weight:500;}',
       '.sb-buttonPrimary:hover:not(:disabled){filter:brightness(.92);}',
       '.sb-buttonOutline{border:0.5px solid var(--dsw-alias-border-l3);}',
+      // A failed export has nowhere else to report: the file simply does not appear, which is the
+      // kind of silence this project keeps having to remove.
+      '.sb-exportNote{font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary);}',
       '.sb-selbarError{flex:1 0 100%;font-size:12px;line-height:18px;color:var(--dsw-alias-state-error-primary);}',
       '.sb-hint{font-size:11px;line-height:16px;color:var(--dsw-alias-label-tertiary);}',
       // The board and the reading column share the tab. They have to: only the active
@@ -236,6 +239,344 @@ window.__ModuleLoader__.load({
     /** Render the stylesheet as a component so unmounting removes it. */
     function BoardStyles() {
       return h('style', null, BOARD_CSS)
+    }
+
+    // -----------------------------------------------------------------------
+    // Export
+    // -----------------------------------------------------------------------
+    //
+    // Two exports, built on opposite sides of the same line.
+    //
+    // **Markdown is a projection of the model** — pure, DOM-free, therefore exact. Every block
+    // kind has one canonical rendering here and a test pins the whole table: a silent omission is
+    // the failure that matters, because a block which exports as nothing looks like a block that
+    // was never written.
+    //
+    // **The image is a copy of the rendered DOM**, never a re-drawing. `react-dom` is not reachable
+    // from a client plugin (the factory receives only `require`, and nothing in the tree requires
+    // it), so there is no offscreen tree to render. Instead the export steps the *real* active
+    // page, serialises the live canvas, and stacks the pages vertically. Every pixel in the PNG
+    // therefore came from the renderer that drew it on screen; a parallel "export renderer" would
+    // be free to disagree, which is the trap this project keeps paying for.
+    //
+    // The one thing that cannot survive serialisation is an **external reference**: an SVG loaded
+    // through `<img>` may not fetch anything, so `/api/file` images would come out blank. They are
+    // inlined as data URLs first.
+
+    /** The fence every code-like block uses. */
+    const FENCE = '```'
+
+    /**
+     * Render one block to Markdown.
+     *
+     * @param block - a wire block.
+     * @returns the block's Markdown, without a trailing newline.
+     */
+    function blockToMarkdown(block) {
+      switch (block.kind) {
+        case 'heading':
+          return `${'#'.repeat(block.level ?? 2)} ${block.text ?? ''}`
+        case 'prose':
+          return block.markdown ?? ''
+        case 'list': {
+          if (!Array.isArray(block.items)) return ''
+          return block.items
+            .map((item, index) => {
+              const marker = block.ordered === true ? `${index + 1}.` : '-'
+              return `${'  '.repeat(item.depth ?? 0)}${marker} ${item.text ?? ''}`
+            })
+            .join('\n')
+        }
+        case 'code': {
+          // The card shows the filename above the source, so the export does too, rather than
+          // dropping it into a fence attribute no Markdown reader agrees on.
+          const head = typeof block.filename === 'string' && block.filename !== '' ? `**${block.filename}**\n\n` : ''
+          return `${head}${FENCE}${block.lang ?? ''}\n${block.code ?? ''}\n${FENCE}`
+        }
+        case 'uml':
+          return `${FENCE}${block.engine === 'plantuml' ? 'plantuml' : 'mermaid'}\n${block.source ?? ''}\n${FENCE}`
+        case 'image': {
+          const caption = typeof block.caption === 'string' && block.caption !== '' ? `\n\n*${block.caption}*` : ''
+          return `![${block.alt ?? ''}](${block.src ?? ''})${caption}`
+        }
+        case 'pdf-page': {
+          // A PDF page is a path plus a page number, not an image URL — `![](…)` here would
+          // produce a link that resolves to nothing.
+          const caption = typeof block.caption === 'string' && block.caption !== '' ? `\n\n*${block.caption}*` : ''
+          return `> PDF · \`${block.src ?? ''}\` 第 ${block.page ?? 1} 页${caption}`
+        }
+        default:
+          return ''
+      }
+    }
+
+    /**
+     * Render the whole board to one Markdown document.
+     *
+     * Pages become `##` sections in board order, because the board's order is the order the Agent
+     * wrote and re-ordering would be an editorial claim the export is not entitled to make.
+     *
+     * @param model - the wire model (`{ title, pages, edges, rev }`).
+     * @returns the Markdown source.
+     */
+    function exportMarkdown(model) {
+      if (model === null || typeof model !== 'object') return ''
+      const byId = new Map()
+      for (const page of model.pages ?? []) {
+        for (const block of page.blocks ?? []) byId.set(block.id, block)
+      }
+
+      /** A group carries child ids, so its Markdown comes from recursion over those ids. */
+      const markdownOf = (block) => {
+        if (block.kind !== 'group') return blockToMarkdown(block)
+        const inner = (block.children ?? [])
+          .map((id) => byId.get(id))
+          .filter((child) => child !== undefined)
+          .map((child) => markdownOf(child))
+          .filter((text) => text.trim() !== '')
+          .join('\n\n')
+        const title = typeof block.title === 'string' && block.title !== '' ? `### ${block.title}\n\n` : ''
+        return `${title}${inner}`
+      }
+
+      const parts = [`# ${model.title ?? 'Board'}`]
+      for (const page of model.pages ?? []) {
+        parts.push(`## ${page.slug}`)
+        // A page arranges whatever no group claimed, and a nested block is only reachable through
+        // its group — so the page body is exactly the roots. That keeps the export from printing
+        // a nested block twice.
+        const claimed = new Set()
+        for (const block of page.blocks ?? []) {
+          if (block.kind === 'group') for (const id of block.children ?? []) claimed.add(id)
+        }
+        for (const block of page.blocks ?? []) {
+          if (claimed.has(block.id)) continue
+          const text = markdownOf(block)
+          if (text.trim() !== '') parts.push(text)
+        }
+      }
+
+      const edges = model.edges ?? []
+      if (edges.length > 0) {
+        parts.push('## 关系')
+        const nameOf = (anchor) => {
+          const id = typeof anchor === 'string' ? anchor : anchor?.blockId
+          return byId.get(id)?.slug ?? id ?? '?'
+        }
+        for (const edge of edges) {
+          const rel = typeof edge.rel === 'string' ? ` — ${edge.rel}` : ''
+          const label = typeof edge.label === 'string' && edge.label !== '' ? `（${edge.label}）` : ''
+          parts.push(`- ${nameOf(edge.from)} → ${nameOf(edge.to)}${rel}${label}`)
+        }
+      }
+
+      return `${parts.join('\n\n')}\n`
+    }
+
+    /**
+     * The narrowest the exported image is allowed to be.
+     *
+     * The width normally comes from the canvas the user was looking at, because that is the width
+     * the cards actually wrapped at. This floor only applies to a board narrow enough that the
+     * page-tab strip would dominate the image.
+     */
+    const EXPORT_MIN_WIDTH = 720
+
+    /**
+     * Token values the stylesheet needs but the host owns.
+     *
+     * The live page gets these from the theme plugin as inline custom properties on `<body>`. A
+     * detached document has no `<body>` to inherit from, so the export carries a light-mode set of
+     * the same names, taken from the shipped light theme — a PNG whose colours are not the
+     * product's colours is a drawing of the product.
+     */
+    const EXPORT_TOKENS = [
+      '--dsw-alias-bg-layer-0:#ffffff',
+      '--dsw-alias-bg-layer-1:#f4f5f7',
+      '--dsw-alias-bg-layer-2:#eceef1',
+      '--dsw-alias-label-primary:#1c1d21',
+      '--dsw-alias-label-secondary:#5b5f6b',
+      '--dsw-alias-label-tertiary:#8a8f9c',
+      '--dsw-alias-border-l1:#e2e5ea',
+      '--dsw-alias-border-l2:#d3d7de',
+      '--dsw-alias-brand-primary:#3d6ef0',
+      '--dsw-alias-state-error:#d13438',
+      '--dsw-alias-state-warn:#b8770a',
+      '--dsw-alias-state-ok:#2f8a4c',
+    ].join(';')
+
+    /**
+     * Serialise one live canvas into XHTML for the export.
+     *
+     * `XMLSerializer` rather than `innerHTML`, for two reasons that happen to agree. The safety
+     * one: this file never builds an HTML string from untrusted text, and reading `innerHTML`
+     * back out to feed a parser would reintroduce exactly that. The correctness one: a
+     * `foreignObject`'s payload is parsed as **XML**, so the clone has to serialise as well-formed
+     * XML with namespaces — which is what `XMLSerializer` produces and what `innerHTML` does not
+     * guarantee.
+     *
+     * @param canvas - the live `.sb-canvas`.
+     * @returns the detached clone, already inlined.
+     */
+    function serialiseCanvas(canvas) {
+      const clone = canvas.cloneNode(true)
+      // The marquee and the "picking" cursor are interaction chrome, not board content.
+      for (const stray of clone.querySelectorAll('.sb-marquee')) stray.remove()
+      clone.classList.remove('sb-picking')
+      return clone
+    }
+
+    /**
+     * Turn every external image inside one serialised page into inline data.
+     *
+     * `<img src="/api/file?path=…">` works on the live origin and not one moment after the
+     * snapshot stops being a document. Each source is read once through the same authenticated
+     * route and replaced with a `data:` URL. A source that fails is counted, never silently
+     * dropped.
+     *
+     * @param holder - a detached element holding the serialised page.
+     * @returns `{ inlined, failed }` counts.
+     */
+    async function inlineImages(holder) {
+      const sources = new Set()
+      for (const img of holder.querySelectorAll('img')) {
+        const raw = img.getAttribute('src') ?? ''
+        if (raw !== '' && !raw.startsWith('data:')) sources.add(raw)
+      }
+      let inlined = 0
+      let failed = 0
+      for (const raw of sources) {
+        try {
+          const response = await fetch(raw)
+          if (!response.ok) throw new Error(String(response.status))
+          const blob = await response.blob()
+          const dataUrl = await new Promise((resolve, reject) => {
+            const reader = new FileReader()
+            reader.onload = () => resolve(String(reader.result))
+            reader.onerror = () => reject(reader.error ?? new Error('read failed'))
+            reader.readAsDataURL(blob)
+          })
+          for (const img of holder.querySelectorAll('img')) {
+            if (img.getAttribute('src') === raw) img.setAttribute('src', dataUrl)
+          }
+          inlined += 1
+        } catch {
+          failed += 1
+        }
+      }
+      return { inlined, failed }
+    }
+
+    /**
+     * Build the standalone SVG for one already-serialised page.
+     *
+     * The page is embedded as `foreignObject` so the browser keeps doing the layout — the same
+     * arrangement the on-screen board has, because it is the same markup and the same stylesheet.
+     *
+     * `width` is measured from the live canvas rather than fixed, for the same reason: a board laid
+     * out at a width it was never laid out at is a different board, and cards would wrap where the
+     * user never saw them wrap.
+     *
+     * @param bodyHtml - the page, serialised as XHTML by `XMLSerializer`.
+     * @param width - that canvas's own width in CSS pixels.
+     * @param height - that page's scroll height, so the rectangle fits the content.
+     * @returns the SVG source.
+     */
+    function pageToSvg(bodyHtml, width, height) {
+      return [
+        `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
+        '<style><![CDATA[',
+        `:root{${EXPORT_TOKENS}}`,
+        'body{margin:0;padding:0;background:#ffffff;}',
+        BOARD_CSS,
+        // On screen the canvas is `overflow:auto` and `flex:1`; in the export it is the artwork
+        // itself, so it must size to its content instead of to a viewport it no longer has.
+        '.sb-canvas{overflow:visible;flex:none;padding:2px;}',
+        ']]></style>',
+        `<foreignObject x="0" y="0" width="${width}" height="${height}">`,
+        `<div xmlns="http://www.w3.org/1999/xhtml" style="width:${width}px;background:#ffffff;">`,
+        bodyHtml,
+        '</div></foreignObject></svg>',
+      ].join('')
+    }
+
+    /** Hand a Blob to the browser as a download and release the URL afterwards. */
+    function downloadBlob(blob, filename) {
+      const url = URL.createObjectURL(blob)
+      const anchor = document.createElement('a')
+      anchor.href = url
+      anchor.download = filename
+      document.body.appendChild(anchor)
+      anchor.click()
+      anchor.remove()
+      // Revoking in the same tick can cancel the download in some builds; one turn of the loop is
+      // enough for the anchor's click to have been taken.
+      setTimeout(() => URL.revokeObjectURL(url), 0)
+    }
+
+    /** A filename stem from the board title, safe on Windows and POSIX alike. */
+    function exportStem(model) {
+      const title = String(model?.title ?? 'board').trim()
+      const safe = title.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '').replace(/\s+/g, '-').slice(0, 60)
+      return safe === '' ? 'board' : safe
+    }
+
+    /**
+     * Rasterise an SVG source to a PNG blob.
+     *
+     * The canvas is `scale`× the SVG's own size so the result stays crisp on a high-density screen.
+     * Chrome refuses to run script inside an SVG loaded through `<img>`, which is what makes this
+     * safe — the same property is why every external reference had to be inlined first.
+     *
+     * @param svg - standalone SVG source with no external references.
+     * @param scale - device pixels per CSS pixel.
+     * @returns the PNG blob.
+     */
+    async function svgToPng(svg, scale = 2) {
+      const url = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+      const image = new Image()
+      await new Promise((resolve, reject) => {
+        image.onload = () => resolve()
+        image.onerror = () => reject(new Error('the board could not be rasterised'))
+        image.src = url
+      })
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.max(1, Math.round(image.width * scale))
+      canvas.height = Math.max(1, Math.round(image.height * scale))
+      const context = canvas.getContext('2d')
+      if (context === null) throw new Error('this browser cannot make a canvas')
+      context.scale(scale, scale)
+      context.drawImage(image, 0, 0)
+      const blob = await new Promise((resolve) => canvas.toBlob(resolve, 'image/png'))
+      if (blob === null) throw new Error('the PNG encoder returned nothing')
+      return blob
+    }
+
+    /**
+     * Stack several page SVGs into one tall SVG.
+     *
+     * Each page is a complete document, so its body is placed at an offset inside a `<g>` — which
+     * keeps that page's own coordinate system instead of re-laying it out.
+     *
+     * @param pages - one `{ svg, width, height }` per page, in board order.
+     * @returns the combined SVG source.
+     */
+    function stitchPages(pages) {
+      const gap = 24
+      const width = Math.max(EXPORT_MIN_WIDTH, ...pages.map((page) => page.width))
+      const total = pages.reduce((sum, page) => sum + page.height + gap, gap)
+      let offset = gap
+      const inner = pages
+        .map((page) => {
+          const open = page.svg.indexOf('>')
+          const close = page.svg.lastIndexOf('</svg>')
+          const body = page.svg.slice(open + 1, close)
+          const placed = `<g transform="translate(0,${offset})">${body}</g>`
+          offset += page.height + gap
+          return placed
+        })
+        .join('')
+      return `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${total}" viewBox="0 0 ${width} ${total}"><rect width="${width}" height="${total}" fill="#ffffff"/>${inner}</svg>`
     }
 
     // -----------------------------------------------------------------------
@@ -3723,6 +4064,81 @@ window.__ModuleLoader__.load({
       /** Region id to region, for toning a block without a lookup per block. */
       const regions = new Map((model?.regions ?? []).map((region) => [region.id, region]))
 
+      // ---------------------------------------------------------------------
+      // Export state
+      // ---------------------------------------------------------------------
+      /**
+       * `null` when idle, `'md'`/`'png'` while running, or the failure message.
+       *
+       * One piece of state rather than three booleans: two exports cannot run at once, because the
+       * image path steps the page tabs and a second run would step them out from under the first.
+       */
+      const [exportState, setExportState] = React.useState(null)
+      const exporting = exportState === 'md' || exportState === 'png'
+
+      const onExportMarkdown = React.useCallback(() => {
+        if (model === undefined) return
+        setExportState('md')
+        try {
+          const source = exportMarkdown(model)
+          const blob = new Blob([source], { type: 'text/markdown;charset=utf-8' })
+          downloadBlob(blob, `${exportStem(model)}.md`)
+          setExportState(null)
+        } catch (error) {
+          setExportState(`导出失败：${error instanceof Error ? error.message : String(error)}`)
+        }
+      }, [model])
+
+      /**
+       * Export every page as one tall PNG.
+       *
+       * The pages are captured by **stepping the real page tabs**, one at a time, letting React
+       * commit and the browser lay out before measuring. That is why this is `async` and why the
+       * button is disabled while it runs: there is no offscreen tree to render into, and pretending
+       * otherwise would mean a second renderer whose output could disagree with the screen.
+       */
+      const onExportImage = React.useCallback(async () => {
+        if (model === undefined || pages.length === 0) return
+        const container = containerRef.current
+        if (container === null) return
+        const restore = pageId
+        setExportState('png')
+        const shots = []
+        try {
+          for (const page of pages) {
+            setPageId(page.id)
+            // Two turns of the loop: the first lets React commit the page switch, the second lets
+            // the browser finish laying the new page out. A diagram inside it renders on its own
+            // schedule, so the measurement happens after this wait rather than before it.
+            await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
+            const canvas = container.querySelector('.sb-canvas')
+            if (canvas === null) throw new Error('the board is not on screen')
+            // Measured, not assumed: a `foreignObject` may not be larger than the box it was laid
+            // out in, and a board laid out at a new width is a different board.
+            const measuredWidth = Math.max(EXPORT_MIN_WIDTH, canvas.scrollWidth || canvas.clientWidth)
+            const height = Math.max(1, canvas.scrollHeight)
+            const holder = serialiseCanvas(canvas)
+            const { failed } = await inlineImages(holder)
+            if (failed > 0) {
+              // Report rather than quietly export a page with a hole in it.
+              setExportState(`${failed} 张图未能内联，导出的图片里会是空白`)
+            }
+            shots.push({
+              svg: pageToSvg(new XMLSerializer().serializeToString(holder), measuredWidth, height),
+              width: measuredWidth,
+              height,
+            })
+          }
+          const blob = await svgToPng(stitchPages(shots))
+          downloadBlob(blob, `${exportStem(model)}.png`)
+          setExportState(null)
+        } catch (error) {
+          setExportState(`导出失败：${error instanceof Error ? error.message : String(error)}`)
+        } finally {
+          setPageId(restore)
+        }
+      }, [model, pages, pageId])
+
       /**
        * Resolve a block address across the whole board, not just the visible page.
        *
@@ -4017,6 +4433,34 @@ window.__ModuleLoader__.load({
                 },
                 columnOpen ? '收起对话' : '显示对话',
               ),
+              // Export sits beside the column toggle: both act on the board as a whole, and the
+              // header is the only chrome that survives with the column collapsed.
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'sb-button sb-buttonOutline',
+                  disabled: exporting || pages.length === 0,
+                  title: '把整份看板导出为 Markdown',
+                  onClick: onExportMarkdown,
+                },
+                '导出 MD',
+              ),
+              h(
+                'button',
+                {
+                  type: 'button',
+                  className: 'sb-button sb-buttonOutline',
+                  disabled: exporting || pages.length === 0,
+                  title: '把整份看板导出为一张长图（所有页从上到下）',
+                  onClick: () => void onExportImage(),
+                },
+                exportState === 'png' ? '导出中…' : '导出图',
+              ),
+              typeof exportState === 'string' &&
+                exportState !== 'md' &&
+                exportState !== 'png' &&
+                h('span', { className: 'sb-exportNote' }, exportState),
             ),
             pages.length > 1 &&
               h(
@@ -4407,6 +4851,17 @@ window.__ModuleLoader__.load({
       safeHref,
       textFromBlocks,
       dialogueFromChat,
+      // The export helpers. Markdown is DOM-free and gets the same treatment as the rest of the
+      // pure table; the image path's pure parts (serialising a page, stacking pages, the filename
+      // stem) are exported too, while its DOM and canvas calls stay untested by design.
+      exportMarkdown,
+      blockToMarkdown,
+      serialiseCanvas,
+      pageToSvg,
+      stitchPages,
+      exportStem,
+      inlineImages,
+      svgToPng,
       readNumber,
       writeNumber,
       // The components themselves. Exported so a test can actually *render* them with a stubbed

@@ -73,6 +73,11 @@ function harness(doc) {
   registerBoardTools(
     { tools: { register: (definition) => (registered.push(definition), () => {}) } },
     { stateOf: () => doc },
+    undefined,
+    undefined,
+    // A session store with nothing in it: only `board_import` reads it, and this file checks the
+    // four tools that do not.
+    { get: () => undefined },
   )
   return {
     registered,
@@ -117,7 +122,7 @@ test("every board tool satisfies DSH's own schema validators", (t) => {
 
 test('every board tool has the shape ctx.tools.register requires', () => {
   const names = BOARD_TOOLS.map((tool) => tool.name)
-  assert.deepEqual(names, ['board_outline', 'board_read', 'board_apply', 'board_query'])
+  assert.deepEqual(names, ['board_outline', 'board_read', 'board_apply', 'board_query', 'board_import'])
   for (const tool of BOARD_TOOLS) {
     // `output.render` is the only content channel the registry accepts, so it must be on the
     // definition itself rather than installed at registration.
@@ -172,7 +177,7 @@ test('every value the model may pick is named in the description it reads', () =
 
 test('registering the tools installs an execute on each, and returns one disposer per tool', () => {
   const { registered } = harness(emptyBoardDoc('s'))
-  assert.equal(registered.length, 4)
+  assert.equal(registered.length, 5)
   for (const tool of registered) {
     assert.equal(typeof tool.execute, 'function', `${tool.name}.execute after registration`)
   }

@@ -124,7 +124,11 @@ export function apply(ctx) {
     })
 
     ctx.inject(['tools'], (scope) => {
-      registerBoardTools(scope, projections, reports, pdfFacts)
+      // `sessions` is optional: only `board_import` needs it, because it is the only tool that
+      // reads a session other than the calling one. A profile without the session store keeps all
+      // the other board tools and gets a clear refusal from the import.
+      const sessionStore = scope.get?.('sessions')
+      registerBoardTools(scope, projections, reports, pdfFacts, sessionStore)
     })
 
     ctx.inject(['systemPrompt'], (scope) => {

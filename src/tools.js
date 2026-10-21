@@ -22,6 +22,7 @@
  */
 
 import { BoardOpError, applyOps, previewRevision, OP_NAMES } from './fold.js'
+import { importOps, readSourceBoard } from './import.js'
 import { EDGE_RELS, LAYOUT_TEMPLATES, parseRevSeq } from './model.js'
 import { renderTextTable } from './pdf.js'
 import { blockIndex } from './runtime.js'
@@ -1259,6 +1260,126 @@ const queryTool = defineBoardTool({
   render: (_args, value) => textResult(value.text),
 })
 
+const importTool = defineBoardTool({
+  name: 'board_import',
+  description:
+    "Copy another conversation's board into this one. The board is the fold of its own " +
+    'board_apply log, so an import is not a file: it reads the source session\'s board projection ' +
+    'and replays it as an ordinary board_apply batch. Use it when the user says "bring that board ' +
+    'over" or when a new conversation should continue from a board an earlier one built.\n\n' +
+    'Requires the source session id. Only sessions open in this process can be read — an id from a ' +
+    'log nothing has reopened has no fold to read.\n\n' +
+    'Ids are never carried across: an id is a hash of its own session and call, so everything is ' +
+    're-addressed by slug and the fold mints fresh ids. A slug already taken in this board gets a ' +
+    'suffix rather than overwriting, so importing twice is additive and never destructive.\n\n' +
+    'On an empty board the placeholder page `main` is filled by the first imported page instead ' +
+    'of being left behind as an empty tab. Pass expected_revision like every other write.',
+  isConcurrencySafe: () => false,
+  parameters: closedObject(
+    {
+      from: str('The source session id, e.g. the value in that conversation\u2019s URL or header.'),
+      expected_revision: str("This board's rev string, from your most recent board_* result."),
+      reuse_page: str(
+        'Slug of an existing EMPTY page to fill with the first imported page. Defaults to `main` ' +
+          'when the board is untouched, and to nothing (so every page is added fresh) otherwise.',
+      ),
+      note: str('One short line describing this batch. Shown in the transcript, not on the board.'),
+    },
+    ['from', 'expected_revision'],
+  ),
+  outputSchema: closedObject(
+    {
+      ok: bool('Always true on success; failures throw.'),
+      rev: str('The revision this board was at when the import was accepted.'),
+      pending_rev: str('The revision the import will settle at. A preview.'),
+      source_title: str('The title the imported board carried.'),
+      applied: int('How many ops the import expanded to, one per page, block and edge.'),
+      created: arrayOf(
+        'Elements the import created, by the address the fold assigned.',
+        closedObject({ kind: str('page, block, edge, region, or item.'), slug: str('The address actually assigned.') }, [
+          'kind',
+          'slug',
+        ]),
+      ),
+      skipped_edges: int('Edges dropped because an endpoint no longer existed in the source.'),
+      text: str("Human-readable summary, also returned as this tool's content."),
+    },
+    ['ok', 'rev', 'pending_rev', 'source_title', 'applied', 'created', 'skipped_edges', 'text'],
+  ),
+  render: (_args, value) => textResult(value.text),
+})
+
+/**
+ * Run an import.
+ *
+ * The import is expanded into an ordinary op batch and handed to `executeApply`, so there is
+ * **one** write path and one set of invariants — the revision gate, the dry run, the diff and the
+ * preview all apply unchanged. A second path that wrote the board directly would be a second set
+ * of rules, and the two would drift.
+ *
+ * The only thing this function decides is the op batch, plus which empty page (if any) the first
+ * imported page should fill.
+ *
+ * @param deps - `{ sessions, projections }`.
+ * @param doc - this board's document.
+ * @param args - `{ from, expected_revision, reuse_page, note }`.
+ * @returns the outcome, shaped for the tool's output schema.
+ */
+function executeImport(deps, doc, args) {
+  const source = readSourceBoard(deps, args.from)
+  const model = source.model
+
+  // A brand-new board is one empty page called `main`. Filling it means the imported board does
+  // not arrive beside a blank tab; on any board that has content, every page is added fresh.
+  const untouched = doc.model.pages.length === 1 && (doc.model.pages[0].blocks ?? []).length === 0
+  const reused =
+    typeof args.reuse_page === 'string'
+      ? args.reuse_page
+      : untouched
+        ? doc.model.pages[0].slug
+        : undefined
+
+  // Slugs that are already taken would collide, so the import asks the fold for a free address
+  // instead of overwriting. Asking up front keeps the reported ops equal to the applied ones.
+  const taken = new Set()
+  for (const page of doc.model.pages) {
+    taken.add(page.slug)
+    for (const block of page.blocks ?? []) taken.add(block.slug)
+    for (const edge of doc.model.edges ?? []) taken.add(edge.slug)
+  }
+  const slugFor = (slug) => (taken.has(slug) ? `${slug}-imported` : slug)
+  const ops = importOps(model, { slugFor, reusePage: reused })
+
+  const applied = executeApply(doc, {
+    expected_revision: args.expected_revision,
+    ops,
+    note: args.note,
+  })
+
+  const sourceEdgeCount = (model.edges ?? []).length
+  const importedEdgeCount = ops.filter((op) => op.op === 'add_edge').length
+  const skipped = sourceEdgeCount - importedEdgeCount
+  const text = [
+    `Imported 「${source.title === '' ? source.model?.title ?? 'untitled' : source.title}」 from session ${args.from}.`,
+    `${ops.filter((op) => op.op === 'add_page').length} page(s), ${ops.filter((op) => op.op === 'add_block').length} block(s), ${importedEdgeCount} edge(s) → rev ${applied.pending_rev}.`,
+    skipped > 0 ? `${skipped} edge(s) skipped: an endpoint no longer exists in the source.` : '',
+    reused === undefined ? '' : `Filled the empty page 「${reused}」 rather than adding another beside it.`,
+  ]
+    .filter((line) => line !== '')
+    .join('\n')
+
+  return {
+    ok: true,
+    rev: applied.rev,
+    pending_rev: applied.pending_rev,
+    source_title: source.model?.title ?? '',
+    applied: ops.length,
+    created: applied.created,
+    skipped_edges: skipped,
+    text,
+  }
+}
+
 /** Execute one query kind against the model. */
 function runQuery(model, args) {
   const edges = model.edges.map((edge) => describeEdge(model, edge))
@@ -1449,8 +1570,8 @@ function renderQuery(args, hits, rev) {
 // Wiring
 // ---------------------------------------------------------------------------
 
-/** All four board tools, in the order the Agent should learn them. */
-export const BOARD_TOOLS = Object.freeze([outlineTool, readTool, applyTool, queryTool])
+/** All five board tools, in the order the Agent should learn them. */
+export const BOARD_TOOLS = Object.freeze([outlineTool, readTool, applyTool, queryTool, importTool])
 
 /**
  * Register the board tools.
@@ -1465,7 +1586,7 @@ export const BOARD_TOOLS = Object.freeze([outlineTool, readTool, applyTool, quer
  * @param pdfFacts - the host's parse facts, or `undefined`.
  * @returns the disposers, so the caller can own them in its own effect.
  */
-export function registerBoardTools(ctx, projections, reports, pdfFacts) {
+export function registerBoardTools(ctx, projections, reports, pdfFacts, sessions) {
   const read = (exec) => readBoard(projections, exec)
   // Reports are volatile and per-session, so they are resolved at call time rather than held in
   // the projection — see `RenderReports` for why an observation about the DOM cannot live there.
@@ -1538,6 +1659,10 @@ export function registerBoardTools(ctx, projections, reports, pdfFacts) {
     },
   )
   queryTool.execute = (args, exec) => executeQuery(read(exec), args)
+  // The import needs the session store to resolve *another* session, which no other board tool
+  // does — they only ever touch the calling one. `sessions` is captured here rather than read off
+  // `exec`, for the same reason as `projections`: `exec` carries no services.
+  importTool.execute = (args, exec) => executeImport({ sessions, projections }, read(exec), args)
   return BOARD_TOOLS.map((tool) => ctx.tools.register(tool))
 }
 

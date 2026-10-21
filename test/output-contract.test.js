@@ -34,7 +34,7 @@ import assert from 'node:assert/strict'
 import { existsSync } from 'node:fs'
 import { test } from 'node:test'
 
-import { foldBoard } from '../src/fold.js'
+import { applyOps as applyOpsFn, foldBoard } from '../src/fold.js'
 import { emptyBoardDoc } from '../src/model.js'
 import { RenderReports } from '../src/runtime.js'
 import { BOARD_TOOLS, registerBoardTools } from '../src/tools.js'
@@ -90,12 +90,14 @@ function richDoc() {
 }
 
 /** Register the tools against a fake registry and return a caller bound to one board. */
-function harness(doc, reports) {
+function harness(doc, reports, sessions) {
   const registered = []
   registerBoardTools(
     { tools: { register: (definition) => (registered.push(definition), () => {}) } },
     { stateOf: () => doc },
     reports,
+    undefined,
+    sessions,
   )
   return {
     registered,
@@ -125,8 +127,8 @@ function harness(doc, reports) {
  * @param reports - live render reports, when the test is about those.
  * @returns the validated value and the rendered content.
  */
-function drive(name, args, doc, reports) {
-  const h = harness(doc, reports)
+function drive(name, args, doc, reports, sessions) {
+  const h = harness(doc, reports, sessions)
   const tool = h.tool(name)
   const value = h.call(name, args)
 
@@ -326,10 +328,75 @@ test('every tool declares the field its render reads', () => {
 test('the whole tool set is covered by this file', () => {
   // A guard against the failure mode this file was written for: a new tool added without its
   // output contract being driven end to end.
-  const driven = new Set(['board_outline', 'board_read', 'board_apply', 'board_query'])
+  const driven = new Set(['board_outline', 'board_read', 'board_apply', 'board_query', 'board_import'])
   for (const tool of BOARD_TOOLS) {
     assert.ok(driven.has(tool.name), `${tool.name} has no output-contract coverage — add it here`)
   }
+})
+
+test('board_import carries another session\u2019s board and satisfies its own output schema', () => {
+  // A source board with one nested group, so the import is not a flat copy. Built by folding, so
+  // it is a real board rather than a hand-written lookalike. `stateOf` returns the *document*
+  // (model plus diagnostics), which is why it is wrapped rather than used bare.
+  const sourceModel = applyOpsFn(emptyBoardDoc('sess-source').model, [
+    { op: 'add_page', page: 'from-graph' },
+    { op: 'add_block', page: 'from-graph', kind: 'prose', slug: 'inner-note', markdown: '被导入的正文' },
+    { op: 'add_block', page: 'from-graph', kind: 'group', slug: 'wrapper', title: '外壳', children: ['inner-note'] },
+  ], { sessionId: 'sess-source', callSeq: 1, strict: false })
+  const sourceDoc = { model: sourceModel, diag: {} }
+  const sessions = {
+    get: (id) => (id === 'sess-source' ? { id } : undefined),
+  }
+  const doc = emptyBoardDoc('sess-target')
+  // The projection returns the *source* board for the source session, and the target board for
+  // the calling one — exactly what the real registry does.
+  const projections = {
+    stateOf: (session) => (session.id === 'sess-source' ? sourceDoc : doc),
+  }
+  const registered = []
+  registerBoardTools(
+    { tools: { register: (definition) => (registered.push(definition), () => {}) } },
+    projections,
+    undefined,
+    undefined,
+    sessions,
+  )
+  const tool = registered.find((each) => each.name === 'board_import')
+  const value = tool.execute(
+    { from: 'sess-source', expected_revision: doc.model.rev },
+    { agent: { session: { id: 'sess-target' } }, callId: 'test', name: 'board_import', arguments: {} },
+  )
+
+  if (dsh !== undefined) {
+    assert.deepEqual(
+      dsh.validateJsonSchemaValue(tool.output.schema, value, 'value'),
+      [],
+      'board_import would fail with ToolOutputError',
+    )
+  }
+  assert.equal(value.ok, true)
+  assert.equal(value.source_title, 'Board')
+  assert.ok(value.applied > 0, 'the import expands to a real batch')
+  assert.ok(
+    value.created.some((entry) => entry.slug === 'wrapper'),
+    'the group is reported by its address',
+  )
+  assert.equal(value.skipped_edges, 0)
+  assert.match(value.text, /Imported/)
+  const content = tool.output.render({}, value)
+  assert.equal(content.length, 1)
+})
+
+test('board_import refuses an unknown source session without touching the board', () => {
+  const doc = emptyBoardDoc('sess-target')
+  const h = harness(doc, undefined, { get: () => undefined })
+  assert.throws(
+    () => h.call('board_import', { from: 'nowhere', expected_revision: doc.model.rev }),
+    (error) => {
+      assert.match(error.message, /not open in this process/)
+      return true
+    },
+  )
 })
 
 // ---------------------------------------------------------------------------

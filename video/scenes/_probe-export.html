@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <title>probe · 导出真的能出图吗</title>
+    <style>
+      html, body { margin: 0; background: #11111b; }
+      #mount { position: absolute; inset: 0; }
+    </style>
+  </head>
+  <body data-ds-dark-theme="true">
+    <div id="mount"></div>
+
+    <script src="/vendor/react.production.min.js"></script>
+    <script src="/vendor/react-dom.production.min.js"></script>
+    <script>window.__ModuleLoader__ = { load: (definition) => { window.__sbDef = definition } }</script>
+    <script src="/repo/src/client.js"></script>
+    <script src="/scenes/harness.js"></script>
+    <script>
+      // The image export is the one part that cannot be proved by a pure test: whether a
+      // `foreignObject` rasterises at all is a browser fact, not a JavaScript one. Chrome refuses
+      // to draw an SVG-as-image that references anything external, and it refuses silently — an
+      // unsupported foreignObject yields a blank canvas and a successful `toBlob`.
+      //
+      // So this page measures pixels, not code paths:
+      //   1. mount the real board,
+      //   2. run the same serialise → SVG → PNG path the button runs,
+      //   3. decode the PNG and count non-white pixels.
+      // A blank export would be 0. A real one is thousands.
+
+      const REV = 'r0-000000000000'
+      const base = { alias: [], createdAtRev: REV }
+
+      window.__probe = {}
+
+      ;(async () => {
+        // The real harness mounts the *shipped* client against the shipped demo board — the same
+        // path every film frame takes. Using the demo wire rather than a hand-made one keeps this
+        // probe honest: it exercises exactly the board the product renders.
+        await window.SuperboardHarness.startBoard({ sessionId: 'probe', flavour: 'latte' })
+
+        const mod = window.__sbDef.factory((name) => (name === 'react' ? window.React : undefined))
+        const canvas = document.querySelector('#mount .sb-canvas')
+        if (canvas === null) throw new Error('no canvas')
+
+        // The pure half, exactly as the button calls it.
+        const holder = mod.serialiseCanvas(canvas)
+        const inlined = await mod.inlineImages(holder)
+        const width = Math.max(720, canvas.scrollWidth || canvas.clientWidth)
+        const height = Math.max(1, canvas.scrollHeight)
+        const svg = mod.pageToSvg(new XMLSerializer().serializeToString(holder), width, height)
+
+        window.__probe.svgLength = svg.length
+        window.__probe.inlined = inlined
+        window.__probe.pageWidth = width
+        window.__probe.pageHeight = height
+
+        const stitched = mod.stitchPages([{ svg, width, height }])
+        window.__probe.stitchedLength = stitched.length
+
+        // The rasterising half. This is the part that either works in this browser or does not.
+        const blob = await mod.svgToPng(stitched, 2)
+        window.__probe.pngBytes = blob.size
+
+        // Decode and count. `drawImage` on a 2× canvas is where a blank export would show up as
+        // "the blob is fine but every pixel is white".
+        const bitmap = await createImageBitmap(blob)
+        window.__probe.pngWidth = bitmap.width
+        window.__probe.pngHeight = bitmap.height
+        const probe = document.createElement('canvas')
+        probe.width = Math.min(bitmap.width, 800)
+        probe.height = Math.min(bitmap.height, 1200)
+        const ctx = probe.getContext('2d')
+        ctx.drawImage(bitmap, 0, 0, probe.width, probe.height, 0, 0, probe.width, probe.height)
+        const { data } = ctx.getImageData(0, 0, probe.width, probe.height)
+        let dark = 0
+        for (let i = 0; i < data.length; i += 4) {
+          // Anything meaningfully darker than paper counts as ink.
+          if (data[i] < 240 || data[i + 1] < 240 || data[i + 2] < 240) dark += 1
+        }
+        window.__probe.inkPixels = dark
+        window.__probe.probeWidth = probe.width
+        window.__probe.probeHeight = probe.height
+        window.__probe.inkRatio = dark / (probe.width * probe.height)
+
+        // And the Markdown export, which should mention every block it was given.
+        const wire = await (await fetch(window.SuperboardHarness.DATA.board)).json()
+        window.__probe.markdown = mod.exportMarkdown(wire.model)
+
+        // The bytes themselves, so the picture can be looked at rather than inferred from a
+        // pixel count. "Not blank" is a weak claim; "you can read it" is the one that matters.
+        //
+        // Displayed as an `<img>` rather than shipped out as a data URL: a ~1 MB string through
+        // the debugger protocol is the same picture with more ways to fail, and a screenshot of
+        // the image element is exactly the file a user would get.
+        const url = URL.createObjectURL(blob)
+        document.body.replaceChildren()
+        document.body.style.background = '#ffffff'
+        const shown = document.createElement('img')
+        shown.src = url
+        shown.style.display = 'block'
+        shown.style.maxWidth = '100%'
+        document.body.appendChild(shown)
+        await new Promise((resolve) => {
+          shown.onload = resolve
+          shown.onerror = resolve
+        })
+        window.__probe.shown = true
+        window.__probe.ready = true
+      })().catch((error) => {
+        window.__probe.error = error instanceof Error ? `${error.message}\n${error.stack ?? ''}` : String(error)
+        window.__probe.ready = true
+      })
+    </script>
+  </body>
+</html>
