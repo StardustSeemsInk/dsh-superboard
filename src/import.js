@@ -78,6 +78,17 @@ export function importOps(model, opts = {}) {
   if (model === null || typeof model !== 'object') throw new BoardOpError('nothing to import')
   const pages = Array.isArray(model.pages) ? model.pages : []
   if (pages.length === 0) throw new BoardOpError('the source board has no pages')
+  // A board with pages but nothing on them is the state a session is in before it has written
+  // anything at all. Importing it would report success and change the target's page slugs for no
+  // benefit, so it is refused here — "that conversation never built a board" is the answer the
+  // caller needs, and an empty batch would hide it.
+  const hasContent = pages.some((page) => (page.blocks ?? []).length > 0) || (model.edges ?? []).length > 0
+  if (!hasContent) {
+    throw new BoardOpError(
+      'the source board is empty: that conversation has pages but nothing on them, so there is ' +
+        'nothing to import. Import is for a board that was actually built.',
+    )
+  }
   const slugFor = typeof opts.slugFor === 'function' ? opts.slugFor : (slug) => slug
   const reusePage = typeof opts.reusePage === 'string' ? opts.reusePage : undefined
   const ops = []
@@ -148,6 +159,17 @@ export function importOps(model, opts = {}) {
       if (edge[field] !== undefined) args[field] = edge[field]
     }
     ops.push({ op: 'add_edge', ...args })
+  }
+
+  // The guard at the top counts what the source *holds*; this counts what the target would
+  // actually *receive*. They differ when a board has edges and nothing for them to attach to: the
+  // endpoints never resolve, every edge is skipped, and the batch is `add_page` alone. That is not
+  // an import — it is a page rename dressed up as one — so it is refused too.
+  if (!ops.some((op) => op.op === 'add_block' || op.op === 'add_edge')) {
+    throw new BoardOpError(
+      'the source board has edges but no blocks for them to attach to, so importing it would ' +
+        'create nothing. Import is for a board that was actually built.',
+    )
   }
 
   return ops

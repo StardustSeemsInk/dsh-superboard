@@ -399,6 +399,47 @@ test('board_import refuses an unknown source session without touching the board'
   )
 })
 
+test('a session store that loads after registration is still found', () => {
+  // Services a plugin does not `inject` may finish loading after the tools register. Capturing the
+  // store once at registration would freeze `undefined` and the import would refuse a session that
+  // is right there — so it is resolved per call. The registry below starts empty and gains its
+  // service afterwards, which is the only way to catch that regression.
+  const doc = emptyBoardDoc('sess-target')
+  const tools = {}
+  let sessions
+  const sourceDoc = {
+    model: applyOpsFn(emptyBoardDoc('sess-source').model, [
+      { op: 'add_block', page: 'main', kind: 'prose', slug: 'note', markdown: '晚到的服务也读得到' },
+    ], { sessionId: 'sess-source', callSeq: 1, strict: false }),
+    diag: {},
+  }
+  registerBoardTools(
+    { tools: { register: (definition) => (tools[definition.name] = definition, () => {}) } },
+    { stateOf: (session) => (session.id === 'sess-source' ? sourceDoc : doc) },
+    undefined,
+    undefined,
+    // A getter, because that is how `index.js` passes it: the value must be read per call.
+    () => sessions,
+  )
+  // Nothing registered yet: the call must say so, not throw a TypeError on `undefined.get`.
+  assert.throws(
+    () => tools.board_import.execute({ from: 'sess-source', expected_revision: doc.model.rev }, { agent: { session: { id: 'sess-target' } } }),
+    (error) => {
+      assert.match(error.message, /needs both the session store and the projection registry/)
+      return true
+    },
+  )
+  // Now it appears. The same tool instance must import for real — which is the only proof that the
+  // late-arriving store was used rather than a frozen `undefined`.
+  sessions = { get: (id) => (id === 'sess-source' ? { id } : undefined) }
+  const value = tools.board_import.execute(
+    { from: 'sess-source', expected_revision: doc.model.rev },
+    { agent: { session: { id: 'sess-target' } }, callId: 'x', name: 'board_import', arguments: {} },
+  )
+  assert.equal(value.ok, true)
+  assert.ok(value.created.some((entry) => entry.slug === 'note'), 'the late-loaded store was actually used')
+})
+
 // ---------------------------------------------------------------------------
 // Diagrams: a broken one has to be visible without the Agent asking
 // ---------------------------------------------------------------------------

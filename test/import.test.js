@@ -224,6 +224,27 @@ test('an edge is skipped when either end is missing from the source', () => {
 test('importing nothing is refused with a message that says so', () => {
   assert.throws(() => importOps(null), BoardOpError)
   assert.throws(() => importOps({ pages: [] }), BoardOpError)
+  // A board that exists but was never written to. Every fresh session has one, so without this the
+  // most likely import of all — pointing `from` at a conversation that only talked — would report
+  // success, rename the target's page slugs, and hand back an empty board with `ok: true`.
+  assert.throws(
+    () => importOps({ pages: [{ id: 'pg_1', slug: 'main', blocks: [] }], edges: [] }),
+    (error) => {
+      assert.ok(error instanceof BoardOpError)
+      assert.match(error.message, /the source board is empty/)
+      return true
+    },
+  )
+  // An empty page plus a resolvable edge would be content; but an edge whose endpoints are not
+  // blocks in the page resolves to nothing and is skipped, so the batch would be a bare `add_page`
+  // — a page rename dressed up as an import. Both shapes are refused.
+  assert.throws(
+    () => importOps({ pages: [{ id: 'pg_1', slug: 'main', blocks: [] }], edges: [{ from: 'a', to: 'b' }] }),
+    (error) => {
+      assert.match(error.message, /edges but no blocks/)
+      return true
+    },
+  )
 })
 
 test('reading a source board refuses an unknown session rather than returning an empty board', () => {

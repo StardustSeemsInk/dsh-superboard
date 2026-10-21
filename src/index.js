@@ -6,7 +6,7 @@
  *   1. **Own the board's authority.** The board is the fold of this session's own successful
  *      `board_apply` calls — a projection over committed events, so replay, resume, and fork
  *      come for free and no custom event type is needed. See `src/fold.js`.
- *   2. **Give the Agent hands.** Four tools, with `board_apply` as the only write path.
+ *   2. **Give the Agent hands.** Five tools, with `board_apply` as the only write path.
  *   3. **Tell the Agent where things are.** A small standing outline rides every request,
  *      because the Agent cannot see the canvas. Detail is pulled on demand with `board_read`.
  *
@@ -127,8 +127,12 @@ export function apply(ctx) {
       // `sessions` is optional: only `board_import` needs it, because it is the only tool that
       // reads a session other than the calling one. A profile without the session store keeps all
       // the other board tools and gets a clear refusal from the import.
-      const sessionStore = scope.get?.('sessions')
-      registerBoardTools(scope, projections, reports, pdfFacts, sessionStore)
+      //
+      // Resolved **at call time**, not here. A service this plugin does not inject may load after
+      // this registration runs, and capturing `undefined` once would then be permanent — the tool
+      // would refuse a session that is right there. `ctx.get('name')` in production resolves the
+      // same service lazily (`dsh-agent-preset-registry/lib/types/invariant.js:36`).
+      registerBoardTools(scope, projections, reports, pdfFacts, () => scope.get?.('sessions'))
     })
 
     ctx.inject(['systemPrompt'], (scope) => {

@@ -37,7 +37,7 @@ console.log('投影:', p, '工具:', t)
 "
 ```
 
-应输出两个投影（`board`、`boardActivity`）与四个工具。**注意**：只看导出列表是不够的——M0 脚手架导出的 `PLUGIN_NAME` 和 `apply` 与 v1 完全一样，所以那种检查曾经给过假的安心。要证明注册发生了，就得真的调一次 `apply`。
+应输出两个投影（`board`、`boardActivity`）与五个工具。**注意**：只看导出列表是不够的——M0 脚手架导出的 `PLUGIN_NAME` 和 `apply` 与 v1 完全一样，所以那种检查曾经给过假的安心。要证明注册发生了，就得真的调一次 `apply`。
 
 卸载：从 profile 的 `dsh.profile.bundles` 与 `dependencies` 里移除 `dsh-superboard` 那一行，重跑一次 `pnpm install`。
 
@@ -59,7 +59,7 @@ console.log('投影:', p, '工具:', t)
 
 1. `node --test --test-isolation=none test/compatibility.test.js` —— 先看清单还认不认新运行时。
 2. 对照新版出厂预设，看三个自定义预设有没有漂移（见 [`test/preset.test.js`](test/preset.test.js)：`SHARED_PLUGIN_IDS` 就是那份「必须重述的行」清单）。
-3. 重启 DSH，确认看板标签、四个工具、三个预设都在。
+3. 重启 DSH，确认看板标签、五个工具、三个预设都在。
 
 **预设也要跟着版本走。** 预设是**重述**而不是继承，所以新版出厂预设加行、删行、改文案时，我们那三份会静默落后：0.2.1 新增了 `time-context` / `tool-schedule` / `tool-plugin-market`，删掉了 codex / claude-code 两个 provider 与 `tool-ralph` 行，并把 `tool-subagent` 的 `backgroundMode` 配置键整个拿掉（schemastery 忽略未知键，所以留着不炸、只是死字段）。另外 **`{{cwd}}` 这个 persona 变量在 0.2.1 被移除**：`dsh-system-prompt` 只在模板里替换已注册的变量，未解析的引用会让**该预设的每一次请求**在组装提示词时失败——不是降级，是整个预设不可用。
 
@@ -89,7 +89,7 @@ src/model.js        场景模型：schema、块/箭头/region 词汇表、areas 
 src/fold.js         日志原生折叠：模型是 board_apply 调用序列的折叠结果
 src/schema.js       文档 schema 与 wire schema（投影到浏览器的形状）
 src/schema-dsl.js   手写的 JSON Schema 编译器（原因见下）
-src/tools.js        四个工具的定义与渲染
+src/tools.js        五个工具的定义与渲染
 src/activity.js     活动流投影
 src/uml.js          从 mermaid 源码里读出节点表（块内锚点用）
 src/diagnose.js     宿主侧的 mermaid 廉价校验（折叠时同步跑）
@@ -111,7 +111,7 @@ vendor/             随包发布的第三方运行时：mermaid、pdf.js、React
 
 ## Agent 怎么学到看板怎么排版：`board-layout` 技能
 
-四个工具描述**就是** Agent 免费拿到的全部文档面，而它们要**每个请求**都发一遍。所以那里只放
+五个工具描述**就是** Agent 免费拿到的全部文档面，而它们要**每个请求**都发一遍。所以那里只放
 「调用之前必须知道的事」，放不下「写完之后会长成什么样」。而后者恰恰是问题所在：一个 Agent
 可以完全按 schema 写出一块合法看板，却因为**看不到画布**而排得很难看——标题和它的列表变成两张
 互不相干的卡、短卡旁边留着大片空白、靠「相邻」表达归属而一换窗口就散架。
@@ -172,7 +172,7 @@ provider，不 `import` 官方包），所以目录里只多一行 `name: descri
 | --- | --- | --- |
 | [`docs/design/design-tree.md`](docs/design/design-tree.md) | 设计访谈的四轮问题与 15 条决定，含被否决的选项和原因 | 活文档（头部日期与第 13 条已过时） |
 | [`docs/design/board-model.md`](docs/design/board-model.md) | 模型契约：块、容器、箭头锚点、region、折叠与 revision 语义（§0–§2 + 速查） | **活文档**，跟得上代码；但只管模型——工具面在下一行，排版/预算/风险在再下一行 |
-| [`docs/design/board-tools.md`](docs/design/board-tools.md) | Agent 工具面：四个工具的精确契约、返回文本与防笔误设计 | **活文档**（原 board-model.md §3，2026-10-05 拆出；§3.2.5 是保留的错误记录） |
+| [`docs/design/board-tools.md`](docs/design/board-tools.md) | Agent 工具面：五个工具的精确契约、返回文本与防笔误设计 | **活文档**（原 board-model.md §3，2026-10-05 拆出；§3.2.5 是保留的错误记录） |
 | [`docs/design/board-design-notes.md`](docs/design/board-design-notes.md) | 设计与论证：排版模板、上下文预算、客户端与镜像、决策对应表、风险台账 | **活文档**（原 §4–§8；§4.5 记模板表与实现的偏差，§8 每条都标了结局） |
 | [`docs/design/board-bugs.md`](docs/design/board-bugs.md) | 缺陷档案 I7–I9：同页 `move_block` 复制块（数据损坏）、`created[].id` 不可用、缺唯一性不变量 | **已结案**（`f6f93b6` 修复）。成因与最小复现原样保留——它既是修复的说明书，也是「契约与实现漂移」的一手样本 |
 | [`docs/design/build-plan.md`](docs/design/build-plan.md) | 里程碑划分与各自的验收标准 | **历史**：停在 M5 / 82 个测试，之后的 UML、PDF、图片、文字选择、masonry 都没进去 |

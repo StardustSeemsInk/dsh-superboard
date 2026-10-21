@@ -1,10 +1,14 @@
 /**
  * The Agent's tool surface.
  *
- * Four tools, deliberately. Every tool costs prompt budget, and a model picks correctly from
- * four far more reliably than from twelve. Page and block creation are *ops* of
+ * Five tools, deliberately. Every tool costs prompt budget, and a model picks correctly from
+ * five far more reliably than from twelve. Page and block creation are *ops* of
  * `board_apply`, not tools of their own, so "make a page, put three blocks on it, connect two
  * arrows" is one transaction, one revision, and one round trip.
+ *
+ * `board_import` is the fifth and the only one that reads a session other than the calling one;
+ * it earns its place because "bring that board over" is a request the other four cannot express
+ * at all. It reuses `board_apply`'s commit path rather than adding a second write route.
  *
  * The design goal behind the shapes here is **error prevention**, not just capability:
  *
@@ -1660,9 +1664,11 @@ export function registerBoardTools(ctx, projections, reports, pdfFacts, sessions
   )
   queryTool.execute = (args, exec) => executeQuery(read(exec), args)
   // The import needs the session store to resolve *another* session, which no other board tool
-  // does — they only ever touch the calling one. `sessions` is captured here rather than read off
-  // `exec`, for the same reason as `projections`: `exec` carries no services.
-  importTool.execute = (args, exec) => executeImport({ sessions, projections }, read(exec), args)
+  // does — they only ever touch the calling one. `sessions` arrives as a **getter** rather than a
+  // value: a service this plugin does not inject may finish loading after this registration runs,
+  // and capturing `undefined` once would be permanent.
+  const sessionStore = typeof sessions === 'function' ? sessions : () => sessions
+  importTool.execute = (args, exec) => executeImport({ sessions: sessionStore(), projections }, read(exec), args)
   return BOARD_TOOLS.map((tool) => ctx.tools.register(tool))
 }
 
