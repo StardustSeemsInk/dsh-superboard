@@ -154,6 +154,24 @@ function insertedRows(doc) {
   return rows
 }
 
+/**
+ * The `board-guidance` section text of one preset row.
+ *
+ * Module-level rather than a closure inside one test, because several tests read it and a second
+ * copy of this path would silently point at a different row the day the plugin id changes.
+ *
+ * @param doc - the parsed patch document.
+ * @param rowId - e.g. `preset-teacher`.
+ * @returns {string} the section text.
+ */
+function guidanceOf(doc, rowId) {
+  const row = insertedRows(doc).find((candidate) => candidate.id === rowId)
+  assert.ok(row, `${rowId} is not in the patch`)
+  const plugin = row.config.plugins.find((entry) => entry.id === 'board-guidance')
+  assert.ok(plugin, `${rowId} has no board-guidance row`)
+  return plugin.config.section
+}
+
 test('the patch mounts the board itself, once', async () => {
   if (!haveDsh) return
   const { doc } = await loadPatch()
@@ -544,8 +562,9 @@ test('the engineer and researcher look for stale board content before replying',
       .find((row) => row.id === rowId)
       .config.plugins.find((plugin) => plugin.id === 'board-guidance').config.section
   // The user asked for this on exactly these two roles. The teacher was deliberately left out: its
-  // lesson is delivered live and its board is not a standing claim about the world, and the user
-  // wants to revisit it only once the TTS module lands.
+  // lesson is delivered live and its board is not a standing claim about the world. The condition
+  // this once carried — "revisit it once the TTS module lands" — is gone: TTS streaming was shelved
+  // (2026-11-07) and removed from the main line, so waiting on it would be waiting forever.
   for (const rowId of ['preset-engineer', 'preset-researcher']) {
     const section = sectionOf(rowId)
     assert.match(section, /board_outline/, `${rowId} needs the outline as the first step of the check`)
@@ -575,4 +594,72 @@ test('the engineer and researcher look for stale board content before replying',
     !/re-read the whole board/i.test(sectionOf('preset-teacher')),
     'the teacher was left out of the stale-board check until its teaching design is revisited',
   )
+})
+
+test('the teacher guidance tells the two write-up forms apart', async () => {
+  if (!haveDsh) return
+  // The same distinction the skill makes, kept in the preset because a session may follow either one
+  // into the other and the preset text is what rides every request. Twenty-three worked solutions
+  // were rewritten in one round for want of this paragraph.
+  const section = guidanceOf((await loadPatch()).doc, 'preset-teacher')
+  assert.match(section, /What the write-up is for decides its shape/)
+  assert.match(section, /explain this to me/)
+  assert.match(section, /show me how to solve this/)
+  // The mechanical check, which is what makes it more than advice.
+  assert.match(section, /substituting\s+gives/)
+})
+
+test('the teacher guidance requires step-aligned bilingual output', async () => {
+  if (!haveDsh) return
+  const section = guidanceOf((await loadPatch()).doc, 'preset-teacher')
+  assert.match(section, /Bilingual means step-aligned/)
+  assert.match(section, /same numbered steps/)
+  // And the trap: an English summary paragraph ticks a box without serving the reader.
+  assert.match(section, /English of the answer, not of the process/)
+})
+
+test('the teacher guidance keeps the two shapes apart instead of unifying them', async () => {
+  if (!haveDsh) return
+  // The nearly-made mistake: reading the derivation rule as "convert everything". The rule has to
+  // carry its own boundary, or the next reader of it will over-apply it.
+  const section = guidanceOf((await loadPatch()).doc, 'preset-teacher')
+  assert.match(section, /two shapes on purpose/)
+  assert.match(section, /Do not unify them/)
+})
+
+test('the teacher guidance puts scope, page numbers and text-layer damage before teaching', async () => {
+  if (!haveDsh) return
+  const section = guidanceOf((await loadPatch()).doc, 'preset-teacher')
+  assert.match(section, /Before the first block/)
+  assert.match(section, /48 of 110 exam points/)
+  // The corruption is in the PDF's own text layer, not OCR — the distinction that decides whether
+  // "use a better extractor" is even a possible answer.
+  assert.match(section, /own text layer/)
+})
+
+test('the teacher guidance makes checkability the trigger for checking a claim', async () => {
+  if (!haveDsh) return
+  // Every real error in one round was an unchecked assertion, not a slip. "Verify things" is advice
+  // nobody can act on; "does a script or a hand calculation have an answer for this" is a decision.
+  const section = guidanceOf((await loadPatch()).doc, 'preset-teacher')
+  assert.match(section, /Decide whether a claim is checkable before you assert it/)
+  assert.match(section, /a claim written down without being computed/)
+  // Attribution with no source, which was a real failure mode on both sides of a delegation.
+  assert.match(section, /Never write an attribution you cannot produce/)
+})
+
+test('the teacher guidance pauses for a check question per block, not per unit', async () => {
+  if (!haveDsh) return
+  // "One question per block" was read as "one per unit" and looked like compliance while testing
+  // almost nothing. The negative case has to be spelled out, because the wrong reading is the
+  // convenient one.
+  const section = guidanceOf((await loadPatch()).doc, 'preset-teacher')
+  assert.match(section, /not once per unit/)
+})
+
+test('the teacher guidance requires the original question text in an exercise write-up', async () => {
+  if (!haveDsh) return
+  const section = guidanceOf((await loadPatch()).doc, 'preset-teacher')
+  assert.match(section, /verbatim original question/)
+  assert.match(section, /will be sent back/)
 })

@@ -200,6 +200,104 @@ test('the skill says `areas` works on a group, not only on a page', async () => 
   assert.match(skill.content, /`areas` works on a `group` just as it does on a page/)
 })
 
+test('the teaching skill tells the two write-up forms apart, and says which request maps to which', async () => {
+  const { skill } = await load('teaching-on-the-board')
+  // The expensive failure: answering "show me how to solve this" with the form that explains why
+  // the answer is correct. Twenty-three worked solutions were rewritten for it. The skill has to
+  // name both requests and both forms, because either alone reads as "there is one best shape".
+  assert.match(skill.content, /explain this to me/)
+  assert.match(skill.content, /show me how to solve this/)
+  assert.match(skill.content, /reproduce/i)
+  // And the mechanical check, which is what makes it enforceable rather than aspirational.
+  assert.match(skill.content, /substituting gives/)
+})
+
+test('the teaching skill says bilingual means step-aligned, not a summary paragraph', async () => {
+  const { skill } = await load('teaching-on-the-board')
+  // An `English model answer` paragraph ticks a checklist box while missing the point: the reader
+  // copies the English step for step in the exam hall, and cannot do that with prose.
+  assert.match(skill.content, /step-aligned/)
+  assert.match(skill.content, /same numbered steps/)
+  // The distinction that produced the rule.
+  assert.match(skill.content, /English of the \*\*answer\*\*, not of the \*\*process\*\*/)
+})
+
+test('the teaching skill requires the retrieval block and bounds it', async () => {
+  const { skill } = await load('teaching-on-the-board')
+  // It is not a definition and not a warning: it maps a word in the question to a tool. Without a
+  // bound it grows into background, which is the whole reason it needs stating.
+  assert.match(skill.content, /怎么下手/)
+  assert.match(skill.content, /cannot be absorbed into the derivation/)
+})
+
+test('the teaching skill keeps guard rails out of worked solutions', async () => {
+  const { skill } = await load('teaching-on-the-board')
+  assert.match(skill.content, /Guard rails belong where the reader already has a path/)
+  // The reason is about the reader's state, not about the quality of the traps: before the route
+  // exists, a list of ways to fail raises anxiety instead of lowering it.
+  assert.match(skill.content, /do not require them in worked solutions/)
+})
+
+test('the teaching skill says one document may hold two shapes on purpose', async () => {
+  const { skill } = await load('teaching-on-the-board')
+  // The trap this prevents: reading the derivation rule as "convert everything", which turns a
+  // concept chapter into a procedure chapter nobody asked for. It nearly happened.
+  assert.match(skill.content, /two shapes, on purpose/i)
+  assert.match(skill.content, /Do not "unify" the body/)
+})
+
+test('the teaching skill puts scope, page numbers and text-layer damage before teaching', async () => {
+  const { skill } = await load('teaching-on-the-board')
+  // These are not teaching, and they decide whether the teaching is about the right material.
+  assert.match(skill.content, /48 of 110 exam points/)
+  assert.match(skill.content, /Slide 7–82/)
+  // The corruption table's whole point: the damage is in the PDF's own text layer, not in OCR.
+  assert.match(skill.content, /own text layer/)
+  assert.match(skill.content, /`>` → `7`/)
+})
+
+test('the teaching skill makes "is this checkable" the trigger for checking a claim', async () => {
+  const { skill } = await load('teaching-on-the-board')
+  // Every real error in one round was an unchecked claim, not an arithmetic slip. The rule has to
+  // give a decision procedure, because "verify things" is advice nobody can act on.
+  assert.match(skill.content, /does the sentence have an answer a script/i)
+  assert.match(skill.content, /N ≤ 2\^\(k−1\)/)
+})
+
+test('the teaching skill keeps a check question at its block, not at the end of the unit', async () => {
+  const { skill } = await load('teaching-on-the-board')
+  // "One question per concept" read as "one per unit" looks like compliance and tests almost
+  // nothing. Doing it that way once was survivable only because the units were short.
+  assert.match(skill.content, /Pause every two or three concept blocks, not once per unit/)
+  assert.match(skill.content, /Never put the solution's skeleton in the question/)
+})
+
+test('the teaching skill forbids an attribution nobody can produce', async () => {
+  const { skill } = await load('teaching-on-the-board')
+  assert.match(skill.content, /Never write an attribution you cannot produce/)
+  assert.match(skill.content, /this is my inference/)
+})
+
+test('the teaching skill requires the original question text in an exercise write-up', async () => {
+  const { skill } = await load('teaching-on-the-board')
+  // A solution without the verbatim question was sent back twice in one round.
+  assert.match(skill.content, /verbatim original question/)
+  assert.match(skill.content, /Put the original text in from the first version/)
+})
+
+test('the teaching skill warns that a blank area may be the renderer', async () => {
+  const { skill } = await load('teaching-on-the-board')
+  assert.match(skill.content, /A blank area may be a rendering failure/)
+  assert.match(skill.content, /suspect the renderer before suspecting the content/)
+})
+
+test('the teaching skill budgets the smallest repeatable unit, not the file', async () => {
+  const { skill } = await load('teaching-on-the-board')
+  // A range the exemplar itself violates is a trap that makes every writer look non-compliant.
+  assert.match(skill.content, /Budget the smallest repeatable unit/)
+  assert.match(skill.content, /Freeze the shape on one example before delegating/)
+})
+
 // ---------------------------------------------------------------------------
 // The plugin surface
 // ---------------------------------------------------------------------------

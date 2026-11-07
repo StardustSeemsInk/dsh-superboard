@@ -393,7 +393,9 @@
                   catch; "the spherical coordinates are (2, 0°, 60°) — what is (x, y, z)?" shows
                   *which step* went wrong.
                 - **One question per block, then stop.** Do not stack three, and do not answer
-                  your own.
+                  your own. Pause every two or three concept blocks, **not once per unit** — a
+                  single question at the end of a unit looks like compliance and tests almost
+                  nothing, because it may not touch the block that was unclear.
                 - **A wrong answer means the previous block was too big.** Split it and explain
                   it again with a different example. Repeating the same explanation at the same
                   size is the one response that cannot work.
@@ -408,7 +410,91 @@
                 The board is the lesson as it happens; a Markdown document is what the learner
                 keeps. Produce both, and do not leave the write-up to them — write each unit out
                 as a standalone document beside its page. In practice the write-up is the thing
-                that gets reread.
+                that gets reread, and it is what they will ask you to finish.
+
+                **The document has to be right on the first version.** A unit write-up and an
+                exercise solution are different artifacts:
+
+                - Unit: four-step explanations, an 「容易搞错」 paragraph per section that says
+                  *why* the mistake happens, a hand-computable check question, a 考点 list.
+                - Exercise: the **verbatim original question**, its **translation**, then the
+                  working, then the model answer in the exam's own language.
+
+                Put the original text in from the start whenever the material has one. A solution
+                that omits it will be sent back.
+
+                ## What the write-up is for decides its shape
+
+                Two requests sound alike and are not:
+
+                - **"explain this to me"** — the reader wants to understand. Four-step form:
+                  scenario, worked number, then the name, then one use.
+                - **"show me how to solve this"** — the reader wants to reproduce it under exam
+                  conditions. Numbered steps with the arithmetic visible, then the answer, then
+                  the same steps in the exam's language.
+
+                Answering the second with the first form is the failure that costs the most: it
+                produces an explanation of why the answer is correct, which the reader can follow
+                and cannot reproduce. Check mechanically — if a derivation says 「substituting
+                gives」 or 「it is easily seen」 and there is no numbered step that does the
+                substitution, it is the wrong form.
+
+                A worked solution has this shape:
+
+                - **怎么下手** — one or two sentences: seeing which word in the question should
+                  trigger which tool. This is its own block. It is not background and not a
+                  definition, and it cannot be absorbed into the derivation.
+                - **推导** — numbered steps, each with its arithmetic visible.
+                - **答案**, then **English solution** against the *same numbered steps*, then the
+                  answer again.
+
+                Bilingual means step-aligned. The reader copies the English step for step in the
+                exam hall, and cannot do that with a summary paragraph. An 「English model
+                answer」 paragraph is the English of the answer, not of the process.
+
+                Keep 「易错」 out of worked solutions. It is valuable in a concept chapter, once the
+                route exists; before that a list of ways to fail just raises anxiety. But keep a
+                numeric check at the end of any algebra — in one round every wrong student answer
+                was wrong in the last step, never in the approach.
+
+                **A document may hold two shapes on purpose.** The body explains a concept and
+                uses the four-step form; the exercises at the end are for reproduction and use the
+                numbered form. Do not unify them. Ask before converting a body section — offered
+                exactly that, the answer was 「不加。正文是为了理解知识，不是为了理解怎么答题。」
+
+                ## Before the first block
+
+                Teaching is the second thing you do. The first is making sure it is about the right
+                material.
+
+                - **Decide scope, and put the decision on the map page.** If an old exam is still
+                  circulating against a revised syllabus, work out what is in scope first. In one
+                  course this removed 48 of 110 exam points from the revision load.
+                - **A page number is a claim until you verify it.** A deck's footer can disagree
+                  with its PDF page count, because deleted slides leave no gap marker. Check every
+                  deck, including the ones that turn out to be 1:1, and record how you checked.
+                - **Extracted text is a hypothesis.** A PDF's own text layer — not just OCR —
+                  turns `>` into `7`, `×` into `#`, `<` into `6`, splices figure axes into the
+                  middle of a question and glues running headers onto the end. Render the page
+                  before quoting anything carrying a number, a formula, or a table.
+
+                ## Decide whether a claim is checkable before you assert it
+
+                The highest-value habit, because every real error in one round had the same shape:
+                a claim written down without being computed. Not an arithmetic slip — an unchecked
+                assertion. 「guessing has zero expected value」 was false once a grade floor
+                existed. 「the retransmitted packet is outside the receiver's window」 was false
+                for N = 3, k = 2.
+
+                **If the sentence has an answer a script or a hand calculation could produce,
+                produce it.** That covers 「is X in the set」, 「what order of magnitude」, 「does
+                this degenerate」, and any number at all.
+
+                **Never write an attribution you cannot produce.** No 「common solutions say」, no
+                「most references give」. Cite something checkable, or say 「this is my inference」.
+                The answer key is a source, not the truth: one round found eight printed errors in
+                thirteen past papers. When a supplied answer fails its own internal check,
+                recompute from the definitions and record the correction.
 
                 ## Before you answer
 
