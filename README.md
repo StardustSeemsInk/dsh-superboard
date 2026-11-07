@@ -87,11 +87,13 @@ DSH 有时会崩；而 `file:` 指向目录时 pnpm 是**复制**的，于是「
 # 在仓库里
 npm pack                                    # → dsh-superboard-<ver>.tgz
 # 在 profile 目录（~/.dsh/profiles/desktop）
-pnpm add ./dsh-superboard-<ver>.tgz --force
+cp E:/Dev/dsh-superboard/dsh-superboard-<ver>.tgz .
+pnpm add ./dsh-superboard-<ver>.tgz
 ```
 
-`--force` 不是保险起见：版本号没变时 pnpm 认的是 tarball 的**包身份**，会直接复用上一次解出来的
-那份，于是重装打印了成功、装进去的还是旧代码。
+tarball **放在 profile 目录里别删**——依赖行记的是相对路径，删了下次 `pnpm install` 就没东西可装。
+重装同名版本要加 `--force`：版本号没变时 pnpm 认的是 tarball 的**包身份**，会复用上一次解出来的
+那份，于是打印了成功、装进去的还是旧代码。
 
 然后用 DSH 自己的插件管理把它设成 bundle：`plugin_manager` 的 `install_bundle`，或插件设置界面。
 

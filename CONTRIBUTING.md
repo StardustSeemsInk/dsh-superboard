@@ -21,12 +21,17 @@
 ```powershell
 # 仓库
 npm pack                                  # → dsh-superboard-0.0.2.tgz
-# profile
+# profile（tarball 放在 profile 目录里，别扔）
 cd ~/.dsh/profiles/desktop
-pnpm add ./dsh-superboard-0.0.2.tgz       # 或 tarball 的绝对路径
+cp E:/Dev/dsh-superboard/dsh-superboard-0.0.2.tgz .
+pnpm add ./dsh-superboard-0.0.2.tgz
 ```
 
 然后用 DSH 的 `plugin_manager` 的 `install_bundle`（或插件设置界面）把它设成 bundle。
+
+**tarball 要留在 profile 目录里。** 依赖行会记成 `file:dsh-superboard-0.0.2.tgz`，这是**相对
+profile 的路径**；删掉它，下一次 `pnpm install` 就没东西可装。留在那儿也顺便回答了「这台机器上装的
+是哪一版」。`*.tgz` 已 gitignore，它本来就不该进仓库。
 
 **重装要 `--force`，不然你以为装了新的、其实还是旧的。** 只要版本号没变，pnpm 认的是 tarball 的
 **包身份**而不是它的内容，于是命中缓存、直接复用上一次解出来的那份——`pnpm add` 打印成功，装进去
