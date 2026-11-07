@@ -77,7 +77,7 @@ npm run presets:write    # 重新生成，先备份成 cordis.patch.yml.bak-befo
 ## 测试
 
 ```bash
-node --test --test-isolation=none "test/*.test.js"   # 489 个测试，node:test，无框架
+node --test --test-isolation=none "test/*.test.js"   # 510 个测试，node:test，无框架
 npm run verify                                        # 同上 + 确认 host 半导出 apply()
 ```
 
@@ -104,7 +104,7 @@ docs/design/        设计树、模型契约、工具契约、设计说明、里
 docs/research/      针对真实 DSH 0.2.0-rc.2 验证过的约束与 API 调研
 docs/assets/        文档与 README 里引用的图（含宣传片的 GIF 与海报）
 scripts/            开发工具（官方包参考提取、vendor 重建）
-test/               489 个测试
+test/               510 个测试
 video/              发布宣传片的工程（分镜、场景、配乐合成、构建）
 vendor/             随包发布的第三方运行时：mermaid、pdf.js、React
 ```
@@ -188,11 +188,13 @@ provider，不 `import` 官方包），所以目录里只多一行 `name: descri
 | [`docs/research/dsh-image-to-model.md`](docs/research/dsh-image-to-model.md) | 工具能不能把图片交回模型：`ImageBlock` 与 `output.render` | 活文档（`board_snapshot(region)` 的闸门） |
 | [`docs/research/dsh-composer-attachments.md`](docs/research/dsh-composer-attachments.md) | 怎么把自定义内容塞进输入框并随消息发出去 | **调研已用尽**：它得出的结论是「草稿这条路走不通」。留作那条结论的证据 |
 | [`skills/board-layout/SKILL.md`](skills/board-layout/SKILL.md) | 给 Agent 看的排版说明 | 活文档，**且比 `docs/` 更新**——以它为准 |
+| [`skills/teaching-on-the-board/SKILL.md`](skills/teaching-on-the-board/SKILL.md) | 给 Agent 看的教学说明：两种文体、步骤级双语、教学前的范围/页码/文本层核对 | 活文档，由下面三份一手记录推出 |
+| [`docs/suggestions/`](docs/suggestions/) | **一手教学记录**：2IRR20 计算机网络整学期、2IV60 图形学全解与综合卷、以及图形失败的可见性报告 | **证据，不是契约**。上面那个教学技能与教师预设的指导文本就是从这三份推出来的；它们记录的是「当时实际发生了什么」，不要为了整齐去改 |
 | [`docs/assets/`](docs/assets/) | 文档与 README 引用的图（含宣传片的 GIF 与海报） | — |
 | [`video/README.md`](video/README.md) | 宣传片工程：分镜、真实渲染做法、复现步骤 | 活文档 |
 
 > `board-model.md` 的头部被仓库里的 `file:line` 引用钉死：`src/client.js`、`src/schema-dsl.js`、`src/tools.js` 与 `video/` 里有指向它的 `:265`、`:306-308`、`:318`、`:340`、`:507`，所以 §0 必须从第 38 行开始——改头部时别增删行。
 
-**已知的漂移**（记在这里，改的时候顺手修）：测试数已对齐 `npm test` 的 489，这一条清空；
+**已知的漂移**（记在这里，改的时候顺手修）：测试数已对齐 `npm test` 的 510，这一条清空；
 `board-design-notes.md` §4.5 那张模板表仍是评审前的，已被 `skills/board-layout/SKILL.md:42-49` 取代。
 （`board-model.md` 原先「§3 写着五个工具」的漂移已随 2026-10-05 的按体裁拆分修掉；`board_feedback` 从未实现。2026-10-22 加上了第五个真工具 `board_import`，所以「四个」这个数字又变了一次。）
