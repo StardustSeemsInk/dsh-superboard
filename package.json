@@ -29,6 +29,7 @@
     "src",
     "skills",
     "vendor",
+    "scripts/check-apply.mjs",
     "cordis.patch.yml"
   ],
   "scripts": {
@@ -39,7 +40,8 @@
     "presets:write": "node scripts/restate-presets.mjs --write",
     "test": "node --test \"test/**/*.test.js\"",
     "test:in-process": "node --test --test-isolation=none \"test/**/*.test.js\"",
-    "verify": "node --test \"test/**/*.test.js\" && node -e \"import('dsh-superboard').then(m => { if (typeof m.apply !== 'function') throw new Error('host half does not export apply()'); console.log('host half ok, exports:', Object.keys(m).join(', ')) })\""
+    "check:apply": "node scripts/check-apply.mjs",
+    "verify": "node --test \"test/**/*.test.js\" && node scripts/check-apply.mjs"
   },
   "dependencies": {
     "zod": "^4.6.5"

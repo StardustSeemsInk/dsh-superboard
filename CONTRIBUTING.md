@@ -8,38 +8,61 @@
 
 本仓库作为 DSH bundle 装进某个 profile（当前装在 `desktop`）。
 
-**必须先做成链接，不能靠 `file:`。** 这条是踩过坑的：
+### 打包安装，不要指向源码目录
 
-profile 的 `pnpm-workspace.yaml` 里写着 **`nodeLinker: hoisted`**。在 hoisted 模式下，`file:` 指向本地目录时 pnpm 是把文件**复制**进 `node_modules` 的——**每次 install 都是那一刻的快照**。所以「改完源码刷新页面即可生效」是**错的**：源码改了、profile 里还是旧副本，而且症状是「标签页在、但内容是旧的」，很容易误判成插件没加载。（这个坑真的发生过：安装里躺着的是 M0 脚手架，而仓库已经到 v1。）
+**2026-11-07 起改的规矩：一律 `npm pack` + 装 tarball，不再用 `link:` / `file:` 指向源码目录。**
+理由两条，第二条是实测的：
 
-profile 的 `package.json` 里依赖要写成 **`link:`**（pnpm 对 `link:` 始终建符号链接，从不复制）：
+1. **从源码目录加载会让 DSH 崩。** 这是用户报告的，不是推测。
+2. **`file:` 指向目录时 pnpm 是复制而不是链接**（profile 的 `pnpm-workspace.yaml` 写着 `nodeLinker: hoisted`，hoisted 模式下 `file:` 目录就是一次快照）。于是「改完源码刷新页面即可生效」是**错的**——源码改了、profile 里还是旧副本，症状是「标签页在、但内容是旧的」，很容易误判成插件没加载。
 
-```
-"dsh-superboard": "link:E:/Dev/dsh-superboard"
-```
-
-然后在 profile 目录跑一次 `pnpm install --no-frozen-lockfile`。之后 `node_modules/dsh-superboard` 是一个指向本仓库的 **Junction**，改代码立即反映在 profile 里。
-
-**但 host 半是启动期加载的**，desktop profile 不是 live reload——改完 **host 半**（`src/index.js`、`model.js`、`fold.js`、`schema*.js`、`tools.js`、`activity.js`）需要**重启 DSH**。client 半（`src/client.js`）刷新页面通常就够。
-
-**改完怎么自查**（不用开浏览器）：在 profile 目录跑
+第二条不是理论：**2026-11-07 实测抓到现行**——profile 里那份 `src/client.js` 与仓库里的 MD5 不同，而且当时刚提交的 `svgParses` 在 profile 里根本不存在。也就是说，那次修复在浏览器里**从来没生效过**。文档从前写的是「必须用 `link:`」，而实际装的是 `file:`，两者都对不上。
 
 ```powershell
-node --input-type=module -e "
-const m = await import('dsh-superboard')
-const p = [], t = []
-m.apply({ inject: (names, cb) => cb(Object.fromEntries(names.map(n => [n, {
-  sessionProjections: { register: (d) => p.push(d.key) },
-  tools: { register: (d) => (t.push(d.name), () => {}) },
-  systemPrompt: { context: () => {} },
-}[n]]))) })
-console.log('投影:', p, '工具:', t)
-"
+# 仓库
+npm pack                                  # → dsh-superboard-0.0.2.tgz
+# profile
+cd ~/.dsh/profiles/desktop
+pnpm add ./dsh-superboard-0.0.2.tgz       # 或 tarball 的绝对路径
 ```
 
-应输出两个投影（`board`、`boardActivity`）与五个工具。**注意**：只看导出列表是不够的——M0 脚手架导出的 `PLUGIN_NAME` 和 `apply` 与 v1 完全一样，所以那种检查曾经给过假的安心。要证明注册发生了，就得真的调一次 `apply`。
+然后用 DSH 的 `plugin_manager` 的 `install_bundle`（或插件设置界面）把它设成 bundle。
 
-卸载：从 profile 的 `dsh.profile.bundles` 与 `dependencies` 里移除 `dsh-superboard` 那一行，重跑一次 `pnpm install`。
+**重装要 `--force`，不然你以为装了新的、其实还是旧的。** 只要版本号没变，pnpm 认的是 tarball 的
+**包身份**而不是它的内容，于是命中缓存、直接复用上一次解出来的那份——`pnpm add` 打印成功，装进去
+的却是旧代码。实测：往 `files` 里加了一个文件后重新 `npm pack`，`pnpm add` 报 `added 2`，而新文件
+**不在** `node_modules` 里；加 `--force` 才真的重解：
+
+```powershell
+pnpm remove dsh-superboard
+pnpm add .\dsh-superboard-0.0.2.tgz --force
+```
+
+**每次改完都要重新打包安装。** host 半（`src/index.js`、`model.js`、`fold.js`、`schema*.js`、`tools.js`、`activity.js`）是启动期加载的，需要**重启 DSH**；client 半（`src/client.js`）重新打包安装后刷新页面通常够。
+
+`npm pack` 只收 `files` 里列的东西（`src` / `skills` / `vendor` / `scripts/check-apply.mjs` / `cordis.patch.yml`），约 3.3 MB，所以 `test/` 与 `docs/` 不会进安装包——**这是刻意的**：装上去的是运行时要的东西，而 `scripts/check-apply.mjs` 是运行时自检，必须跟着走。
+
+### 装完怎么自查（不用开浏览器）
+
+光看导出列表**不够**：M0 脚手架导出的 `PLUGIN_NAME` 与 `apply` 和 v1 完全一样，那种检查曾经给过假的安心。要证明注册真的发生了，就得真的调一次 `apply`。
+
+**不要再往文档里抄一段假 ctx 的 `node -e`。** 这段代码以前就写在这里，而且**错过两次**，两次同一个原因：`apply` 新增了一个 ctx 上的调用，而文档里的假 ctx 没有——于是它在「刚装完、正不确定成不成」的那一刻抛错，报的还是插件而不是那段检查的问题。
+
+```powershell
+cd ~/.dsh/profiles/desktop
+node node_modules/dsh-superboard/scripts/check-apply.mjs
+```
+
+应输出两个投影（`board`、`boardActivity`）、五个工具、一个技能 provider，以及五条运行时路由。这个脚本在安装包里，**同时被 `test/apply.test.js` 驱动**，所以 `apply` 一旦需要新的东西，测试先红，脚本跟着改——文档只负责指向它。
+
+**还要核一次「装的是不是最新的」**——这一步能挡住上面那个 2026-11-07 的坑：
+
+```powershell
+(Get-Content node_modules/dsh-superboard/package.json -Raw | ConvertFrom-Json).version
+Select-String -Path node_modules/dsh-superboard/src/client.js -Pattern svgParses -Quiet
+```
+
+卸载：`pnpm remove dsh-superboard`，再从 `dsh.profile.bundles` 里移除那一行。
 
 **注意**：bundle 被启用时会追加到 bundle 列表末尾，而这会改变配置优先级——DSH 的已知行为。
 
@@ -77,7 +100,7 @@ npm run presets:write    # 重新生成，先备份成 cordis.patch.yml.bak-befo
 ## 测试
 
 ```bash
-node --test --test-isolation=none "test/*.test.js"   # 512 个测试，node:test，无框架
+node --test --test-isolation=none "test/*.test.js"   # 515 个测试，node:test，无框架
 npm run verify                                        # 同上 + 确认 host 半导出 apply()
 ```
 
@@ -104,7 +127,7 @@ docs/design/        设计树、模型契约、工具契约、设计说明、里
 docs/research/      针对真实 DSH 0.2.0-rc.2 验证过的约束与 API 调研
 docs/assets/        文档与 README 里引用的图（含宣传片的 GIF 与海报）
 scripts/            开发工具（官方包参考提取、vendor 重建）
-test/               512 个测试
+test/               515 个测试
 video/              发布宣传片的工程（分镜、场景、配乐合成、构建）
 vendor/             随包发布的第三方运行时：mermaid、pdf.js、React
 ```
@@ -188,13 +211,14 @@ provider，不 `import` 官方包），所以目录里只多一行 `name: descri
 | [`docs/research/dsh-image-to-model.md`](docs/research/dsh-image-to-model.md) | 工具能不能把图片交回模型：`ImageBlock` 与 `output.render` | 活文档（`board_snapshot(region)` 的闸门） |
 | [`docs/research/dsh-composer-attachments.md`](docs/research/dsh-composer-attachments.md) | 怎么把自定义内容塞进输入框并随消息发出去 | **调研已用尽**：它得出的结论是「草稿这条路走不通」。留作那条结论的证据 |
 | [`skills/board-layout/SKILL.md`](skills/board-layout/SKILL.md) | 给 Agent 看的排版说明 | 活文档，**且比 `docs/` 更新**——以它为准 |
-| [`skills/teaching-on-the-board/SKILL.md`](skills/teaching-on-the-board/SKILL.md) | 给 Agent 看的教学说明：两种文体、步骤级双语、教学前的范围/页码/文本层核对 | 活文档，由下面三份一手记录推出 |
-| [`docs/suggestions/`](docs/suggestions/) | **一手教学记录**：2IRR20 计算机网络整学期、2IV60 图形学全解与综合卷、以及图形失败的可见性报告 | **证据，不是契约**。上面那个教学技能与教师预设的指导文本就是从这三份推出来的；它们记录的是「当时实际发生了什么」，不要为了整齐去改 |
+| [`skills/teaching-on-the-board/SKILL.md`](skills/teaching-on-the-board/SKILL.md) | 给 Agent 看的教学说明：两种文体、步骤级双语、教学前的范围/页码/文本层核对 | 活文档，由下面归档的四份一手记录推出 |
+| [`docs/suggestions/README.md`](docs/suggestions/README.md) | **待处理**的外部建议 | 空着是正常的。处理完就移进 `archive/` |
+| [`docs/suggestions/archive/`](docs/suggestions/archive/) | **已处理**的一手记录：2IRR20 计算机网络整学期、2IV60 图形学全解与综合卷、图形失败的可见性报告、以及教学法观察 | **证据，不是契约**。上面那个教学技能与教师预设的指导文本就是从这四份推出来的；它们记录的是「当时实际发生了什么」，**不要为了整齐去改**。每一份对应什么，见该目录的 `README.md` |
 | [`docs/assets/`](docs/assets/) | 文档与 README 引用的图（含宣传片的 GIF 与海报） | — |
 | [`video/README.md`](video/README.md) | 宣传片工程：分镜、真实渲染做法、复现步骤 | 活文档 |
 
 > `board-model.md` 的头部被仓库里的 `file:line` 引用钉死：`src/client.js`、`src/schema-dsl.js`、`src/tools.js` 与 `video/` 里有指向它的 `:265`、`:306-308`、`:318`、`:340`、`:507`，所以 §0 必须从第 38 行开始——改头部时别增删行。
 
-**已知的漂移**（记在这里，改的时候顺手修）：测试数已对齐 `npm test` 的 512，这一条清空；
+**已知的漂移**（记在这里，改的时候顺手修）：测试数已对齐 `npm test` 的 515，这一条清空；
 `board-design-notes.md` §4.5 那张模板表仍是评审前的，已被 `skills/board-layout/SKILL.md:42-49` 取代。
 （`board-model.md` 原先「§3 写着五个工具」的漂移已随 2026-10-05 的按体裁拆分修掉；`board_feedback` 从未实现。2026-10-22 加上了第五个真工具 `board_import`，所以「四个」这个数字又变了一次。）

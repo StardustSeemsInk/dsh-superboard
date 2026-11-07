@@ -12,3 +12,7 @@ dist/
 
 # Throwaway edit scripts: anchored swaps, run once, never needed again.
 .tmp-*
+
+# Install tarballs from `npm pack`. Derived, 3.3 MB, rebuilt from the tree in seconds — and the
+# install steps in README/CONTRIBUTING assume you build your own rather than reuse one.
+*.tgz

@@ -18,8 +18,10 @@ held up when this was used to teach two TU/e courses end to end — a sixteen-un
 course and a ten-unit networks course — with the values that were actually used rather than
 the ones that sound reasonable.
 
-Three rounds of first-hand records sit behind this, in `docs/suggestions/`. Where a rule
-below came from being wrong first, it says so.
+Three rounds of first-hand records sit behind this, in `docs/suggestions/archive/`. Where a rule
+below came from being wrong first, it says so. The rules are the live thing; the records are the
+evidence, kept separate on purpose — tidying them into agreement would destroy what makes them worth
+citing.
 
 ## Before the first block: scope, page numbers, and which shape
 

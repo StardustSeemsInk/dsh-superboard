@@ -77,16 +77,26 @@ An agent-editable board for [DeepSeek Harness](https://github.com/deepseek-ai) �
 
 ## 装它
 
-本仓库目前以 DSH bundle 的形式装进某个 profile（开发期用的是 `link:`，装在 `desktop`）。
+本仓库以 **DSH bundle** 的形式装进某个 profile（我们装在 `desktop`）。
 
-```jsonc
-// profile 的 package.json
-"dsh-superboard": "link:E:/Dev/dsh-superboard"
+**走打包安装，不要把 profile 指向源码目录。** 从源码目录（`link:` 或 `file:E:/Dev/…`）加载的插件，
+DSH 有时会崩；而 `file:` 指向目录时 pnpm 是**复制**的，于是「改过的源码」与「profile 里跑的那份」
+会悄悄分家——症状是插件在、内容是旧的。
+
+```powershell
+# 在仓库里
+npm pack                                    # → dsh-superboard-<ver>.tgz
+# 在 profile 目录（~/.dsh/profiles/desktop）
+pnpm add ./dsh-superboard-<ver>.tgz --force
 ```
 
-然后在 profile 目录跑一次 `pnpm install --no-frozen-lockfile`。
+`--force` 不是保险起见：版本号没变时 pnpm 认的是 tarball 的**包身份**，会直接复用上一次解出来的
+那份，于是重装打印了成功、装进去的还是旧代码。
 
-**为什么必须是 `link:` 而不是 `file:`、装完怎么自查、为什么要重启 DSH、卸载怎么做**——这几条都踩过坑，写在 [`CONTRIBUTING.md`](CONTRIBUTING.md#安装开发期)。
+然后用 DSH 自己的插件管理把它设成 bundle：`plugin_manager` 的 `install_bundle`，或插件设置界面。
+
+改完代码要**重新打包安装**才生效（host 半还需要重启 DSH）。**为什么不能走源码目录、装完怎么自查、
+重装与卸载怎么做**——写在 [`CONTRIBUTING.md`](CONTRIBUTING.md#安装开发期)。
 
 ## 文档
 
@@ -109,7 +119,7 @@ An agent-editable board for [DeepSeek Harness](https://github.com/deepseek-ai) �
 
 ## 状态
 
-**v1 完成并在用。** 512 个测试通过；模型版本 5；三个看板专属的 agent 预设（工程师 / 教师 / 研究员，其中**教师预设未完成**——自动朗读（TTS）已移出主线目标，不算完成条件）。
+**v1 完成并在用。** 515 个测试通过；模型版本 5；三个看板专属的 agent 预设（工程师 / 教师 / 研究员，其中**教师预设未完成**——自动朗读（TTS）已移出主线目标，不算完成条件）。
 
 ## License
 

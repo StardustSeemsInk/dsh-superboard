@@ -461,8 +461,8 @@ test('the teacher preset keeps the checklist item that a question must not carry
     .config.plugins.find((plugin) => plugin.id === 'board-guidance').config.section
   // The rule comes from a real lesson: a question about rotating about the x axis handed the
   // learner `Rz` in its own wording, so the one choice the question existed to test was made for
-  // them — and made wrongly. `docs/suggestions/teaching-method-observations.md` §3.1 records it;
-  // this pins the sentence that turns it into behaviour.
+  // them — and made wrongly. `docs/suggestions/archive/teaching-method-observations.md` §3.1
+  // records it; this pins the sentence that turns it into behaviour.
   assert.match(teacher, /skeleton in the question/, 'the no-scaffold rule left the teacher preset')
   assert.match(teacher, /hand over the key choice/, 'the self-check that makes the rule enforceable')
 })
