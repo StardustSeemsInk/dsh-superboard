@@ -447,8 +447,16 @@ export function renderOutlineText(doc, options = {}) {
     kept.push(line)
     used += line.length + 1
   }
+  // The marker is an instruction, not a footnote. `truncated: true` rides in a field the model has
+  // to remember to read; a board that renders as if it ended here is the failure mode, and the
+  // model's own next sentence is written from whatever it just read. So the cut says what to do
+  // about it, in the same breath, where the missing pages would have been.
   return {
-    text: `${kept.join('\n')}\n… truncated at ${budget} characters`,
+    text:
+      `${kept.join('\n')}\n… truncated at ${budget} characters — ${lines.length - kept.length} ` +
+      `line(s) are NOT shown above, so this is not the whole board. Do not draw conclusions ` +
+      `about what is absent (deletions, gaps, empty pages) from this. Call this tool again with ` +
+      `a larger maxChars, or read a specific page with board_read, before editing.`,
     truncated: true,
     omitted: `${lines.length - kept.length} line(s) omitted`,
   }

@@ -94,11 +94,34 @@ function wellFormedSvg(svg) {
 
 这条我没有逐行核对 `src/` 的溢出规则——**所以它是本文件里唯一的 UNVERIFIED 条目**——但它的判据与第 1 节完全相同：*失败必须是可观测的*。建议很朴素：**内容超出容器时，必须有可见的截断标记**（渐变、省略号、或「还有 N 行」）。
 
+> **2026-11-07 复核：这条在本仓库的渲染器上不成立，建议不改。**
+>
+> 用 `video/scenes/_probe-clipping.html` 实测了四种会把盒子尺寸交给容器的布局——`flow`、命名格子的 `grid`（`areas`，卡片被拉成槽位）、`grid`、`masonry`——每张卡片都量了 `clientHeight` / `scrollHeight` / `overflowY`：
+>
+> | 布局 | 40 段文字的卡片 | 裁切？ |
+> |---|---|---|
+> | `flow` | `1872 / 1872`，`overflow-y: visible` | 否 |
+> | `areas` 槽位 | `2672 / 2672` | 否 |
+> | `grid` | `2672 / 2672` | 否 |
+> | `masonry cols:3` | **`4272 / 4272`** | 否 |
+>
+> 全部 `scrollHeight === clientHeight`，**卡片长到内容那么高**，再由 `.sb-canvas`（`overflow:auto`）滚动。整份样式表里带高度上限的只有 `.sb-diagram`（`max-height:560px`，且它自己也 `overflow:auto`）。
+>
+> 阅读栏是唯一会「滚动着藏起来」的容器（`clientHeight 702 / scrollHeight 5348`），但它**有滚动条**，所以那是「往下翻」，不是「话说完了」——与第 1 节那个静默失败不同类。
+>
+> 也就是说：**「渲染成功、产物不可用」这个形状对长文本不成立**，它成立的地方是别的——`maxChars` 截断的读取结果（§2.2）、以及真正会抛掉内容的容器。这条保留在文档里是因为**它被证伪本身有用**：下一次有人怀疑同一件事，先看这张表，不要再花一轮去查。
+
 ### 2.2 C 类：`truncated` 是一个「需要调用方自觉」的契约
 
 `board_read` 与 `board_outline` 都返回 `truncated` 与 `omitted`。**这比静默截断好得多**，但它属于「调用方必须去看」的那一类——一个 Agent 完全可能在 `truncated: true` 的情况下继续按不完整的列表工作。
 
 不需要改结构，只需要一条使用约定：**任何 `truncated: true` 的读取结果，都必须先降页或降 `maxChars` 重读，再下结论。**
+
+> **2026-11-07 已按这条改了 `renderOutlineText`。** 原来被截断的文本只以 `… truncated at N characters` 收尾——那是一句脚注，而 `truncated: true` 是一个模型**要记得去读**的字段。被防的那个失败是「看板读起来就像到此为止」，而模型接下来那句话是根据它刚读到的东西写的。
+>
+> 现在那句话是一条指令：「… N line(s) are NOT shown above, so this is not the whole board. Do not draw conclusions about what is absent (deletions, gaps, empty pages) from this. Call this tool again with a larger maxChars, or read a specific page with board_read, before editing.」
+>
+> 特意点名「不要从缺失去推断」：截断之后，一个**不存在**的块和一块**没显示出来**的块在读到的文本里长得一样，而删除、留白、空页这三类判断全靠这个区别。
 
 ---
 

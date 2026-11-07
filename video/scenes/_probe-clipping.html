@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="zh">
+  <head>
+    <meta charset="utf-8" />
+    <title>probe · 长文本真的会被裁掉吗</title>
+    <style>
+      html, body { margin: 0; background: #11111b; }
+      #mount { position: absolute; inset: 0; }
+    </style>
+  </head>
+  <body data-ds-dark-theme="true">
+    <div id="mount"></div>
+
+    <script src="/vendor/react.production.min.js"></script>
+    <script src="/vendor/react-dom.production.min.js"></script>
+    <script>window.__ModuleLoader__ = { load: (definition) => { window.__sbDef = definition } }</script>
+    <script src="/repo/src/client.js"></script>
+    <script src="/scenes/harness.js"></script>
+    <script>
+      // §2.1 of `docs/suggestions/diagram-and-text-failure-visibility.md` claims a filled `prose`
+      // block is clipped by its container with no ellipsis and no expander, so the reader sees
+      // "the writing ended" rather than "the writing was cut". That claim is marked UNVERIFIED in
+      // the document itself, and reading the stylesheet finds no height clamp on a card at all —
+      // `.sb-canvas` is `overflow:auto`, so the page scrolls instead of clipping.
+      //
+      // Guessing either way would be worthless, because the interesting case is not the plain
+      // flow but the two layouts that *do* force a box size: named cells (`areas`, where a card
+      // is stretched to its slot) and a grid row that a tall neighbour set. So this measures:
+      //
+      //   for every card, does its content overflow its own box?
+      //     scrollHeight > clientHeight  → something is cut and no scrollbar will say so
+      //     scrollHeight === clientHeight → the card grew to fit
+      //
+      // and separately whether the canvas itself scrolls (which is not clipping).
+
+      const REV = 'r0-000000000000'
+      window.__diag = { stage: 'boot' }
+      window.addEventListener('error', (e) => { window.__diag.error = String(e.message) })
+      window.addEventListener('unhandledrejection', (e) => { window.__diag.error = 'rejection: ' + String(e.reason) })
+
+      const LONG = Array.from({ length: 40 }, (_, i) =>
+        `第 ${i + 1} 段。球坐标用 $(\\rho, \\theta, \\phi)$ 三个量定位一个点，其中 $\\rho$ 是到原点的距离。` +
+        `这一段刻意写长，用来把卡片撑到远超任何槽位的高度，从而逼出「容器会不会裁掉它」的答案。`).join('\n\n')
+
+      function leaf(id, slug, spec) {
+        const common = { id, slug, alias: [], anchors: [], createdAtRev: REV, updatedAtRev: REV }
+        if (spec.kind === 'prose') return { ...common, kind: 'prose', markdown: spec.markdown }
+        return {
+          ...common,
+          kind: 'list',
+          ordered: false,
+          items: spec.items.map((text, index) => ({ id: `${id}_i${index}`, text, depth: 0 })),
+        }
+      }
+
+      function model() {
+        return {
+          title: '长文本裁切探针',
+          revSeq: 0,
+          revHash: '0'.repeat(12),
+          rev: REV,
+          regions: [],
+          edges: [],
+          pages: [
+            {
+              id: 'pg_a', slug: 'flow', alias: [], createdAtRev: REV,
+              layout: { template: 'flow', params: {} },
+              blocks: [
+                leaf('b_a1', 'long-flow', { kind: 'prose', markdown: LONG }),
+                leaf('b_a2', 'after', { kind: 'prose', markdown: '流式布局里的下一块。' }),
+              ],
+            },
+            {
+              id: 'pg_b', slug: 'areas', alias: [], createdAtRev: REV,
+              layout: {
+                template: 'grid', params: { cols: 2, rows: 2 },
+                cells: {
+                  tall: { row: 1, col: 1, rowSpan: 1, colSpan: 1 },
+                  short: { row: 1, col: 2, rowSpan: 1, colSpan: 1 },
+                  wide: { row: 2, col: 1, rowSpan: 1, colSpan: 2 },
+                },
+              },
+              blocks: [
+                { ...leaf('b_b0', 'tall', { kind: 'prose', markdown: LONG }), layout: { template: 'flow', params: {} } },
+                { ...leaf('b_b1', 'short', { kind: 'prose', markdown: '一格短卡片。' }), layout: { template: 'flow', params: {} } },
+                { ...leaf('b_b2', 'wide', { kind: 'prose', markdown: '横跨两列的一块。' }), layout: { template: 'flow', params: {} } },
+              ],
+            },
+            {
+              id: 'pg_c', slug: 'grid', alias: [], createdAtRev: REV,
+              layout: { template: 'grid', params: { cols: 2 } },
+              blocks: [
+                leaf('b_c1', 'long-grid', { kind: 'prose', markdown: LONG }),
+                leaf('b_c2', 'short-grid', { kind: 'prose', markdown: '旁边的短卡片。' }),
+              ],
+            },
+            {
+              // `masonry` is the one template whose boxes are set by CSS columns rather than by
+              // content height, so it is the likeliest place for a card to be clipped.
+              id: 'pg_d', slug: 'masonry', alias: [], createdAtRev: REV,
+              layout: { template: 'masonry', params: { cols: 3 } },
+              blocks: [
+                leaf('b_d1', 'long-masonry', { kind: 'prose', markdown: LONG }),
+                leaf('b_d2', 'm1', { kind: 'prose', markdown: '瀑布流第一列。' }),
+                leaf('b_d3', 'm2', { kind: 'prose', markdown: '瀑布流第二列。' }),
+                leaf('b_d4', 'm3', { kind: 'prose', markdown: '瀑布流第三列。' }),
+              ],
+            },
+          ],
+        }
+      }
+
+      const TURNS = [
+        { role: 'user', text: LONG },
+        { role: 'assistant', text: LONG },
+      ]
+
+      ;(async () => {
+        const api = await window.SuperboardHarness.startBoard({
+          mountId: 'mount',
+          mutate: model,
+          flavour: 'latte',
+          chatTurns: TURNS,
+        })
+
+        const out = { stage: 'ready', pages: [], cards: [] }
+        const canvas = document.querySelector('#mount .sb-canvas')
+        out.canvas = {
+          scrollHeight: canvas.scrollHeight,
+          clientHeight: canvas.clientHeight,
+          scrollable: canvas.scrollHeight > canvas.clientHeight + 1,
+        }
+
+        // Every card on every page, measured in its own box.
+        const slugs = ['flow', 'areas', 'grid', 'masonry']
+        for (const slug of slugs) {
+          await api.selectPage(slug)
+          await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+          const cards = [...document.querySelectorAll('#mount .sb-card')]
+          const seen = cards.map((card) => {
+            const style = getComputedStyle(card)
+            return {
+              slug: card.querySelector('[data-block-slug]')?.getAttribute('data-block-slug') ?? '?',
+              clientHeight: card.clientHeight,
+              scrollHeight: card.scrollHeight,
+              overflowY: style.overflowY,
+              clipped: card.scrollHeight > card.clientHeight + 1,
+            }
+          })
+          out.pages.push({ page: slug, cards: seen.length })
+          out.cards.push(...seen.map((c) => ({ ...c, page: slug })))
+        }
+
+        // The reading column is the other container that can hide text: it is `overflow-y:auto`
+        // with a fixed height, so a single long turn scrolls *inside it* — which is the one place
+        // a reader really does see a cut sentence, and it is the only place a scrollbar says so.
+        const reader = document.querySelector('#mount .sb-readerBody')
+        if (reader !== null) {
+          const turn = reader.querySelector('.sb-turn')
+          out.reader = {
+            clientHeight: reader.clientHeight,
+            scrollHeight: reader.scrollHeight,
+            scrollable: reader.scrollHeight > reader.clientHeight + 1,
+            turnClientHeight: turn?.clientHeight ?? 0,
+            turnScrollHeight: turn?.scrollHeight ?? 0,
+            turnClipped: turn === null ? null : turn.scrollHeight > turn.clientHeight + 1,
+            turnOverflowY: turn === null ? null : getComputedStyle(turn).overflowY,
+          }
+        }
+
+        // Whatever page the harness left us on, put it back.
+        await api.selectPage('flow')
+        window.__probe = out
+      })()
+    </script>
+  </body>
+</html>

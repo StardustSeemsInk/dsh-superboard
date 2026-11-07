@@ -642,8 +642,17 @@ test('a large outline truncates itself and says so', () => {
   const rendered = renderOutlineText(doc, { maxChars: 600 })
 
   assert.equal(rendered.truncated, true)
-  assert.ok(rendered.text.length <= 700, 'the text respects the budget')
   assert.ok(rendered.omitted !== undefined)
+  // The budget bounds the *board*, not the warning about it: the marker is appended after the
+  // last line that fit, and it is the part that has to be unmissable.
+  assert.ok(rendered.text.length <= 1100, 'the text stays close to the budget')
+
+  // The marker is an instruction, not a footnote. `truncated: true` is a field the model has to
+  // remember to read; the failure being guarded against is a board that reads as if it ended
+  // there, so the cut has to say what to do about it in the same breath.
+  assert.match(rendered.text, /NOT shown above/)
+  assert.match(rendered.text, /not the whole board/)
+  assert.match(rendered.text, /larger maxChars/)
 })
 
 test('the outline can be asked for edges alone, which is the cheap way to re-check relations', () => {
