@@ -808,6 +808,26 @@ test('a diagram document becomes a data URL that cannot escape the attribute it 
   assert.equal(decodeURIComponent(url.slice('data:image/svg+xml;charset=utf-8,'.length)), svg)
 })
 
+test('mermaid emits an unclosed <br> and the data URL closes it, or the diagram is silently blank', () => {
+  // Measured against mermaid 11.17.2: a label containing `<br/>` comes back as an unclosed `<br>`
+  // inside a `<foreignObject>`, even with `htmlLabels: false`. A browser draws it as HTML; this
+  // board does not, because the SVG reaches an `<img>` through a `data:` URL and is parsed as
+  // strict XML. The parse fails, the image never loads, and nothing is reported -- `render()`
+  // returned successfully, so the error path never runs. Closing the tag is the whole fix.
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg"><foreignObject><div xmlns="http://www.w3.org/1999/xhtml"><p>one<br>two</p></div></foreignObject></svg>'
+  const decoded = decodeURIComponent(client.svgDataUrl(svg).slice('data:image/svg+xml;charset=utf-8,'.length))
+
+  assert.ok(!/<br>/i.test(decoded), 'an unclosed <br> makes the document unparseable as XML')
+  assert.match(decoded, /one<br\/>two/, 'the break itself must survive: it is the label\'s layout')
+})
+
+test('a <br> that already carries a slash is left alone', () => {
+  const svg = '<svg xmlns="http://www.w3.org/2000/svg"><p>a<br />b</p></svg>'
+  const decoded = decodeURIComponent(client.svgDataUrl(svg).slice('data:image/svg+xml;charset=utf-8,'.length))
+
+  assert.equal(decoded, svg, 'normalising twice must not produce <br//> or lose the space')
+})
+
 test('a file path becomes a URL the host route can read', () => {
   // Windows paths carry a colon and backslashes, and a user's filename carries whatever it likes.
   // The query string has to survive all of it, so it is encoded rather than interpolated.

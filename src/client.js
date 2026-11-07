@@ -1792,7 +1792,36 @@ window.__ModuleLoader__.load({
      * @returns a `data:` URL.
      */
     function svgDataUrl(svg) {
-      return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`
+      return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(wellFormedSvg(svg))}`
+    }
+
+    /**
+     * Make mermaid's SVG survive a strict XML parse.
+     *
+     * **The defect this fixes, measured against mermaid 11.17.2.** With a `<br/>` in any label —
+     * `flowchart: { htmlLabels: false }` does not prevent it, because mermaid still builds a
+     * `<foreignObject>` around an XHTML `<p>` — the emitted SVG contains `<br>` **unclosed**. A
+     * browser parses that as HTML and draws the diagram; this board does not, because it hands the
+     * SVG to an `<img>` through a `data:` URL, where it is parsed as strict XML. The parse fails,
+     * the image never loads, and **nothing is reported**: `mermaid.render()` succeeded, so the
+     * `catch` that reports a real syntax error never runs. The card simply stays blank.
+     *
+     * Closing the tag is the whole fix: replacing `<br>` with `<br/>` makes the same SVG parse
+     * cleanly. `XMLSerializer` is *not* a substitute — measured, it round-trips `<br>` to a
+     * well-formed `<br />` yet still produced a document that failed the same XML parse, because
+     * other parts of mermaid's output are HTML-ish too.
+     *
+     * Scoped to `<br` deliberately: this runs after mermaid has already escaped every label, so
+     * the only unclosed tags left are the ones mermaid itself writes, and `<br>` is the only one it
+     * writes without a slash. Anything broader would be this file guessing at HTML parsing.
+     *
+     * @param svg - the SVG document mermaid produced.
+     * @returns the same document, well-formed.
+     */
+    function wellFormedSvg(svg) {
+      // A tag that already ends in `/` is left untouched: `<br />` must not become `<br //>`.
+      return svg.replace(/<br(\s[^>]*)?>/gi, (tag, attrs) =>
+        (attrs !== undefined && attrs.trimEnd().endsWith('/') ? tag : `<br${attrs ?? ''}/>`))
     }
 
     /** The page's own font stack, so a diagram's labels match the board's text. */
@@ -4882,6 +4911,7 @@ window.__ModuleLoader__.load({
       Diagram,
       codeClass,
       svgDataUrl,
+      wellFormedSvg,
       // The diagram theming seam. `diagramThemeVariables` takes its reader as an argument so a
       // test can drive it with a fake token table — the real one needs a browser, and the mapping
       // is the part worth pinning.
