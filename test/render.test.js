@@ -828,6 +828,46 @@ test('a <br> that already carries a slash is left alone', () => {
   assert.equal(decoded, svg, 'normalising twice must not produce <br//> or lose the space')
 })
 
+test('svgParses calls an unparseable document unusable, which is the case the renderer missed', () => {
+  // The whole point of the check: `mermaid.render()` resolving says nothing about whether the
+  // `<img>` can draw the result. Without this, the only path to `failed` is a throw, so an
+  // unparseable SVG produces a blank card and no diagnostic.
+  const stub = (outcome) => ({
+    DOMParser: class {
+      parseFromString() {
+        return outcome
+      }
+    },
+  })
+  const withRoot = (localName, querySelector) => ({
+    documentElement: { localName, nodeName: localName },
+    querySelector,
+  })
+
+  assert.equal(client.svgParses('<svg/>', stub(withRoot('parsererror'))), 'unusable')
+  // Firefox nests the error rather than making it the root, so both spellings have to be caught.
+  assert.equal(
+    client.svgParses('<svg/>', stub(withRoot('svg', () => ({ localName: 'parsererror' })))),
+    'unusable',
+  )
+  assert.equal(client.svgParses('<svg/>', stub(withRoot('svg', () => null))), 'ok')
+  // A parse that returns nothing useful is not a drawing either.
+  assert.equal(client.svgParses('<svg/>', stub(null)), 'unusable')
+  assert.equal(client.svgParses('<svg/>', stub({ documentElement: { localName: 'html' } })), 'unusable')
+  // A parser that throws is a refusal, not a pass.
+  assert.equal(
+    client.svgParses('<svg/>', { DOMParser: class { parseFromString() { throw new Error('nope') } } }),
+    'unusable',
+  )
+})
+
+test('svgParses says ok when there is no parser at all, because unknown is not broken', () => {
+  // A no-DOM host would otherwise refuse to draw every diagram to guard against a case that has not
+  // happened. The test sandbox here has no `DOMParser`, so this is also the live path under test.
+  assert.equal(client.svgParses('<svg/>', {}), 'ok')
+  assert.equal(client.svgParses('<svg/>'), 'ok')
+})
+
 test('a file path becomes a URL the host route can read', () => {
   // Windows paths carry a colon and backslashes, and a user's filename carries whatever it likes.
   // The query string has to survive all of it, so it is encoded rather than interpolated.

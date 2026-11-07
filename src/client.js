@@ -1796,6 +1796,52 @@ window.__ModuleLoader__.load({
     }
 
     /**
+     * Does this SVG actually parse as XML — i.e. will the `<img>` be able to draw it?
+     *
+     * The distinction the whole `<br>` bug turned on: **a renderer returning a string is not the
+     * same as the artifact being usable.** `mermaid.render()` resolved, so the `catch` below never
+     * ran, and the card was silently blank. This is the check that closes that gap for every future
+     * cause, not just the one tag that has already been seen.
+     *
+     * Three answers, not two, because the check itself can be unavailable:
+     *
+     *   - `'ok'` — it parsed, or there is no parser in reach (a no-DOM test harness, an old browser).
+     *     Unknown must never be treated as broken: refusing to draw a picture whenever `DOMParser`
+     *     is missing would break every host that lacks it, to guard against a case that has not
+     *     happened.
+     *   - `'unusable'` — the parser reported a `parsererror`. The image would not load.
+     *
+     * `parsererror` is how every browser reports a parse failure from `DOMParser`: it returns a
+     * document whose root is the error element rather than throwing, so a `try`/`catch` alone would
+     * miss it entirely.
+     *
+     * @param svg - the SVG document about to be encoded.
+     * @param env - optional environment, for a test harness with no global `DOMParser`.
+     * @returns {'ok' | 'unusable'}
+     */
+    function svgParses(svg, env) {
+      const Parser = env?.DOMParser ?? (typeof DOMParser === 'function' ? DOMParser : undefined)
+      if (Parser === undefined) return 'ok'
+      let doc
+      try {
+        doc = new Parser().parseFromString(svg, 'image/svg+xml')
+      } catch {
+        // A synchronous throw is also a refusal to produce a document.
+        return 'unusable'
+      }
+      if (doc === null || doc === undefined) return 'unusable'
+      const root = doc.documentElement
+      if (root === null || root === undefined) return 'unusable'
+      if (root.localName === 'parsererror' || root.nodeName === 'parsererror') return 'unusable'
+      // Firefox nests the error instead of making it the root; `querySelector` is available on a real
+      // document and absent on the minimal stubs a test may hand in.
+      if (typeof doc.querySelector === 'function' && doc.querySelector('parsererror') !== null) {
+        return 'unusable'
+      }
+      return root.localName === 'svg' ? 'ok' : 'unusable'
+    }
+
+    /**
      * Make mermaid's SVG survive a strict XML parse.
      *
      * **The defect this fixes, measured against mermaid 11.17.2.** With a `<br/>` in any label —
@@ -1985,9 +2031,20 @@ window.__ModuleLoader__.load({
             return mermaid.render(`sb-uml-${block.id}`, source)
           })
           .then((result) => {
-            if (!cancelled) {
-              setState({ status: 'ready', src: svgDataUrl(result.svg), nodes: diagramNodeTable(result.svg) })
+            if (cancelled) return
+            // The artifact's usability is checked **after** the renderer succeeded, because that is
+            // where this class of failure lives: `render()` resolving says nothing about whether the
+            // `<img>` can draw the result. Until now the only path to `failed` was a throw, so an
+            // unusable SVG produced a blank card and no diagnostic at all.
+            if (svgParses(result.svg) === 'unusable') {
+              const message =
+                '图渲染出来了，但它不是良构 XML——看板把 SVG 交给 <img> 的 data: URL，' +
+                '那里按严格 XML 解析，所以这张图不会显示。'
+              setState({ status: 'failed', message, src: svgDataUrl(result.svg) })
+              reportRenderFailure(sessionId, block, message)
+              return
             }
+            setState({ status: 'ready', src: svgDataUrl(result.svg), nodes: diagramNodeTable(result.svg) })
           })
           .catch((error) => {
             if (cancelled) return
@@ -4912,6 +4969,7 @@ window.__ModuleLoader__.load({
       codeClass,
       svgDataUrl,
       wellFormedSvg,
+    svgParses,
       // The diagram theming seam. `diagramThemeVariables` takes its reader as an argument so a
       // test can drive it with a fake token table — the real one needs a browser, and the mapping
       // is the part worth pinning.

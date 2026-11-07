@@ -113,6 +113,17 @@
 
 图用 `<img src="data:image/svg+xml…">` 呈现，所以**主题必须在编码前就烘焙进 SVG**：CSS 进不了 `<img>` 内部，而且 mermaid 本来就把主题写进自己的 `<style>` 块。承担这件事的是 `diagramThemeVariables(read, dark)`（`src/client.js`）。
 
+**同一个 `<img>` 还有第二个后果，而它就是下面那类 bug 的全部成因**：`data:` URL 里的 SVG 由浏览器按**严格 XML** 解析，不是浏览器平时那种宽松的 HTML 解析。于是 mermaid 输出里任何一处 HTML 味的东西都会让**整张图**解析失败——而 `mermaid.render()` 是**成功返回的**，所以 `catch` 里那条 `reportRenderFailure` 根本不会触发，卡片只是白着，`board_outline` 里一条诊断都没有。
+
+已实测踩过的两处：
+
+| 触发 | 结果 | 处理 |
+|---|---|---|
+| 标签里含 `<br/>`（`flowchart: { htmlLabels: false }` **不能**阻止它，两种模式下 `fo=true` 都成立） | mermaid 在 XHTML `foreignObject` 里写一个**未闭合的 `<br>`** → 整份文档 MALFORMED → 图静默不加载 | `wellFormedSvg` 在编码前把它补成 `<br/>`（`a863bce`） |
+| `XMLSerializer` 重序列化 | 看着像修法：`<br>` 确实变成 `<br />`，**但整份文档仍然 MALFORMED** | **不是出路**，别再试 |
+
+所以**渲染成功不等于产物可用**。新增任何「交给 `<img>` 的产物」时，判据不是「函数返回了」，而是「解回来还能不能被解析」——测试里的问法要从「输出里有什么」换成「把输出解回来，它还是不是一份能用的文档」。
+
 三条已实测的事实决定了它的形状：
 
 | 事实 | 含义 |
